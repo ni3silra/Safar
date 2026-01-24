@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <defs>
+    <linearGradient id="safar-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#007acc"/>
+      <stop offset="100%" style="stop-color:#4ec9b0"/>
+    </linearGradient>
+    <linearGradient id="road-gradient" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" style="stop-color:#3e3e3e"/>
+      <stop offset="100%" style="stop-color:#2a2a2a"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background Circle -->
+  <circle cx="60" cy="60" r="56" fill="url(#safar-gradient)" opacity="0.1"/>
+  <circle cx="60" cy="60" r="56" stroke="url(#safar-gradient)" stroke-width="2" fill="none"/>
+  
+  <!-- Road/Path - Perspective -->
+  <path d="M60 95 L35 55 L45 55 L60 80 L75 55 L85 55 Z" fill="url(#road-gradient)"/>
+  
+  <!-- Road center line (dashed) -->
+  <line x1="60" y1="90" x2="60" y2="75" stroke="#4ec9b0" stroke-width="2" stroke-dasharray="4 3"/>
+  <line x1="60" y1="70" x2="60" y2="62" stroke="#4ec9b0" stroke-width="1.5" stroke-dasharray="3 2"/>
+  
+  <!-- Terminal Window -->
+  <rect x="38" y="22" width="44" height="32" rx="4" fill="#1e1e1e" stroke="#30363d" stroke-width="1.5"/>
+  
+  <!-- Terminal title bar -->
+  <rect x="38" y="22" width="44" height="10" rx="4" fill="#2d333b"/>
+  <rect x="38" y="28" width="44" height="4" fill="#2d333b"/>
+  
+  <!-- Traffic light buttons -->
+  <circle cx="44" cy="27" r="2" fill="#f85149"/>
+  <circle cx="51" cy="27" r="2" fill="#d29922"/>
+  <circle cx="58" cy="27" r="2" fill="#3fb950"/>
+  
+  <!-- Terminal prompt -->
+  <text x="43" y="42" font-family="monospace" font-size="8" fill="#4ec9b0">$</text>
+  <text x="50" y="42" font-family="monospace" font-size="8" fill="#e6edf3">_</text>
+  
+  <!-- Cursor blink effect hint -->
+  <rect x="50" y="36" width="5" height="8" fill="#58a6ff" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.2;0.8" dur="1s" repeatCount="indefinite"/>
+  </rect>
+  
+  <!-- Connection lines -->
+  <circle cx="60" cy="50" r="2" fill="url(#safar-gradient)"/>
+  <line x1="60" y1="52" x2="60" y2="60" stroke="url(#safar-gradient)" stroke-width="2"/>
+</svg>
