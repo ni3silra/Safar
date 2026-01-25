@@ -123,6 +123,11 @@ const Icons = {
       <path d="M8 1a7 7 0 017 7h-2a5 5 0 00-5-5V1z" />
     </svg>
   ),
+  Help: ({ style, className }: IconProps = {}) => (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+      <path d="M8 0a8 8 0 100 16A8 8 0 008 0zm.01 11.5a1 1 0 110-2 1 1 0 010 2zm1.6-4.66s-.6 2.36-.73 2.66H6.66c.26-.64 1.18-2.61 1.18-2.61.32-.73 1.09-.8 1.09-1.49 0-.69-.53-1.2-1.2-1.2-.69 0-1.2.49-1.2 1.18H4.66a3 3 0 012.83-3.17c1.76-.11 3.3 1.18 3.3 2.83 0 1.05-.6 1.6-1.18 1.8z" />
+    </svg>
+  ),
 };
 
 // ============================================
@@ -140,6 +145,7 @@ const TEST_SERVER = {
 // ============================================
 
 import { SettingsModal, AppSettings, DEFAULT_SETTINGS } from "./components/SettingsModal";
+import { HelpModal } from "./components/HelpModal";
 
 // ...
 
@@ -150,6 +156,7 @@ function App() {
   const [showImport, setShowImport] = useState(false);
   // Master lock disabled - lock screen feature removed
   const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [sidebarView, setSidebarView] = useState<"sessions" | "snippets">("sessions");
 
   // Settings State (persisted)
@@ -350,11 +357,14 @@ function App() {
         <div style={{ flex: 1 }} />
 
         <div className="toolbar-group">
+          <button className="icon-btn" onClick={toggleTheme} data-tooltip="Toggle Theme">
+            {theme === "dark" ? <Icons.Sun /> : <Icons.Moon />}
+          </button>
           <button className="icon-btn" data-tooltip="Settings" onClick={() => setShowSettings(true)}>
             <Icons.Settings />
           </button>
-          <button className="icon-btn" onClick={toggleTheme} data-tooltip="Toggle Theme">
-            {theme === "dark" ? <Icons.Sun /> : <Icons.Moon />}
+          <button className="icon-btn" data-tooltip="Help & About" onClick={() => setShowHelp(true)}>
+            <Icons.Help />
           </button>
         </div>
       </div>
@@ -734,6 +744,10 @@ function App() {
           currentSettings={appSettings}
           onSave={(newSettings) => setAppSettings(newSettings)}
         />
+      )}
+      {/* Help Modal */}
+      {showHelp && (
+        <HelpModal onClose={() => setShowHelp(false)} />
       )}
       {/* Import Modal */}
       {showImport && (
