@@ -25,6 +25,7 @@ export interface SavedSession {
     host: string;
     port: number;
     username: string;
+    password?: string;
     auth_type: "password" | "privatekey" | "agent";
     private_key_path?: string;
     is_favorite: boolean;

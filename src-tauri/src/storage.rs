@@ -41,6 +41,8 @@ pub struct SavedSession {
     pub host: String,
     pub port: u16,
     pub username: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
     #[serde(default)]
     pub auth_type: AuthType,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -90,6 +92,7 @@ impl SavedSession {
             host,
             port,
             username,
+            password: None,
             auth_type: AuthType::Password,
             private_key_path: None,
             is_favorite: false,

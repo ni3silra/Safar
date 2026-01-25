@@ -69,6 +69,7 @@ type SortDirection = 'asc' | 'desc';
 
 export function FileBrowser({ sessionId }: FileBrowserProps) {
     const [currentPath, setCurrentPath] = useState(".");
+    const [tempPath, setTempPath] = useState(".");
     const [files, setFiles] = useState<FileEntry[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -171,6 +172,11 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
         loadFiles(".");
     }, [loadFiles]);
 
+    // Sync input with current path
+    useEffect(() => {
+        setTempPath(currentPath);
+    }, [currentPath]);
+
     const handleNavigate = (entry: FileEntry) => {
         if (entry.is_dir) {
             // Simple path joining logic - works for unix
@@ -258,7 +264,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
             {/* Toolbar */}
             <div style={{
                 padding: "8px",
-                borderBottom: "1px solid var(--border-color)",
+                borderBottom: "1px solid var(--border-default)",
                 display: "flex",
                 alignItems: "center",
                 gap: "8px",
@@ -275,19 +281,43 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                 <button className="icon-btn" onClick={() => loadFiles(currentPath)} title="Refresh">
                     <Icons.Refresh />
                 </button>
-                <div style={{ width: "1px", height: "16px", background: "var(--border-color)", margin: "0 4px" }} />
+                <div style={{ width: "1px", height: "16px", background: "var(--border-default)", margin: "0 4px" }} />
                 <button className="icon-btn" onClick={handleUpload} title="Upload File">
                     <Icons.Upload />
                 </button>
-                <div style={{
-                    flex: 1,
-                    background: "var(--input-bg)",
-                    padding: "4px 8px",
-                    borderRadius: "4px",
-                    fontSize: "13px",
-                    fontFamily: "monospace"
-                }}>
-                    {currentPath}
+                <div style={{ flex: 1, display: "flex", gap: "4px" }}>
+                    <input
+                        type="text"
+                        value={tempPath}
+                        onChange={(e) => setTempPath(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                                e.preventDefault();
+                                loadFiles(tempPath.trim());
+                            }
+                        }}
+                        style={{
+                            flex: 1,
+                            background: "var(--bg-primary)",
+                            padding: "4px 8px",
+                            borderRadius: "4px",
+                            fontSize: "13px",
+                            fontFamily: "monospace",
+                            border: "1px solid var(--border-default)",
+                            color: "var(--text-primary)",
+                            outline: "none"
+                        }}
+                    />
+                    <button
+                        className="icon-btn"
+                        onClick={() => loadFiles(tempPath.trim())}
+                        title="Go to path"
+                        style={{ padding: "4px" }}
+                    >
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                        </svg>
+                    </button>
                 </div>
             </div>
 
@@ -306,7 +336,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                         <thead style={{ background: "var(--bg-secondary)", textAlign: "left", position: "sticky", top: 0 }}>
                             <tr>
                                 <th
-                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-color)", width: "40%", cursor: "pointer", userSelect: "none" }}
+                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "40%", cursor: "pointer", userSelect: "none" }}
                                     onClick={() => handleSort('name')}
                                 >
                                     <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -317,7 +347,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                     </div>
                                 </th>
                                 <th
-                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-color)", width: "15%", textAlign: "right", cursor: "pointer", userSelect: "none" }}
+                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "15%", textAlign: "right", cursor: "pointer", userSelect: "none" }}
                                     onClick={() => handleSort('size')}
                                 >
                                     <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "6px" }}>
@@ -327,9 +357,9 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                         )}
                                     </div>
                                 </th>
-                                <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-color)", width: "15%", color: "var(--text-muted)" }}>Security</th>
+                                <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "15%", color: "var(--text-muted)" }}>Security</th>
                                 <th
-                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-color)", width: "30%", cursor: "pointer", userSelect: "none" }}
+                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "30%", cursor: "pointer", userSelect: "none" }}
                                     onClick={() => handleSort('modified')}
                                 >
                                     <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>

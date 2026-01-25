@@ -195,8 +195,8 @@ impl SshManager {
             .map_err(|e| SshError::ChannelError(format!("Failed to request PTY: {}", e)))?;
         
         // Start shell or execute command
-        if let Some(cmd) = config.remote_command {
-            channel.exec(&cmd).map_err(|e| SshError::ChannelError(format!("Failed to execute command: {}", e)))?;
+        if let Some(ref cmd) = config.remote_command {
+            channel.exec(cmd).map_err(|e| SshError::ChannelError(format!("Failed to execute command: {}", e)))?;
         } else {
             channel.shell().map_err(|e| SshError::ChannelError(format!("Failed to start shell: {}", e)))?;
         }
