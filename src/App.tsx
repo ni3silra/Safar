@@ -184,8 +184,8 @@ function App() {
           port: config.port,
           username: config.username,
           password: config.password || null,
-          privateKeyPath: config.privateKeyPath || null,
-          sessionName: config.sessionName || `${config.username}@${config.host}`,
+          private_key_path: config.privateKeyPath || null,
+          session_name: config.sessionName || `${config.username}@${config.host}`,
           term_type: config.termType || null,
         },
       });
