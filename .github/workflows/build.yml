@@ -42,10 +42,11 @@ jobs:
           cache: 'npm'
 
       - name: Install Rust (stable)
-        uses: dtolnay/rust-action@stable
+        uses: actions-rs/toolchain@v1
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
+          toolchain: stable
+          override: true
+          
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
