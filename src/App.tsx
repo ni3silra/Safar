@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 // invoke removed as it's now in the hook
-import { Toaster, toast } from 'sonner';
-import { save } from '@tauri-apps/plugin-dialog';
+import { Toaster } from 'sonner';
 import { invoke } from "@tauri-apps/api/core";
 import "./styles/globals.css";
 import "./styles/App.css";
@@ -140,43 +139,6 @@ function App() {
     }));
   };
 
-  const handleExport = async () => {
-    try {
-      const path = await save({
-        filters: [{
-          name: 'Safar Sessions',
-          extensions: ['json']
-        }]
-      });
-
-      if (path) {
-        // Sanitize: ensure no passwords are mistakenly part of the object if they ever crept in
-        const exportData = sessions.map(s => {
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { ...rest } = s;
-          return rest;
-        });
-
-        const jsonContent = JSON.stringify(exportData, null, 2);
-
-        // Use backend command to write file (bypasses potential frontend scope issues if path is absolute)
-        const res = await invoke<{ success: boolean; error?: string }>("fs_write_text", {
-          path,
-          content: jsonContent
-        });
-
-        // Check response structure - checking for standard CommandResponse structure
-        if (res && (res as any).success === false) {
-          throw new Error((res as any).error || "Unknown error");
-        }
-
-        toast.success(`Succesfully exported ${sessions.length} sessions`);
-      }
-    } catch (err) {
-      console.error("Export failed:", err);
-      toast.error("Failed to export sessions");
-    }
-  };
 
   const handleEditSession = (session: SavedSession) => {
     setEditingSession(session);
@@ -317,7 +279,6 @@ function App() {
             password: config.password || "",
             sessionName: config.sessionName || "",
           }, false)}
-          onExport={handleExport}
           onEditSession={handleEditSession}
           onDeleteSession={handleDeleteSession}
         />

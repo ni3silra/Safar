@@ -20,7 +20,6 @@ interface SidebarProps {
     favorites: SavedSession[];
     recent: SavedSession[];
     onConnect: (config: ConnectConfig) => void;
-    onExport: () => void;
     onEditSession: (session: SavedSession) => void;
     onDeleteSession: (sessionId: string) => void;
 }
@@ -36,7 +35,6 @@ export function Sidebar({
     favorites,
     recent,
     onConnect,
-    onExport,
     onEditSession,
     onDeleteSession,
 }: SidebarProps) {
