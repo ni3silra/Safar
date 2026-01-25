@@ -2,10 +2,9 @@ import { Icons } from "./Icons";
 
 interface WelcomeScreenProps {
     onNewConnection: () => void;
-    onImport: () => void;
 }
 
-export function WelcomeScreen({ onNewConnection, onImport }: WelcomeScreenProps) {
+export function WelcomeScreen({ onNewConnection }: WelcomeScreenProps) {
     return (
         <div className="welcome-screen">
             <img src="/safar-logo.svg" alt="Safar" className="welcome-logo" />
@@ -17,10 +16,10 @@ export function WelcomeScreen({ onNewConnection, onImport }: WelcomeScreenProps)
                     <Icons.Plus />
                     New Connection
                 </button>
-                <button className="btn btn-secondary" onClick={onImport}>
+                {/* <button className="btn btn-secondary" onClick={onImport}>
                     <Icons.Folder />
                     Import Sessions
-                </button>
+                </button> */}
             </div>
 
             <div className="welcome-features">

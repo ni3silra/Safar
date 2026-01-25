@@ -459,7 +459,6 @@ function App() {
               {!derivedActiveSession && (
                 <WelcomeScreen
                   onNewConnection={() => setShowQuickConnect(true)}
-                  onImport={() => setShowImport(true)}
                 />
               )}
 

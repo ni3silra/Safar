@@ -113,14 +113,14 @@ export function Sidebar({
                             placeholder="Search sessions..."
                             style={{ fontSize: "var(--text-xs)", flex: 1 }}
                         />
-                        <button
+                        {/* <button
                             className="icon-btn"
                             onClick={onExport}
                             data-tooltip="Export Sessions"
                             style={{ padding: "4px" }}
                         >
                             <Icons.Download />
-                        </button>
+                        </button> */}
                     </div>
 
                     {/* Active Sessions */}

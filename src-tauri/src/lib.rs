@@ -95,6 +95,12 @@ pub fn run() {
             }
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                // Window is being destroyed, triggering cleanup via Drop
+                // The AppState held by Tauri will also be dropped eventually
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             // SSH commands
             ssh_connect,
