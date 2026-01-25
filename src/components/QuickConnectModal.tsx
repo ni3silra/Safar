@@ -48,7 +48,7 @@ export function QuickConnectModal({ onClose, onConnect }: QuickConnectModalProps
         try {
             const file = await openDialog({
                 multiple: false,
-                filters: [{ name: 'Key Files', extensions: ['pem', 'ppk', 'key', 'txt', 'pub'] }]
+                filters: [{ name: 'Key Files', extensions: ['pem', 'ppk', 'key', 'txt', 'pub', '*'] }]
             });
             if (file) {
                 setPrivateKeyPath(file as string);
