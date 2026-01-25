@@ -350,7 +350,7 @@ function App() {
         <div style={{ flex: 1 }} />
 
         <div className="toolbar-group">
-          <button className="icon-btn" data-tooltip="Settings">
+          <button className="icon-btn" data-tooltip="Settings" onClick={() => setShowSettings(true)}>
             <Icons.Settings />
           </button>
           <button className="icon-btn" onClick={toggleTheme} data-tooltip="Toggle Theme">
@@ -677,6 +677,7 @@ function App() {
                       onDisconnect={() => handleDisconnect(derivedActiveSession.id)}
                       fontSize={appSettings.terminalFontSize}
                       themeName={appSettings.terminalTheme}
+                      fontFamily={appSettings.terminalFontFamily}
                     />
                   </div>
                   <div style={{

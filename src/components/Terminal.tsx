@@ -14,6 +14,7 @@ interface TerminalProps {
   onDisconnect?: () => void;
   fontSize?: number;
   themeName?: string;
+  fontFamily?: string;
 }
 
 // Minimal Icons for Terminal UI
@@ -56,7 +57,7 @@ const Icons = {
   )
 };
 
-export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, fontSize = 14, themeName = "Safar Dark" }: TerminalProps) {
+export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, fontSize = 14, themeName = "Safar Dark", fontFamily = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace" }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -113,7 +114,7 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
       cursorBlink: true,
       cursorStyle: "block",
       fontSize: fontSize,
-      fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
+      fontFamily: fontFamily,
       theme: initialTheme,
       allowProposedApi: true,
       scrollback: 10000,
@@ -203,10 +204,11 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
   useEffect(() => {
     if (xtermRef.current) {
       xtermRef.current.options.fontSize = fontSize;
+      xtermRef.current.options.fontFamily = fontFamily;
       xtermRef.current.options.theme = TERMINAL_THEMES[themeName].colors;
       safeFit();
     }
-  }, [fontSize, themeName, safeFit]);
+  }, [fontSize, themeName, fontFamily, safeFit]);
 
   // Search Effect
   useEffect(() => {
