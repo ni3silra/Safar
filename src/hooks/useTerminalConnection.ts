@@ -111,29 +111,39 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
             } else {
                 setConnectionStatus("disconnected");
                 setStatusMessage(`Failed: ${response.error}`);
-                const errStr = response.error || "";
-                toast.error(`Connection failed: ${errStr}`);
+                const errStr = response.error || "Unknown connection error";
 
                 // Throw specific error for auth handling
                 if ((errStr.includes("No authentication method provided") || errStr.includes("Authentication failed") || errStr.toLowerCase().includes("auth")) && !config.password && !config.privateKeyPath) {
                     throw new Error("AUTH_REQUIRED");
                 }
-                return false;
+
+                throw new Error(errStr);
             }
         } catch (error) {
             const errStr = String(error);
+            // Re-throw known errors
             if (errStr === "Error: AUTH_REQUIRED") {
-                throw error; // Re-throw our specific error
+                throw error;
+            }
+            if (error instanceof Error && error.message === "AUTH_REQUIRED") {
+                throw error;
             }
 
             setConnectionStatus("disconnected");
-            setStatusMessage(`Error: ${error}`);
-            toast.error(`Connection error: ${error}`);
+            if (error instanceof Error) {
+                setStatusMessage(`Error: ${error.message}`);
+            } else {
+                setStatusMessage(`Error: ${errStr}`);
+            }
 
+            // Check for auth required in the caught error string/object
             if ((errStr.includes("No authentication method provided") || errStr.includes("Authentication failed")) && !config.password && !config.privateKeyPath) {
                 throw new Error("AUTH_REQUIRED");
             }
-            return false;
+
+            // Re-throw so App.tsx can show modal
+            throw error;
         }
     };
 

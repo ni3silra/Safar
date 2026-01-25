@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 // invoke removed as it's now in the hook
 import { Toaster, toast } from 'sonner';
-import { save, ask } from '@tauri-apps/plugin-dialog';
+import { save } from '@tauri-apps/plugin-dialog';
 import { invoke } from "@tauri-apps/api/core";
-import { writeTextFile } from '@tauri-apps/plugin-fs';
 import "./styles/globals.css";
 import "./styles/App.css";
+import "./styles/components.css";
 import TerminalComponent from "./components/Terminal";
 import { FileBrowser } from "./components/FileBrowser";
 import { useSessions } from "./hooks/useSessions";
@@ -15,6 +15,8 @@ import { Sidebar } from "./components/Sidebar";
 import { ImportModal } from "./components/ImportModal";
 import { TunnelManager } from "./components/TunnelManager";
 import { LockScreen } from "./components/LockScreen";
+import { ErrorModal } from "./components/ErrorModal";
+import { DeleteConfirmationModal } from "./components/DeleteConfirmationModal";
 import { Icons } from "./components/Icons";
 import { SavedSession, LogEntry } from "./types";
 import { SessionLogs } from "./components/SessionLogs";
@@ -39,6 +41,12 @@ function App() {
   const [showImport, setShowImport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+
+  // Error Modal State
+  const [errorModal, setErrorModal] = useState<{ title: string, message: string } | null>(null);
+  // Delete Modal State
+  const [deleteModal, setDeleteModal] = useState<{ id: string, name: string } | null>(null);
+
   const [sidebarView, setSidebarView] = useState<"sessions" | "snippets">("sessions");
   const [editingSession, setEditingSession] = useState<SavedSession | null>(null);
   const [retryConfig, setRetryConfig] = useState<ConnectConfig | null>(null);
@@ -149,7 +157,19 @@ function App() {
           return rest;
         });
 
-        await writeTextFile(path, JSON.stringify(exportData, null, 2));
+        const jsonContent = JSON.stringify(exportData, null, 2);
+
+        // Use backend command to write file (bypasses potential frontend scope issues if path is absolute)
+        const res = await invoke<{ success: boolean; error?: string }>("fs_write_text", {
+          path,
+          content: jsonContent
+        });
+
+        // Check response structure - checking for standard CommandResponse structure
+        if (res && (res as any).success === false) {
+          throw new Error((res as any).error || "Unknown error");
+        }
+
         toast.success(`Succesfully exported ${sessions.length} sessions`);
       }
     } catch (err) {
@@ -164,8 +184,10 @@ function App() {
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    if (await ask("Are you sure you want to delete this session?", { title: "Confirm Delete", kind: "warning" })) {
-      await deleteSession(sessionId);
+    // Find name for display
+    const session = sessions.find(s => s.id === sessionId);
+    if (session) {
+      setDeleteModal({ id: sessionId, name: session.name });
     }
   };
 
@@ -213,6 +235,12 @@ function App() {
       if (error.message === "AUTH_REQUIRED") {
         setRetryConfig(config);
         setShowCredentialsModal(true);
+      } else {
+        // Show Error Modal
+        setErrorModal({
+          title: "Connection Failed",
+          message: error.message || String(error)
+        });
       }
     }
   };
@@ -572,6 +600,24 @@ function App() {
           onImportSuccess={() => {
             window.location.reload();
           }}
+        />
+      )}
+
+      {/* Error Modal */}
+      {errorModal && (
+        <ErrorModal
+          title={errorModal.title}
+          message={errorModal.message}
+          onClose={() => setErrorModal(null)}
+        />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteModal && (
+        <DeleteConfirmationModal
+          sessionName={deleteModal.name}
+          onClose={() => setDeleteModal(null)}
+          onConfirm={() => deleteSession(deleteModal.id)}
         />
       )}
 

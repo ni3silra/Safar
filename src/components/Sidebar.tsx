@@ -168,8 +168,11 @@ export function Sidebar({
                                             host: saved.host,
                                             port: saved.port,
                                             username: saved.username,
-                                            password: "", // Will need password prompt
+                                            password: saved.password || "",
+                                            privateKeyPath: saved.private_key_path,
                                             sessionName: saved.name,
+                                            termType: saved.term_type,
+                                            remoteCommand: saved.remote_command,
                                             backspaceMode: saved.backspace_mode,
                                         })
                                     }
@@ -212,8 +215,11 @@ export function Sidebar({
                                             host: saved.host,
                                             port: saved.port,
                                             username: saved.username,
-                                            password: "", // Will need password prompt
+                                            password: saved.password || "",
+                                            privateKeyPath: saved.private_key_path,
                                             sessionName: saved.name,
+                                            termType: saved.term_type,
+                                            remoteCommand: saved.remote_command,
                                             backspaceMode: saved.backspace_mode,
                                         })
                                     }

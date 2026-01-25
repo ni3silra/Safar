@@ -122,6 +122,7 @@ pub fn run() {
             sessions_add_recent,
             sessions_import,
             fs_read_text,
+            // fs_write_text,
             // Snippet commands
             snippets_get_all,
             snippets_save,
