@@ -2,20 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-// Types matching Rust storage.rs
-export interface SavedSession {
-    id: string;
-    name: string;
-    host: string;
-    port: number;
-    username: string;
-    auth_type: "password" | "privatekey" | "agent";
-    private_key_path?: string;
-    is_favorite: boolean;
-    group?: string;
-    last_connected?: string;
-    notes?: string;
-}
+import { SavedSession } from "../types";
 
 interface CommandResponse<T> {
     success: boolean;
