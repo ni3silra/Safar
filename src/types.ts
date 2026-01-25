@@ -32,6 +32,7 @@ export interface SavedSession {
     last_connected?: string;
     notes?: string;
     term_type?: string;
+    remote_command?: string;
 }
 
 // ============================================
@@ -46,6 +47,7 @@ export interface ConnectConfig {
     privateKeyPath?: string | null;
     sessionName: string;
     termType?: string;
+    remoteCommand?: string;
 }
 
 export interface ConnectionResult {

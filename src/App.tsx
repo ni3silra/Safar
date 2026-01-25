@@ -169,6 +169,7 @@ function App() {
       privateKeyPath?: string | null;
       sessionName: string;
       termType?: string;
+      remoteCommand?: string;
     },
     saveForLater?: boolean,
     addToFav?: boolean
@@ -187,6 +188,7 @@ function App() {
           private_key_path: config.privateKeyPath || null,
           session_name: config.sessionName || `${config.username}@${config.host}`,
           term_type: config.termType || null,
+          remote_command: config.remoteCommand || null,
         },
       });
 

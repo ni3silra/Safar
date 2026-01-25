@@ -53,6 +53,7 @@ pub struct ConnectionConfig {
     pub private_key_path: Option<String>,
     pub session_name: Option<String>,
     pub term_type: Option<String>,
+    pub remote_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,11 +193,13 @@ impl SshManager {
         channel
             .request_pty(term, None, Some((80, 24, 0, 0)))
             .map_err(|e| SshError::ChannelError(format!("Failed to request PTY: {}", e)))?;
-
-        // Start shell
-        channel
-            .shell()
-            .map_err(|e| SshError::ChannelError(format!("Failed to start shell: {}", e)))?;
+        
+        // Start shell or execute command
+        if let Some(cmd) = config.remote_command {
+            channel.exec(&cmd).map_err(|e| SshError::ChannelError(format!("Failed to execute command: {}", e)))?;
+        } else {
+            channel.shell().map_err(|e| SshError::ChannelError(format!("Failed to start shell: {}", e)))?;
+        }
 
         // Set non-blocking mode for reading
         session.set_blocking(false);

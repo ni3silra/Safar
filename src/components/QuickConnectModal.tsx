@@ -12,6 +12,7 @@ interface QuickConnectModalProps {
         privateKeyPath?: string | null;
         sessionName: string;
         termType?: string;
+        remoteCommand?: string;
     }, saveSession?: boolean, saveFavorite?: boolean) => void;
 }
 
@@ -41,6 +42,7 @@ export function QuickConnectModal({ onClose, onConnect }: QuickConnectModalProps
             privateKeyPath,
             sessionName,
             termType: terminalType,
+            remoteCommand: remoteCommand || undefined,
         }, saveForLater, addToFavorites);
     };
 
