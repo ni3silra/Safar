@@ -148,7 +148,8 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showQuickConnect, setShowQuickConnect] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [isLocked, setIsLocked] = useState(true);
+  // Master lock disabled - set to false to skip lock screen
+  const [isLocked, setIsLocked] = useState(false);
 
   // Initial Security Check
   useEffect(() => {
@@ -373,7 +374,7 @@ function App() {
 
       {/* Main Layout */}
       <div className="main-layout" style={{ position: "relative" }}>
-        {isLocked && <LockScreen onUnlock={handleUnlock} />}
+        {/* Lock screen disabled */}
 
         {/* Sidebar */}
         <div className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
@@ -839,16 +840,31 @@ function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModal
   const [saveForLater, setSaveForLater] = useState(false);
   const [addToFavorites, setAddToFavorites] = useState(false);
 
+  // PuTTY-style Advanced Options
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [remoteCommand, setRemoteCommand] = useState("");
+  const [backspaceMode, setBackspaceMode] = useState<"auto" | "ctrl-h" | "ctrl-?">("auto");
+  const [terminalType, setTerminalType] = useState("xterm-256color");
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onConnect({ host, port, username, password, privateKeyPath, sessionName }, saveForLater, addToFavorites);
+    onConnect({
+      host,
+      port,
+      username,
+      password,
+      privateKeyPath,
+      sessionName,
+      // Pass advanced options for future backend support
+      // remoteCommand, backspaceMode, terminalType 
+    }, saveForLater, addToFavorites);
   };
 
   const handleSelectKey = async () => {
     try {
       const file = await openDialog({
         multiple: false,
-        filters: [{ name: 'Key Files', extensions: ['pem', 'ppk', 'key', 'txt'] }]
+        filters: [{ name: 'Key Files', extensions: ['pem', 'ppk', 'key', 'txt', 'pub'] }]
       });
       if (file) {
         setPrivateKeyPath(file as string);
@@ -869,7 +885,7 @@ function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModal
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "500px" }}>
         <div className="modal-header">
           <h2 className="modal-title">New SSH Connection</h2>
           <button className="icon-btn" onClick={onClose}>
@@ -877,7 +893,7 @@ function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModal
           </button>
         </div>
         <form onSubmit={handleSubmit}>
-          <div className="modal-body">
+          <div className="modal-body" style={{ maxHeight: "70vh", overflowY: "auto" }}>
             <div className="form-group">
               <label className="form-label">Session Name</label>
               <input
@@ -933,13 +949,13 @@ function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModal
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                required
               />
+              <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Leave empty if using key auth</span>
             </div>
 
             <div className="form-group">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <label className="form-label">Private Key (Optional)</label>
+                <label className="form-label">Private Key Path</label>
                 {privateKeyPath && (
                   <button
                     type="button"
@@ -954,28 +970,107 @@ function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModal
                 <input
                   type="text"
                   className="input"
-                  placeholder="Select private key file..."
+                  placeholder="C:\Users\...\.ssh\id_rsa or paste path"
                   value={privateKeyPath || ""}
-                  readOnly
-                  onClick={handleSelectKey}
-                  style={{ cursor: "pointer", textOverflow: "ellipsis" }}
+                  onChange={(e) => setPrivateKeyPath(e.target.value || null)}
+                  style={{ flex: 1 }}
                 />
                 <button
                   type="button"
                   className="btn btn-secondary"
                   onClick={handleSelectKey}
                   style={{ padding: "0 12px" }}
+                  title="Browse for key file"
                 >
                   <Icons.Folder />
                 </button>
               </div>
+              <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Supports PEM, PPK, OpenSSH formats</span>
             </div>
+
+            {/* Advanced Options Toggle */}
+            <div style={{ marginTop: "var(--space-3)" }}>
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--col-blue)",
+                  cursor: "pointer",
+                  fontSize: "13px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px"
+                }}
+              >
+                <Icons.Settings /> Advanced Options
+                <span style={{ transform: showAdvanced ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>▼</span>
+              </button>
+            </div>
+
+            {showAdvanced && (
+              <div style={{
+                marginTop: "var(--space-2)",
+                padding: "var(--space-3)",
+                background: "var(--bg-tertiary)",
+                borderRadius: "6px",
+                border: "1px solid var(--border-color)"
+              }}>
+                {/* Remote Command */}
+                <div className="form-group">
+                  <label className="form-label">Remote Command (optional)</label>
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g. sudo su - or /bin/bash"
+                    value={remoteCommand}
+                    onChange={(e) => setRemoteCommand(e.target.value)}
+                  />
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Run command instead of shell after login</span>
+                </div>
+
+                {/* Terminal Type */}
+                <div className="form-group" style={{ marginTop: "var(--space-2)" }}>
+                  <label className="form-label">Terminal Type</label>
+                  <select
+                    className="input"
+                    value={terminalType}
+                    onChange={(e) => setTerminalType(e.target.value)}
+                    style={{ width: "100%" }}
+                  >
+                    <option value="xterm-256color">xterm-256color (Default)</option>
+                    <option value="xterm">xterm</option>
+                    <option value="vt100">vt100</option>
+                    <option value="vt220">vt220</option>
+                    <option value="linux">linux</option>
+                    <option value="dumb">dumb</option>
+                  </select>
+                </div>
+
+                {/* Backspace Mode */}
+                <div className="form-group" style={{ marginTop: "var(--space-2)" }}>
+                  <label className="form-label">Backspace Sends</label>
+                  <select
+                    className="input"
+                    value={backspaceMode}
+                    onChange={(e) => setBackspaceMode(e.target.value as "auto" | "ctrl-h" | "ctrl-?")}
+                    style={{ width: "100%" }}
+                  >
+                    <option value="auto">Auto (Server decides)</option>
+                    <option value="ctrl-h">Control-H (^H, ASCII 8)</option>
+                    <option value="ctrl-?">Control-? (^?, ASCII 127)</option>
+                  </select>
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Fix backspace issues with some servers</span>
+                </div>
+              </div>
+            )}
 
             <button
               type="button"
               className="btn btn-ghost"
               onClick={handleUseTestServer}
-              style={{ width: "100%", marginTop: "var(--space-2)" }}
+              style={{ width: "100%", marginTop: "var(--space-3)" }}
             >
               <Icons.Zap />
               Use Test Server (test.rebex.net)
