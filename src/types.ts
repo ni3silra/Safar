@@ -34,6 +34,7 @@ export interface SavedSession {
     notes?: string;
     term_type?: string;
     remote_command?: string;
+    backspace_mode?: string;
 }
 
 // ============================================
@@ -49,6 +50,7 @@ export interface ConnectConfig {
     sessionName: string;
     termType?: string;
     remoteCommand?: string;
+    backspaceMode?: string;
 }
 
 export interface ConnectionResult {

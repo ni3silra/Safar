@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Toaster, toast } from 'sonner';
-import { save } from '@tauri-apps/plugin-dialog';
+import { save, ask } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import "./styles/globals.css";
 import "./styles/App.css";
@@ -151,7 +151,7 @@ function App() {
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    if (await confirm("Are you sure you want to delete this session?")) {
+    if (await ask("Are you sure you want to delete this session?", { title: "Confirm Delete", kind: "warning" })) {
       await deleteSession(sessionId);
     }
   };

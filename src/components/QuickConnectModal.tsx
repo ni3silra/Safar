@@ -13,6 +13,7 @@ interface QuickConnectModalProps {
         sessionName: string;
         termType?: string;
         remoteCommand?: string;
+        backspaceMode?: string;
     }, saveSession?: boolean, saveFavorite?: boolean) => void;
     initialConfig?: {
         host: string;
@@ -23,6 +24,7 @@ interface QuickConnectModalProps {
         privateKeyPath?: string | null;
         remoteCommand?: string;
         termType?: string;
+        backspaceMode?: string;
     };
     mode?: "connect" | "edit";
 }
@@ -54,6 +56,7 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
             sessionName,
             termType: terminalType,
             remoteCommand: remoteCommand || undefined,
+            backspaceMode: backspaceMode,
         }, saveForLater, addToFavorites);
     };
 

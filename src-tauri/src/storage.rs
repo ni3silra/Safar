@@ -55,6 +55,12 @@ pub struct SavedSession {
     pub last_connected: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub term_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backspace_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -99,6 +105,9 @@ impl SavedSession {
             group: None,
             last_connected: None,
             notes: None,
+            term_type: None,
+            remote_command: None,
+            backspace_mode: None,
         }
     }
 }
