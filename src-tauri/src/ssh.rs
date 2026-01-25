@@ -397,11 +397,20 @@ impl SshManager {
 
         let session = session_arc.read();
 
+        // Temporarily set blocking mode for SFTP operations
+        session.session.set_blocking(true);
+
         // Initialize SFTP session
-        let sftp = session.session.sftp().map_err(|e| SshError::Ssh2Error(e))?;
+        let sftp = session.session.sftp().map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::Ssh2Error(e)
+        })?;
 
         let path = std::path::Path::new(path);
-        let entries = sftp.readdir(path).map_err(|e| SshError::Ssh2Error(e))?;
+        let entries = sftp.readdir(path).map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::Ssh2Error(e)
+        })?;
 
         let mut file_entries = Vec::new();
 
@@ -436,6 +445,9 @@ impl SshManager {
             }
         });
 
+        // Restore non-blocking mode for terminal
+        session.session.set_blocking(false);
+
         Ok(file_entries)
     }
 
@@ -447,13 +459,30 @@ impl SshManager {
             .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
 
         let session = session_arc.read();
-        let sftp = session.session.sftp().map_err(|e| SshError::Ssh2Error(e))?;
+        
+        // Temporarily set blocking mode for SFTP
+        session.session.set_blocking(true);
+        
+        let sftp = session.session.sftp().map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::Ssh2Error(e)
+        })?;
 
-        let mut remote_file = sftp.open(std::path::Path::new(remote_path)).map_err(|e| SshError::Ssh2Error(e))?;
-        let mut local_file = std::fs::File::create(local_path).map_err(|e| SshError::IoError(e))?;
+        let mut remote_file = sftp.open(std::path::Path::new(remote_path)).map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::Ssh2Error(e)
+        })?;
+        let mut local_file = std::fs::File::create(local_path).map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::IoError(e)
+        })?;
 
-        std::io::copy(&mut remote_file, &mut local_file).map_err(|e| SshError::IoError(e))?;
+        std::io::copy(&mut remote_file, &mut local_file).map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::IoError(e)
+        })?;
 
+        session.session.set_blocking(false);
         Ok(())
     }
 
@@ -465,13 +494,30 @@ impl SshManager {
             .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
 
         let session = session_arc.read();
-        let sftp = session.session.sftp().map_err(|e| SshError::Ssh2Error(e))?;
+        
+        // Temporarily set blocking mode for SFTP
+        session.session.set_blocking(true);
+        
+        let sftp = session.session.sftp().map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::Ssh2Error(e)
+        })?;
 
-        let mut local_file = std::fs::File::open(local_path).map_err(|e| SshError::IoError(e))?;
-        let mut remote_file = sftp.create(std::path::Path::new(remote_path)).map_err(|e| SshError::Ssh2Error(e))?;
+        let mut local_file = std::fs::File::open(local_path).map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::IoError(e)
+        })?;
+        let mut remote_file = sftp.create(std::path::Path::new(remote_path)).map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::Ssh2Error(e)
+        })?;
 
-        std::io::copy(&mut local_file, &mut remote_file).map_err(|e| SshError::IoError(e))?;
+        std::io::copy(&mut local_file, &mut remote_file).map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::IoError(e)
+        })?;
 
+        session.session.set_blocking(false);
         Ok(())
     }
 
@@ -483,14 +529,28 @@ impl SshManager {
             .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
 
         let session = session_arc.read();
-        let sftp = session.session.sftp().map_err(|e| SshError::Ssh2Error(e))?;
+        
+        // Temporarily set blocking mode for SFTP
+        session.session.set_blocking(true);
+        
+        let sftp = session.session.sftp().map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::Ssh2Error(e)
+        })?;
 
-        let mut remote_file = sftp.open(std::path::Path::new(remote_path)).map_err(|e| SshError::Ssh2Error(e))?;
+        let mut remote_file = sftp.open(std::path::Path::new(remote_path)).map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::Ssh2Error(e)
+        })?;
         let mut content = Vec::new();
         
         use std::io::Read;
-        remote_file.read_to_end(&mut content).map_err(|e| SshError::IoError(e))?;
+        remote_file.read_to_end(&mut content).map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::IoError(e)
+        })?;
 
+        session.session.set_blocking(false);
         String::from_utf8(content).map_err(|_| SshError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Not a valid UTF-8 file")))
     }
 
@@ -502,13 +562,27 @@ impl SshManager {
             .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
 
         let session = session_arc.read();
-        let sftp = session.session.sftp().map_err(|e| SshError::Ssh2Error(e))?;
+        
+        // Temporarily set blocking mode for SFTP
+        session.session.set_blocking(true);
+        
+        let sftp = session.session.sftp().map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::Ssh2Error(e)
+        })?;
 
-        let mut remote_file = sftp.create(std::path::Path::new(remote_path)).map_err(|e| SshError::Ssh2Error(e))?;
+        let mut remote_file = sftp.create(std::path::Path::new(remote_path)).map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::Ssh2Error(e)
+        })?;
         
         use std::io::Write;
-        remote_file.write_all(content.as_bytes()).map_err(|e| SshError::IoError(e))?;
+        remote_file.write_all(content.as_bytes()).map_err(|e| {
+            session.session.set_blocking(false);
+            SshError::IoError(e)
+        })?;
 
+        session.session.set_blocking(false);
         Ok(())
     }
 
