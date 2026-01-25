@@ -16,6 +16,7 @@ interface TerminalProps {
   themeName?: string;
   fontFamily?: string;
   backspaceMode?: string;
+  isVisible?: boolean;
 }
 
 // Minimal Icons for Terminal UI
@@ -58,7 +59,15 @@ const Icons = {
   )
 };
 
-export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, fontSize = 14, themeName = "Safar Dark", fontFamily = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace", backspaceMode }: TerminalProps) {
+export function TerminalComponent({
+  sessionId,
+  onDisconnect: _onDisconnect,
+  fontSize = 14,
+  themeName = "Safar Dark",
+  fontFamily = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
+  backspaceMode,
+  isVisible = true
+}: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -68,7 +77,6 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
   // UI State
   const [showSearch, setShowSearch] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  // Local settings UI toggle removed (controlled by App)
 
   // Send data to SSH server
   const sendData = useCallback(
@@ -87,6 +95,9 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
 
   // Safe fit function
   const safeFit = useCallback(() => {
+    // Only fit if visible and refs exist
+    if (!isVisible) return;
+
     if (fitAddonRef.current && xtermRef.current) {
       try {
         fitAddonRef.current.fit();
@@ -101,7 +112,15 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
         }, 100);
       }
     }
-  }, []);
+  }, [isVisible]);
+
+  // Re-fit when visibility changes
+  useEffect(() => {
+    if (isVisible) {
+      // Small delay to ensure layout is updated
+      setTimeout(safeFit, 50);
+    }
+  }, [isVisible, safeFit]);
 
   // Initialize Terminal
   useEffect(() => {
@@ -182,14 +201,20 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
 
     // Listen for data
     let unlisten: UnlistenFn | null = null;
+    let isMounted = true;
+
     listen<TerminalData>("terminal-data", (event) => {
       if (event.payload.session_id === sessionId) {
         terminal.write(event.payload.data);
       }
     }).then((fn) => {
-      unlisten = fn;
-      unlistenRef.current = fn;
-      terminal.write("\x1b[32m● Connected! Waiting for shell...\x1b[0m\r\n\r\n");
+      if (!isMounted) {
+        fn(); // Unlisten immediately if already unmounted
+      } else {
+        unlisten = fn;
+        unlistenRef.current = fn;
+        terminal.write("\x1b[32m● Connected! Waiting for shell...\x1b[0m\r\n\r\n");
+      }
     });
 
     const handleResize = () => safeFit();
@@ -198,15 +223,20 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
     requestAnimationFrame(() => {
       setTimeout(() => {
         safeFit();
+        // Initial sync of size - but only if valid
         if (xtermRef.current) {
           const { cols, rows } = xtermRef.current;
-          invoke("ssh_resize", { sessionId, cols, rows }).catch(console.error);
+          // Only resize if cols/rows are valid (>0)
+          if (cols > 0 && rows > 0) {
+            invoke("ssh_resize", { sessionId, cols, rows }).catch(console.error);
+          }
+          terminal.focus();
         }
-        terminal.focus();
       }, 50);
     });
 
     return () => {
+      isMounted = false;
       window.removeEventListener("resize", handleResize);
       if (unlisten) unlisten();
       if (unlistenRef.current) unlistenRef.current();
@@ -248,8 +278,6 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
           padding: "8px",
         }}
       />
-
-
 
       {/* Search Bar */}
       {showSearch && (
@@ -296,8 +324,6 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
           <button onClick={() => setShowSearch(false)} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.Close /></button>
         </div>
       )}
-
-
     </div>
   );
 }
