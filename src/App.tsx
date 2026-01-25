@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 // invoke removed as it's now in the hook
 import { Toaster, toast } from 'sonner';
 import { save, ask } from '@tauri-apps/plugin-dialog';
+import { invoke } from "@tauri-apps/api/core";
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import "./styles/globals.css";
 import "./styles/App.css";
@@ -13,7 +14,7 @@ import { useShortcuts } from "./hooks/useShortcuts";
 import { Sidebar } from "./components/Sidebar";
 import { ImportModal } from "./components/ImportModal";
 import { TunnelManager } from "./components/TunnelManager";
-// LockScreen disabled - import removed
+import { LockScreen } from "./components/LockScreen";
 import { Icons } from "./components/Icons";
 import { SavedSession, LogEntry } from "./types";
 import { SessionLogs } from "./components/SessionLogs";
@@ -23,7 +24,8 @@ import { SessionStats } from "./components/SessionStats";
 // MAIN APP
 // ============================================
 
-import { SettingsModal, AppSettings, DEFAULT_SETTINGS } from "./components/SettingsModal";
+import { SettingsModal } from "./components/SettingsModal";
+import { AppSettings, DEFAULT_SETTINGS } from "./components/SettingsTypes";
 import { HelpModal } from "./components/HelpModal";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { QuickConnectModal } from "./components/QuickConnectModal";
@@ -35,12 +37,15 @@ function App() {
   const [showQuickConnect, setShowQuickConnect] = useState(false);
   const [showCredentialsModal, setShowCredentialsModal] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  // Master lock disabled
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [sidebarView, setSidebarView] = useState<"sessions" | "snippets">("sessions");
   const [editingSession, setEditingSession] = useState<SavedSession | null>(null);
   const [retryConfig, setRetryConfig] = useState<ConnectConfig | null>(null);
+
+  // Security State
+  const [isLocked, setIsLocked] = useState(true); // Default to locked until checked
+  const [checkingLock, setCheckingLock] = useState(true);
 
   // Logs State
   const [sessionLogs, setSessionLogs] = useState<Record<string, LogEntry[]>>({});
@@ -77,13 +82,35 @@ function App() {
     document.documentElement.setAttribute("data-theme", appSettings.theme);
   }, [appSettings]);
 
+  // Check Lock Status on Mount
+  useEffect(() => {
+    const checkLock = async () => {
+      try {
+        const locked = await invoke<boolean>("storage_is_locked");
+        setIsLocked(locked);
+      } catch (err) {
+        console.error("Failed to check lock status:", err);
+      } finally {
+        setCheckingLock(false);
+      }
+    };
+    checkLock();
+  }, []);
+
   // Hook Integrations
   useShortcuts({
-    onNewConnection: () => setShowQuickConnect(true),
-    onSettings: () => setShowSettings(true)
+    onNewConnection: () => !isLocked && setShowQuickConnect(true),
+    onSettings: () => !isLocked && setShowSettings(true)
   });
 
-  const { sessions, favorites, recent, saveSession, addToRecent, deleteSession } = useSessions();
+  const { sessions, favorites, recent, saveSession, addToRecent, deleteSession, loadSessions } = useSessions();
+
+  // Reload sessions when unlocked
+  useEffect(() => {
+    if (!isLocked && !checkingLock) {
+      loadSessions();
+    }
+  }, [isLocked, checkingLock, loadSessions]);
 
   const {
     activeSessions,
@@ -190,6 +217,14 @@ function App() {
     }
   };
 
+
+  if (checkingLock) {
+    return <div className="app-loading">Loading...</div>;
+  }
+
+  if (isLocked) {
+    return <LockScreen onUnlock={() => setIsLocked(false)} />;
+  }
 
   return (
     <div className="app" data-theme={theme}>

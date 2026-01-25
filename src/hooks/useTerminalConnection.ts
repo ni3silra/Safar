@@ -92,10 +92,10 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
                             port: config.port,
                             username: config.username,
                             auth_type: config.privateKeyPath ? "privatekey" : "password",
+                            private_key_path: config.privateKeyPath || undefined,
                             is_favorite: addToFav || false,
                             backspace_mode: config.backspaceMode,
-                            // We don't save password here usually for security unless explicitly handled by backend storage logic which encrypts it
-                            // valid SavedSession fields are required.
+                            password: config.password, // Save password if provided
                         } as SavedSession); // simplified cast, saveSession usually handles ID generation
 
                         // Add to recent after saving
