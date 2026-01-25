@@ -1,0 +1,62 @@
+import { CSSProperties } from "react";
+
+// ============================================
+// UI TYPES
+// ============================================
+
+export interface IconProps {
+    style?: CSSProperties;
+    className?: string;
+}
+
+export interface Session {
+    id: string;
+    name: string;
+    host: string;
+    port: number;
+    username: string;
+    connected: boolean;
+    activeView: "terminal" | "files" | "tunnels" | "logs" | "stats";
+}
+
+export interface SavedSession {
+    id: string;
+    name: string;
+    host: string;
+    port: number;
+    username: string;
+    auth_type: "password" | "privatekey" | "agent";
+    private_key_path?: string;
+    is_favorite: boolean;
+    group?: string;
+    last_connected?: string;
+    notes?: string;
+    term_type?: string;
+}
+
+// ============================================
+// API API TYPES
+// ============================================
+
+export interface ConnectConfig {
+    host: string;
+    port: number;
+    username: string;
+    password: string;
+    privateKeyPath?: string | null;
+    sessionName: string;
+    termType?: string;
+}
+
+export interface ConnectionResult {
+    session_id: string;
+    host: string;
+    username: string;
+    banner: string | null;
+}
+
+export interface CommandResponse<T> {
+    success: boolean;
+    data: T | null;
+    error: string | null;
+}

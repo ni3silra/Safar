@@ -52,6 +52,7 @@ pub struct ConnectionConfig {
     #[serde(skip_serializing)]
     pub private_key_path: Option<String>,
     pub session_name: Option<String>,
+    pub term_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,8 +187,10 @@ impl SshManager {
         })?;
 
         // Request PTY
+        // Request PTY
+        let term = config.term_type.as_deref().unwrap_or("xterm-256color");
         channel
-            .request_pty("xterm-256color", None, Some((80, 24, 0, 0)))
+            .request_pty(term, None, Some((80, 24, 0, 0)))
             .map_err(|e| SshError::ChannelError(format!("Failed to request PTY: {}", e)))?;
 
         // Start shell

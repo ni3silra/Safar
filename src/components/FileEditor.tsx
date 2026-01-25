@@ -7,6 +7,7 @@ interface FileEditorProps {
     sessionId: string;
     filePath: string; // Remote absolute path
     onClose: () => void;
+    readOnly?: boolean;
 }
 
 interface CommandResponse<T> {
@@ -15,7 +16,7 @@ interface CommandResponse<T> {
     error: string | null;
 }
 
-export function FileEditor({ sessionId, filePath, onClose }: FileEditorProps) {
+export function FileEditor({ sessionId, filePath, onClose, readOnly }: FileEditorProps) {
     const [content, setContent] = useState("");
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -115,52 +116,111 @@ export function FileEditor({ sessionId, filePath, onClose }: FileEditorProps) {
         }}>
             {/* Toolbar */}
             <div style={{
-                height: "36px",
                 background: "var(--bg-secondary)",
                 borderBottom: "1px solid var(--border-color)",
+                padding: "8px 12px",
                 display: "flex",
-                alignItems: "center",
-                padding: "0 12px",
-                justifyContent: "space-between"
+                flexDirection: "column",
+                gap: "6px"
             }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                    <span style={{ fontWeight: 600, fontSize: "13px" }}>{fileName}</span>
-                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{filePath}</span>
-                    {saving && <span style={{ fontSize: "11px", color: "var(--col-blue)" }}>Saving...</span>}
-                    {error && <span style={{ fontSize: "11px", color: "var(--col-red)" }}>{error}</span>}
+                {/* Path breadcrumb */}
+                <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    fontSize: "12px",
+                    fontFamily: "monospace",
+                    color: "var(--text-muted)",
+                    background: "var(--bg-tertiary)",
+                    padding: "6px 10px",
+                    borderRadius: "4px"
+                }}>
+                    <span style={{ color: "var(--col-blue)" }}>📁</span>
+                    <span style={{ color: "var(--text-primary)" }}>{filePath}</span>
                 </div>
-                <div style={{ display: "flex", gap: "8px" }}>
-                    <button
-                        className="btn-sm"
-                        onClick={handleSave}
-                        disabled={saving || loading}
-                        style={{
+
+                {/* Filename and actions */}
+                <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between"
+                }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                        <span style={{
+                            fontWeight: 600,
+                            fontSize: "14px",
+                            color: "var(--text-primary)"
+                        }}>
+                            {fileName}
+                        </span>
+                        <span style={{
+                            fontSize: "10px",
+                            padding: "2px 6px",
                             background: "var(--col-blue)",
                             color: "white",
-                            border: "none",
-                            borderRadius: "4px",
-                            padding: "4px 12px",
-                            cursor: "pointer",
-                            fontSize: "12px"
-                        }}
-                    >
-                        Save
-                    </button>
-                    <button
-                        className="btn-sm"
-                        onClick={onClose}
-                        style={{
-                            background: "transparent",
-                            color: "var(--text-primary)",
-                            border: "1px solid var(--border-color)",
-                            borderRadius: "4px",
-                            padding: "4px 12px",
-                            cursor: "pointer",
-                            fontSize: "12px"
-                        }}
-                    >
-                        Close
-                    </button>
+                            borderRadius: "3px",
+                            textTransform: "uppercase"
+                        }}>
+                            {language}
+                        </span>
+                        {saving && <span style={{ fontSize: "12px", color: "var(--col-blue)" }}>⏳ Saving...</span>}
+                        {error && <span style={{ fontSize: "12px", color: "var(--col-red)" }}>⚠ {error}</span>}
+                        {readOnly && (
+                            <span style={{
+                                fontSize: "10px",
+                                padding: "2px 6px",
+                                background: "var(--accent-warning)",
+                                color: "var(--bg-primary)",
+                                borderRadius: "3px",
+                                textTransform: "uppercase",
+                                fontWeight: 700
+                            }}>
+                                Read Only
+                            </span>
+                        )}
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                        {!readOnly && (
+                            <button
+                                onClick={handleSave}
+                                disabled={saving || loading}
+                                style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "6px",
+                                    background: "var(--col-green)",
+                                    color: "white",
+                                    border: "none",
+                                    borderRadius: "4px",
+                                    padding: "6px 14px",
+                                    cursor: saving || loading ? "not-allowed" : "pointer",
+                                    fontSize: "12px",
+                                    fontWeight: 500,
+                                    opacity: saving || loading ? 0.6 : 1
+                                }}
+                            >
+                                💾 Save
+                            </button>
+                        )}
+                        <button
+                            onClick={onClose}
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                background: "transparent",
+                                color: "var(--text-primary)",
+                                border: "1px solid var(--border-color)",
+                                borderRadius: "4px",
+                                padding: "6px 14px",
+                                cursor: "pointer",
+                                fontSize: "12px",
+                                fontWeight: 500
+                            }}
+                        >
+                            ✕ Close
+                        </button>
+                    </div>
                 </div>
             </div>
 
