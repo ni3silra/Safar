@@ -11,6 +11,7 @@ interface QuickConnectModalProps {
         password: string;
         privateKeyPath?: string | null;
         sessionName: string;
+        termType?: string;
     }, saveSession?: boolean, saveFavorite?: boolean) => void;
 }
 
@@ -39,8 +40,7 @@ export function QuickConnectModal({ onClose, onConnect }: QuickConnectModalProps
             password,
             privateKeyPath,
             sessionName,
-            // Pass advanced options for future backend support
-            // remoteCommand, backspaceMode, terminalType 
+            termType: terminalType,
         }, saveForLater, addToFavorites);
     };
 
@@ -223,6 +223,7 @@ export function QuickConnectModal({ onClose, onConnect }: QuickConnectModalProps
                                         <option value="xterm-256color">xterm-256color (Default)</option>
                                         <option value="xterm">xterm</option>
                                         <option value="vt100">vt100</option>
+                                        <option value="TN6530">TN6530 (HP NonStop)</option>
                                         <option value="vt220">vt220</option>
                                         <option value="linux">linux</option>
                                         <option value="dumb">dumb</option>

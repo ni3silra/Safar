@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Toaster, toast } from 'sonner';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import "./styles/globals.css";
 import "./styles/App.css";
 import TerminalComponent from "./components/Terminal";
@@ -12,6 +14,8 @@ import { TunnelManager } from "./components/TunnelManager";
 // LockScreen disabled - import removed
 import { Icons } from "./components/Icons";
 import { Session, ConnectionResult, CommandResponse } from "./types";
+import { SessionLogs, LogEntry } from "./components/SessionLogs";
+import { SessionStats } from "./components/SessionStats";
 
 
 
@@ -37,6 +41,25 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [sidebarView, setSidebarView] = useState<"sessions" | "snippets">("sessions");
+
+  // Logs State
+  const [sessionLogs, setSessionLogs] = useState<Record<string, LogEntry[]>>({});
+
+  const addLog = (sessionId: string, message: string, level: LogEntry["level"] = "info", source: LogEntry["source"] = "SSH") => {
+    setSessionLogs(prev => {
+      const current = prev[sessionId] || [];
+      return {
+        ...prev,
+        [sessionId]: [...current, {
+          id: crypto.randomUUID(),
+          timestamp: Date.now(),
+          level,
+          message,
+          source
+        }]
+      };
+    });
+  };
 
   // Settings State (persisted)
   const [appSettings, setAppSettings] = useState<AppSettings>(() => {
@@ -90,7 +113,33 @@ function App() {
       {theme === "dark" ? <Icons.Sun /> : <Icons.Moon />}
     </button>
   </div>
-  const { favorites, recent, saveSession, addToRecent } = useSessions();
+  const { sessions, favorites, recent, saveSession, addToRecent } = useSessions();
+
+  const handleExport = async () => {
+    try {
+      const path = await save({
+        filters: [{
+          name: 'Safar Sessions',
+          extensions: ['json']
+        }]
+      });
+
+      if (path) {
+        // Sanitize: ensure no passwords are mistakenly part of the object if they ever crept in
+        const exportData = sessions.map(s => {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { ...rest } = s;
+          return rest;
+        });
+
+        await writeTextFile(path, JSON.stringify(exportData, null, 2));
+        toast.success(`Succesfully exported ${sessions.length} sessions`);
+      }
+    } catch (err) {
+      console.error("Export failed:", err);
+      toast.error("Failed to export sessions");
+    }
+  };
 
   // Active connection state
   const [activeSessions, setActiveSessions] = useState<Session[]>([]);
@@ -102,7 +151,7 @@ function App() {
 
   const derivedActiveSession = activeSessions.find(s => s.id === activeSessionId);
 
-  const updateSessionView = (sessionId: string, view: "terminal" | "files" | "tunnels") => {
+  const updateSessionView = (sessionId: string, view: Session["activeView"]) => {
     setActiveSessions((prev) =>
       prev.map((s) => (s.id === sessionId ? { ...s, activeView: view } : s))
     );
@@ -119,6 +168,7 @@ function App() {
       password: string;
       privateKeyPath?: string | null;
       sessionName: string;
+      termType?: string;
     },
     saveForLater?: boolean,
     addToFav?: boolean
@@ -136,6 +186,7 @@ function App() {
           password: config.password || null,
           privateKeyPath: config.privateKeyPath || null,
           sessionName: config.sessionName || `${config.username}@${config.host}`,
+          term_type: config.termType || null,
         },
       });
 
@@ -153,6 +204,9 @@ function App() {
         setActiveSessionId(newSession.id);
         setConnectionStatus("connected");
         setStatusMessage(`Connected to ${config.username}@${config.host}`);
+
+        addLog(newSession.id, `Connected to ${response.data.host}`, "success", "SSH");
+        if (response.data.banner) addLog(newSession.id, `Banner: ${response.data.banner}`, "info", "SSH");
 
         // Save session for later if requested
         if (saveForLater) {
@@ -265,6 +319,7 @@ function App() {
           favorites={favorites}
           recent={recent}
           onConnect={handleConnect}
+          onExport={handleExport}
         />
 
         {/* Content Area */}
@@ -362,6 +417,40 @@ function App() {
                   >
                     <Icons.Zap style={{ width: 12, height: 12 }} /> Tunnels
                   </button>
+                  <button
+                    onClick={() => updateSessionView(derivedActiveSession.id, "logs")}
+                    style={{
+                      background: derivedActiveSession.activeView === "logs" ? "var(--bg-primary)" : "transparent",
+                      color: derivedActiveSession.activeView === "logs" ? "var(--col-blue)" : "var(--text-muted)",
+                      border: "none",
+                      borderTop: derivedActiveSession.activeView === "logs" ? "2px solid var(--col-blue)" : "2px solid transparent",
+                      padding: "0 12px",
+                      height: "100%",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                      fontWeight: derivedActiveSession.activeView === "logs" ? "600" : "normal",
+                      display: "flex", alignItems: "center", gap: "6px"
+                    }}
+                  >
+                    <Icons.Clock style={{ width: 12, height: 12 }} /> Logs
+                  </button>
+                  <button
+                    onClick={() => updateSessionView(derivedActiveSession.id, "stats")}
+                    style={{
+                      background: derivedActiveSession.activeView === "stats" ? "var(--bg-primary)" : "transparent",
+                      color: derivedActiveSession.activeView === "stats" ? "var(--col-blue)" : "var(--text-muted)",
+                      border: "none",
+                      borderTop: derivedActiveSession.activeView === "stats" ? "2px solid var(--col-blue)" : "2px solid transparent",
+                      padding: "0 12px",
+                      height: "100%",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                      fontWeight: derivedActiveSession.activeView === "stats" ? "600" : "normal",
+                      display: "flex", alignItems: "center", gap: "6px"
+                    }}
+                  >
+                    <Icons.Shield style={{ width: 12, height: 12 }} /> Info
+                  </button>
                 </div>
 
                 {/* Session Content */}
@@ -389,6 +478,18 @@ function App() {
                     height: "100%"
                   }}>
                     <TunnelManager sessionId={derivedActiveSession.id} />
+                  </div>
+                  <div style={{
+                    display: derivedActiveSession.activeView === "logs" ? "block" : "none",
+                    height: "100%"
+                  }}>
+                    <SessionLogs logs={sessionLogs[derivedActiveSession.id] || []} />
+                  </div>
+                  <div style={{
+                    display: derivedActiveSession.activeView === "stats" ? "block" : "none",
+                    height: "100%"
+                  }}>
+                    <SessionStats session={derivedActiveSession} />
                   </div>
                 </div>
               </div>

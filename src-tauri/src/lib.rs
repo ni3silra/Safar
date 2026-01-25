@@ -83,6 +83,7 @@ pub struct ConnectParams {
     pub password: Option<String>,
     pub private_key_path: Option<String>,
     pub session_name: Option<String>,
+    pub term_type: Option<String>,
 }
 
 /// Connect to an SSH server with PTY (interactive terminal)
@@ -99,6 +100,7 @@ fn ssh_connect(
         password: params.password,
         private_key_path: params.private_key_path,
         session_name: params.session_name,
+        term_type: params.term_type,
     };
 
     match state.ssh_manager.connect_with_pty(config, app) {
@@ -497,6 +499,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .manage(AppState::new())
         .setup(|app| {
             // Initialize session storage with app data directory

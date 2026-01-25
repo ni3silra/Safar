@@ -16,7 +16,7 @@ export interface Session {
     port: number;
     username: string;
     connected: boolean;
-    activeView: "terminal" | "files" | "tunnels";
+    activeView: "terminal" | "files" | "tunnels" | "logs" | "stats";
 }
 
 export interface SavedSession {
@@ -31,6 +31,7 @@ export interface SavedSession {
     group?: string;
     last_connected?: string;
     notes?: string;
+    term_type?: string;
 }
 
 // ============================================
@@ -44,6 +45,7 @@ export interface ConnectConfig {
     password: string;
     privateKeyPath?: string | null;
     sessionName: string;
+    termType?: string;
 }
 
 export interface ConnectionResult {

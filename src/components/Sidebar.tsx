@@ -20,6 +20,7 @@ interface SidebarProps {
     favorites: SavedSession[];
     recent: SavedSession[];
     onConnect: (config: ConnectConfig) => void;
+    onExport: () => void;
 }
 
 export function Sidebar({
@@ -33,6 +34,7 @@ export function Sidebar({
     favorites,
     recent,
     onConnect,
+    onExport,
 }: SidebarProps) {
     return (
         <div className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
@@ -100,13 +102,21 @@ export function Sidebar({
             {!sidebarCollapsed && sidebarView === "sessions" && (
                 <div className="sidebar-content">
                     {/* Search */}
-                    <div style={{ padding: "var(--space-2) var(--space-3)" }}>
+                    <div style={{ padding: "var(--space-2) var(--space-3)", display: "flex", gap: "8px" }}>
                         <input
                             type="text"
                             className="input"
                             placeholder="Search sessions..."
-                            style={{ fontSize: "var(--text-xs)" }}
+                            style={{ fontSize: "var(--text-xs)", flex: 1 }}
                         />
+                        <button
+                            className="icon-btn"
+                            onClick={onExport}
+                            data-tooltip="Export Sessions"
+                            style={{ padding: "4px" }}
+                        >
+                            <Icons.Download />
+                        </button>
                     </div>
 
                     {/* Active Sessions */}
