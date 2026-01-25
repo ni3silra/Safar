@@ -41,6 +41,8 @@ pub struct SavedSession {
     pub host: String,
     pub port: u16,
     pub username: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
     #[serde(default)]
     pub auth_type: AuthType,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -53,6 +55,12 @@ pub struct SavedSession {
     pub last_connected: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub term_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backspace_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -90,12 +98,16 @@ impl SavedSession {
             host,
             port,
             username,
+            password: None,
             auth_type: AuthType::Password,
             private_key_path: None,
             is_favorite: false,
             group: None,
             last_connected: None,
             notes: None,
+            term_type: None,
+            remote_command: None,
+            backspace_mode: None,
         }
     }
 }

@@ -17,6 +17,7 @@ export interface Session {
     username: string;
     connected: boolean;
     activeView: "terminal" | "files" | "tunnels" | "logs" | "stats";
+    backspaceMode?: string;
 }
 
 export interface SavedSession {
@@ -25,6 +26,7 @@ export interface SavedSession {
     host: string;
     port: number;
     username: string;
+    password?: string;
     auth_type: "password" | "privatekey" | "agent";
     private_key_path?: string;
     is_favorite: boolean;
@@ -32,6 +34,8 @@ export interface SavedSession {
     last_connected?: string;
     notes?: string;
     term_type?: string;
+    remote_command?: string;
+    backspace_mode?: string;
 }
 
 // ============================================
@@ -46,6 +50,8 @@ export interface ConnectConfig {
     privateKeyPath?: string | null;
     sessionName: string;
     termType?: string;
+    remoteCommand?: string;
+    backspaceMode?: string;
 }
 
 export interface ConnectionResult {

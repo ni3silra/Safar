@@ -60,6 +60,9 @@ export function useSessions() {
                     is_favorite: session.is_favorite || false,
                     group: session.group,
                     notes: session.notes,
+                    password: session.password,
+                    term_type: session.term_type,
+                    remote_command: session.remote_command,
                 };
 
                 const res = await invoke<CommandResponse<SavedSession>>("sessions_save", {

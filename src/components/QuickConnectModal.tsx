@@ -12,24 +12,38 @@ interface QuickConnectModalProps {
         privateKeyPath?: string | null;
         sessionName: string;
         termType?: string;
+        remoteCommand?: string;
+        backspaceMode?: string;
     }, saveSession?: boolean, saveFavorite?: boolean) => void;
+    initialConfig?: {
+        host: string;
+        port: number;
+        username: string;
+        sessionName: string;
+        password?: string;
+        privateKeyPath?: string | null;
+        remoteCommand?: string;
+        termType?: string;
+        backspaceMode?: string;
+    };
+    mode?: "connect" | "edit";
 }
 
-export function QuickConnectModal({ onClose, onConnect }: QuickConnectModalProps) {
-    const [host, setHost] = useState("");
-    const [port, setPort] = useState(22);
-    const [username, setUsername] = useState("");
-    const [password, setPassword] = useState("");
-    const [privateKeyPath, setPrivateKeyPath] = useState<string | null>(null);
-    const [sessionName, setSessionName] = useState("");
-    const [saveForLater, setSaveForLater] = useState(false);
-    const [addToFavorites, setAddToFavorites] = useState(false);
+export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "connect" }: QuickConnectModalProps) {
+    const [host, setHost] = useState(initialConfig?.host || "");
+    const [port, setPort] = useState(initialConfig?.port || 22);
+    const [username, setUsername] = useState(initialConfig?.username || "");
+    const [password, setPassword] = useState(initialConfig?.password || "");
+    const [privateKeyPath, setPrivateKeyPath] = useState<string | null>(initialConfig?.privateKeyPath || null);
+    const [sessionName, setSessionName] = useState(initialConfig?.sessionName || "");
+    const [saveForLater, setSaveForLater] = useState(mode === "edit");
+    const [addToFavorites, setAddToFavorites] = useState(false); // Can be passed if needed
 
     // PuTTY-style Advanced Options
-    const [showAdvanced, setShowAdvanced] = useState(false);
-    const [remoteCommand, setRemoteCommand] = useState("");
+    const [showAdvanced, setShowAdvanced] = useState(!!(initialConfig?.remoteCommand || initialConfig?.termType));
+    const [remoteCommand, setRemoteCommand] = useState(initialConfig?.remoteCommand || "");
     const [backspaceMode, setBackspaceMode] = useState<"auto" | "ctrl-h" | "ctrl-?">("auto");
-    const [terminalType, setTerminalType] = useState("xterm-256color");
+    const [terminalType, setTerminalType] = useState(initialConfig?.termType || "xterm-256color");
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -41,6 +55,8 @@ export function QuickConnectModal({ onClose, onConnect }: QuickConnectModalProps
             privateKeyPath,
             sessionName,
             termType: terminalType,
+            remoteCommand: remoteCommand || undefined,
+            backspaceMode: backspaceMode,
         }, saveForLater, addToFavorites);
     };
 
@@ -48,7 +64,7 @@ export function QuickConnectModal({ onClose, onConnect }: QuickConnectModalProps
         try {
             const file = await openDialog({
                 multiple: false,
-                filters: [{ name: 'Key Files', extensions: ['pem', 'ppk', 'key', 'txt', 'pub'] }]
+                filters: [{ name: 'Key Files', extensions: ['pem', 'ppk', 'key', 'txt', 'pub', '*'] }]
             });
             if (file) {
                 setPrivateKeyPath(file as string);
@@ -63,7 +79,7 @@ export function QuickConnectModal({ onClose, onConnect }: QuickConnectModalProps
         <div className="modal-backdrop" onClick={onClose}>
             <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "500px" }}>
                 <div className="modal-header">
-                    <h2 className="modal-title">New SSH Connection</h2>
+                    <h2 className="modal-title">{mode === "edit" ? "Edit Session" : "New SSH Connection"}</h2>
                     <button className="icon-btn" onClick={onClose}>
                         <Icons.X />
                     </button>
@@ -248,64 +264,66 @@ export function QuickConnectModal({ onClose, onConnect }: QuickConnectModalProps
                             </div>
                         )}
 
-                        {/* Save Session Options */}
-                        <div style={{
-                            marginTop: "var(--space-4)",
-                            padding: "var(--space-3)",
-                            background: "var(--bg-secondary)",
-                            borderRadius: "8px",
-                            border: "1px solid var(--border-color)"
-                        }}>
-                            <label style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "12px",
-                                cursor: "pointer"
+                        {/* Save Session Options - Hide in edit mode or show differently */}
+                        {mode === "connect" && (
+                            <div style={{
+                                marginTop: "var(--space-4)",
+                                padding: "var(--space-3)",
+                                background: "var(--bg-secondary)",
+                                borderRadius: "8px",
+                                border: "1px solid var(--border-color)"
                             }}>
-                                <input
-                                    type="checkbox"
-                                    checked={saveForLater}
-                                    onChange={(e) => setSaveForLater(e.target.checked)}
-                                    style={{
-                                        width: "18px",
-                                        height: "18px",
-                                        accentColor: "var(--col-blue)"
-                                    }}
-                                />
-                                <span style={{ fontSize: "14px", fontWeight: 500 }}>Save this connection for later</span>
-                            </label>
-
-                            {saveForLater && (
                                 <label style={{
                                     display: "flex",
                                     alignItems: "center",
                                     gap: "12px",
-                                    cursor: "pointer",
-                                    marginTop: "12px",
-                                    marginLeft: "30px"
+                                    cursor: "pointer"
                                 }}>
                                     <input
                                         type="checkbox"
-                                        checked={addToFavorites}
-                                        onChange={(e) => setAddToFavorites(e.target.checked)}
+                                        checked={saveForLater}
+                                        onChange={(e) => setSaveForLater(e.target.checked)}
                                         style={{
                                             width: "18px",
                                             height: "18px",
-                                            accentColor: "var(--col-yellow)"
+                                            accentColor: "var(--col-blue)"
                                         }}
                                     />
-                                    <Icons.Star style={{ width: 16, height: 16, color: addToFavorites ? "var(--col-yellow)" : "var(--text-muted)" }} />
-                                    <span style={{ fontSize: "14px", color: "var(--text-secondary)" }}>Add to favorites</span>
+                                    <span style={{ fontSize: "14px", fontWeight: 500 }}>Save this connection for later</span>
                                 </label>
-                            )}
-                        </div>
+
+                                {saveForLater && (
+                                    <label style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "12px",
+                                        cursor: "pointer",
+                                        marginTop: "12px",
+                                        marginLeft: "30px"
+                                    }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={addToFavorites}
+                                            onChange={(e) => setAddToFavorites(e.target.checked)}
+                                            style={{
+                                                width: "18px",
+                                                height: "18px",
+                                                accentColor: "var(--col-yellow)"
+                                            }}
+                                        />
+                                        <Icons.Star style={{ width: 16, height: 16, color: addToFavorites ? "var(--col-yellow)" : "var(--text-muted)" }} />
+                                        <span style={{ fontSize: "14px", color: "var(--text-secondary)" }}>Add to favorites</span>
+                                    </label>
+                                )}
+                            </div>
+                        )}
                     </div>
                     <div className="modal-footer">
                         <button type="button" className="btn btn-secondary" onClick={onClose}>
                             Cancel
                         </button>
                         <button type="submit" className="btn btn-primary">
-                            Connect
+                            {mode === "edit" ? "Save Changes" : "Connect"}
                         </button>
                     </div>
                 </form>

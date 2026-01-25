@@ -21,6 +21,8 @@ interface SidebarProps {
     recent: SavedSession[];
     onConnect: (config: ConnectConfig) => void;
     onExport: () => void;
+    onEditSession: (session: SavedSession) => void;
+    onDeleteSession: (sessionId: string) => void;
 }
 
 export function Sidebar({
@@ -35,6 +37,8 @@ export function Sidebar({
     recent,
     onConnect,
     onExport,
+    onEditSession,
+    onDeleteSession,
 }: SidebarProps) {
     return (
         <div className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
@@ -166,6 +170,7 @@ export function Sidebar({
                                             username: saved.username,
                                             password: "", // Will need password prompt
                                             sessionName: saved.name,
+                                            backspaceMode: saved.backspace_mode,
                                         })
                                     }
                                     style={{ cursor: "pointer" }}
@@ -176,6 +181,14 @@ export function Sidebar({
                                     <div className="session-info">
                                         <div className="session-name">{saved.name}</div>
                                         <div className="session-host">{saved.username}@{saved.host}</div>
+                                    </div>
+                                    <div className="session-actions" onClick={(e) => e.stopPropagation()}>
+                                        <button className="icon-btn xs" onClick={() => onEditSession(saved)} title="Edit">
+                                            <Icons.Edit style={{ width: 12, height: 12 }} />
+                                        </button>
+                                        <button className="icon-btn xs danger" onClick={() => onDeleteSession(saved.id)} title="Delete">
+                                            <Icons.Trash style={{ width: 12, height: 12 }} />
+                                        </button>
                                     </div>
                                 </div>
                             ))}
@@ -201,6 +214,7 @@ export function Sidebar({
                                             username: saved.username,
                                             password: "", // Will need password prompt
                                             sessionName: saved.name,
+                                            backspaceMode: saved.backspace_mode,
                                         })
                                     }
                                     style={{ cursor: "pointer" }}
@@ -211,6 +225,14 @@ export function Sidebar({
                                     <div className="session-info">
                                         <div className="session-name">{saved.name}</div>
                                         <div className="session-host">{saved.username}@{saved.host}</div>
+                                    </div>
+                                    <div className="session-actions" onClick={(e) => e.stopPropagation()}>
+                                        <button className="icon-btn xs" onClick={() => onEditSession(saved)} title="Edit">
+                                            <Icons.Edit style={{ width: 12, height: 12 }} />
+                                        </button>
+                                        <button className="icon-btn xs danger" onClick={() => onDeleteSession(saved.id)} title="Delete">
+                                            <Icons.Trash style={{ width: 12, height: 12 }} />
+                                        </button>
                                     </div>
                                 </div>
                             ))}

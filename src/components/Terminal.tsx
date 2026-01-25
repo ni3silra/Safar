@@ -15,6 +15,7 @@ interface TerminalProps {
   fontSize?: number;
   themeName?: string;
   fontFamily?: string;
+  backspaceMode?: string;
 }
 
 // Minimal Icons for Terminal UI
@@ -57,7 +58,7 @@ const Icons = {
   )
 };
 
-export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, fontSize = 14, themeName = "Safar Dark", fontFamily = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace" }: TerminalProps) {
+export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, fontSize = 14, themeName = "Safar Dark", fontFamily = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace", backspaceMode }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -118,6 +119,8 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
       theme: initialTheme,
       allowProposedApi: true,
       scrollback: 10000,
+      macOptionIsMeta: true,
+      macOptionClickForcesSelection: true,
     });
 
     const fitAddon = new FitAddon();
@@ -137,6 +140,17 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
 
     // Key handlers
     terminal.attachCustomKeyEventHandler((e) => {
+      // Handle Custom Backspace
+      if (e.key === "Backspace" && e.type === "keydown") {
+        if (backspaceMode === "ctrl-h") {
+          sendData("\x08"); // ^H
+          return false;
+        } else if (backspaceMode === "ctrl-?") {
+          sendData("\x7f"); // ^?
+          return false;
+        }
+      }
+
       // Ctrl+F for Search
       if (e.ctrlKey && e.key === "f" && e.type === "keydown") {
         setShowSearch((prev) => !prev);

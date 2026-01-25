@@ -84,6 +84,7 @@ pub struct ConnectParams {
     pub private_key_path: Option<String>,
     pub session_name: Option<String>,
     pub term_type: Option<String>,
+    pub remote_command: Option<String>,
 }
 
 /// Connect to an SSH server with PTY (interactive terminal)
@@ -101,6 +102,7 @@ fn ssh_connect(
         private_key_path: params.private_key_path,
         session_name: params.session_name,
         term_type: params.term_type,
+        remote_command: params.remote_command,
     };
 
     match state.ssh_manager.connect_with_pty(config, app) {
