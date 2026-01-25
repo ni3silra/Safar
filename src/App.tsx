@@ -10,7 +10,7 @@ import { useSessions } from "./hooks/useSessions";
 import { CommandPalette } from "./components/CommandPalette";
 import { ImportModal } from "./components/ImportModal";
 import { TunnelManager } from "./components/TunnelManager";
-import { LockScreen } from "./components/LockScreen";
+// LockScreen disabled - import removed
 
 // ============================================
 // TYPES
@@ -148,20 +148,7 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showQuickConnect, setShowQuickConnect] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  // Master lock disabled - set to false to skip lock screen
-  const [isLocked, setIsLocked] = useState(false);
-
-  // Initial Security Check
-  useEffect(() => {
-    // Only unlocking handled here; Initial check done inside LockScreen or we can track it here.
-    // Actually LockScreen handles the check. We just need to know if we should show it.
-    // Let's assume on mount we represent locked state, and LockScreen calls onUnlock when done.
-  }, []);
-
-  const handleUnlock = () => {
-    setIsLocked(false);
-    useSessions().loadSessions(); // Reload sessions after unlock
-  };
+  // Master lock disabled - lock screen feature removed
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarView, setSidebarView] = useState<"sessions" | "snippets">("sessions");
 
