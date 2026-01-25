@@ -17,6 +17,7 @@ export interface Session {
     username: string;
     connected: boolean;
     activeView: "terminal" | "files" | "tunnels" | "logs" | "stats";
+    backspaceMode?: string;
 }
 
 export interface SavedSession {

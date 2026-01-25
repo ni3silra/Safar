@@ -185,6 +185,7 @@ function App() {
       sessionName: string;
       termType?: string;
       remoteCommand?: string;
+      backspaceMode?: string;
     },
     saveForLater?: boolean,
     addToFav?: boolean
@@ -215,6 +216,7 @@ function App() {
         password: config.password, // Save password if provided
         term_type: config.termType,
         remote_command: config.remoteCommand,
+        backspace_mode: config.backspaceMode,
       });
       // Try to save password if provided?
       // saveSession usually handles persistence.
@@ -263,6 +265,7 @@ function App() {
           username: config.username,
           connected: true,
           activeView: "terminal",
+          backspaceMode: config.backspaceMode,
         };
         setActiveSessions((prev) => [...prev, newSession]);
         setActiveSessionId(newSession.id);
@@ -281,6 +284,7 @@ function App() {
               port: config.port,
               username: config.username,
               is_favorite: addToFav || false,
+              backspace_mode: config.backspaceMode,
             });
             // Add to recent after saving
             if (savedSession?.id) {
@@ -618,6 +622,7 @@ function App() {
             privateKeyPath: editingSession.private_key_path,
             password: editingSession.password,
             termType: editingSession.term_type,
+            backspaceMode: editingSession.backspace_mode,
             remoteCommand: editingSession.remote_command
           } : retryConfig}
         />

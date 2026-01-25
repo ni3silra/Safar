@@ -170,6 +170,7 @@ export function Sidebar({
                                             username: saved.username,
                                             password: "", // Will need password prompt
                                             sessionName: saved.name,
+                                            backspaceMode: saved.backspace_mode,
                                         })
                                     }
                                     style={{ cursor: "pointer" }}
@@ -213,6 +214,7 @@ export function Sidebar({
                                             username: saved.username,
                                             password: "", // Will need password prompt
                                             sessionName: saved.name,
+                                            backspaceMode: saved.backspace_mode,
                                         })
                                     }
                                     style={{ cursor: "pointer" }}
