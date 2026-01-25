@@ -64,12 +64,47 @@ const Icons = {
     )
 };
 
+type SortField = 'name' | 'modified' | 'size';
+type SortDirection = 'asc' | 'desc';
+
 export function FileBrowser({ sessionId }: FileBrowserProps) {
     const [currentPath, setCurrentPath] = useState(".");
     const [files, setFiles] = useState<FileEntry[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [editingFile, setEditingFile] = useState<string | null>(null);
+
+    // Sorting state
+    const [sortField, setSortField] = useState<SortField>('name');
+    const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
+    // Sorted files (folders first, then apply sort)
+    const sortedFiles = [...files].sort((a, b) => {
+        // Folders always come first
+        if (a.is_dir !== b.is_dir) {
+            return a.is_dir ? -1 : 1;
+        }
+
+        let comparison = 0;
+        if (sortField === 'name') {
+            comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        } else if (sortField === 'modified') {
+            comparison = a.modified - b.modified;
+        } else if (sortField === 'size') {
+            comparison = a.size - b.size;
+        }
+
+        return sortDirection === 'asc' ? comparison : -comparison;
+    });
+
+    const handleSort = (field: SortField) => {
+        if (sortField === field) {
+            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(field);
+            setSortDirection('asc');
+        }
+    };
 
     const formatSize = (bytes: number) => {
         if (bytes === 0) return "0 B";
@@ -81,6 +116,30 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
 
     const formatDate = (timestamp: number) => {
         return new Date(timestamp * 1000).toLocaleString();
+    };
+
+    const formatPermissions = (perm: string) => {
+        if (!perm) return "";
+        // Take last 3 chars (e.g., 100644 -> 644)
+        const p = perm.length > 3 ? perm.slice(-3) : perm;
+
+        const map: Record<string, string> = {
+            '0': '---', '1': '--x', '2': '-w-', '3': '-wx',
+            '4': 'r--', '5': 'r-x', '6': 'rw-', '7': 'rwx'
+        };
+
+        return p.split('').map(c => map[c] || '---').join('');
+    };
+
+    const isWritable = (perm: string) => {
+        if (!perm) return false;
+        // Take last 3 chars (e.g., 100644 -> 644)
+        const p = perm.length > 3 ? perm.slice(-3) : perm;
+
+        // Check User Write bit (2nd bit of first digit)
+        // 2 (010), 3 (011), 6 (110), 7 (111) have write bit set
+        const userPerm = parseInt(p.charAt(0));
+        return [2, 3, 6, 7].includes(userPerm);
     };
 
     const loadFiles = useCallback(async (path: string) => {
@@ -117,6 +176,10 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
             // Simple path joining logic - works for unix
             const newPath = currentPath === "." ? entry.name : `${currentPath}/${entry.name}`;
             loadFiles(newPath);
+        } else {
+            // Open file for editing on double-click
+            const fullPath = currentPath === "." ? entry.name : `${currentPath}/${entry.name}`;
+            setEditingFile(fullPath);
         }
     };
 
@@ -239,60 +302,136 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                         Error: {error}
                     </div>
                 ) : (
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", tableLayout: "fixed" }}>
                         <thead style={{ background: "var(--bg-secondary)", textAlign: "left", position: "sticky", top: 0 }}>
                             <tr>
-                                <th style={{ padding: "8px", borderBottom: "1px solid var(--border-color)" }}>Name</th>
-                                <th style={{ padding: "8px", borderBottom: "1px solid var(--border-color)", width: "100px" }}>Size</th>
-                                <th style={{ padding: "8px", borderBottom: "1px solid var(--border-color)", width: "180px" }}>Modified</th>
+                                <th
+                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-color)", width: "40%", cursor: "pointer", userSelect: "none" }}
+                                    onClick={() => handleSort('name')}
+                                >
+                                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                        Name
+                                        {sortField === 'name' && (
+                                            <span style={{ fontSize: "10px" }}>{sortDirection === 'asc' ? '▲' : '▼'}</span>
+                                        )}
+                                    </div>
+                                </th>
+                                <th
+                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-color)", width: "15%", textAlign: "right", cursor: "pointer", userSelect: "none" }}
+                                    onClick={() => handleSort('size')}
+                                >
+                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "6px" }}>
+                                        Size
+                                        {sortField === 'size' && (
+                                            <span style={{ fontSize: "10px" }}>{sortDirection === 'asc' ? '▲' : '▼'}</span>
+                                        )}
+                                    </div>
+                                </th>
+                                <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-color)", width: "15%", color: "var(--text-muted)" }}>Security</th>
+                                <th
+                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-color)", width: "30%", cursor: "pointer", userSelect: "none" }}
+                                    onClick={() => handleSort('modified')}
+                                >
+                                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                        Modified
+                                        {sortField === 'modified' && (
+                                            <span style={{ fontSize: "10px" }}>{sortDirection === 'asc' ? '▲' : '▼'}</span>
+                                        )}
+                                    </div>
+                                </th>
                             </tr>
                         </thead>
                         <tbody>
-                            {files.map((file) => (
-                                <tr
-                                    key={file.name}
-                                    style={{
-                                        cursor: file.is_dir ? "pointer" : "default",
-                                        borderBottom: "1px solid var(--border-color-subtle)"
-                                    }}
-                                    className="file-row"
-                                    onDoubleClick={() => handleNavigate(file)}
-                                >
-                                    <td style={{ padding: "6px 8px", display: "flex", alignItems: "center", gap: "8px" }}>
-                                        <span style={{ color: file.is_dir ? "var(--col-blue)" : "var(--text-muted)" }}>
-                                            {file.is_dir ? <Icons.Folder /> : <Icons.File />}
-                                        </span>
-                                        {file.name}
-                                    </td>
-                                    <td style={{ padding: "6px 8px", color: "var(--text-muted)" }}>{file.is_dir ? "-" : formatSize(file.size)}</td>
-                                    <td style={{ padding: "6px 8px", color: "var(--text-muted)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                        {formatDate(file.modified)}
-                                        {!file.is_dir && (
-                                            <div style={{ display: "flex", gap: "4px" }}>
-                                                <button
-                                                    className="icon-btn-small"
-                                                    onClick={(e) => handleEdit(file, e)}
-                                                    title="Edit"
-                                                    style={{ border: "none", background: "none", cursor: "pointer", color: "var(--text-primary)" }}
-                                                >
-                                                    <Icons.Edit />
-                                                </button>
-                                                <button
-                                                    className="icon-btn-small"
-                                                    onClick={(e) => handleDownload(file, e)}
-                                                    title="Download"
-                                                    style={{ border: "none", background: "none", cursor: "pointer", color: "var(--text-primary)" }}
-                                                >
-                                                    <Icons.Download />
-                                                </button>
-                                            </div>
-                                        )}
-                                    </td>
-                                </tr>
-                            ))}
+                            {sortedFiles.map((file) => {
+                                const writable = !file.is_dir && isWritable(file.permissions);
+                                return (
+                                    <tr
+                                        key={file.name}
+                                        style={{
+                                            cursor: "pointer",
+                                            borderBottom: "1px solid var(--border-color-subtle)"
+                                        }}
+                                        className="file-row"
+                                        onDoubleClick={() => handleNavigate(file)}
+                                    >
+                                        <td style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: "8px", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                            <span style={{ color: file.is_dir ? "var(--col-blue)" : "var(--text-muted)", flexShrink: 0 }}>
+                                                {file.is_dir ? <Icons.Folder /> : <Icons.File />}
+                                            </span>
+                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+                                        </td>
+                                        <td style={{ padding: "8px 12px", color: "var(--text-muted)", textAlign: "right" }}>{file.is_dir ? "-" : formatSize(file.size)}</td>
+                                        <td style={{ padding: "8px 12px", color: "var(--text-muted)", fontFamily: "monospace", fontSize: "12px" }}>{formatPermissions(file.permissions)}</td>
+                                        <td style={{ padding: "8px 12px", color: "var(--text-muted)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                            {formatDate(file.modified)}
+                                            {!file.is_dir && (
+                                                <div style={{ display: "flex", gap: "6px", marginLeft: "12px" }}>
+                                                    <button
+                                                        onClick={(e) => handleEdit(file, e)}
+                                                        title={writable ? "Edit file" : "View file (Read Only)"}
+                                                        style={{
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: "4px",
+                                                            padding: "4px 10px",
+                                                            borderRadius: "4px",
+                                                            border: "1px solid var(--border-color)",
+                                                            background: "var(--bg-tertiary)",
+                                                            cursor: "pointer",
+                                                            color: writable ? "var(--col-blue)" : "var(--text-muted)",
+                                                            fontSize: "11px",
+                                                            fontWeight: 500,
+                                                            transition: "all 0.15s ease"
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            e.currentTarget.style.background = writable ? "var(--col-blue)" : "var(--bg-secondary)";
+                                                            e.currentTarget.style.color = writable ? "white" : "var(--text-primary)";
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            e.currentTarget.style.background = "var(--bg-tertiary)";
+                                                            e.currentTarget.style.color = writable ? "var(--col-blue)" : "var(--text-muted)";
+                                                        }}
+                                                    >
+                                                        {writable ? <Icons.Edit /> : <span style={{ fontSize: "14px" }}>👁</span>}
+                                                        {writable ? "Edit" : "View"}
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => handleDownload(file, e)}
+                                                        title="Download file"
+                                                        style={{
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: "4px",
+                                                            padding: "4px 10px",
+                                                            borderRadius: "4px",
+                                                            border: "1px solid var(--border-color)",
+                                                            background: "var(--bg-tertiary)",
+                                                            cursor: "pointer",
+                                                            color: "var(--col-green)",
+                                                            fontSize: "11px",
+                                                            fontWeight: 500,
+                                                            transition: "all 0.15s ease"
+                                                        }}
+                                                        onMouseEnter={(e) => {
+                                                            e.currentTarget.style.background = "var(--col-green)";
+                                                            e.currentTarget.style.color = "white";
+                                                        }}
+                                                        onMouseLeave={(e) => {
+                                                            e.currentTarget.style.background = "var(--bg-tertiary)";
+                                                            e.currentTarget.style.color = "var(--col-green)";
+                                                        }}
+                                                    >
+                                                        <Icons.Download /> Save
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </td>
+                                    </tr>
+                                )
+                            })}
                             {files.length === 0 && (
                                 <tr>
-                                    <td colSpan={3} style={{ padding: "20px", textAlign: "center", color: "var(--text-muted)" }}>
+                                    <td colSpan={4} style={{ padding: "20px", textAlign: "center", color: "var(--text-muted)" }}>
                                         Empty directory
                                     </td>
                                 </tr>
@@ -320,6 +459,12 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                     sessionId={sessionId}
                     filePath={editingFile}
                     onClose={() => setEditingFile(null)}
+                    readOnly={(() => {
+                        // Find the file permissions again to determine readOnly status
+                        const name = editingFile.split('/').pop();
+                        const file = files.find(f => f.name === name);
+                        return file && !file.is_dir ? !isWritable(file.permissions) : true;
+                    })()}
                 />
             )}
         </div>

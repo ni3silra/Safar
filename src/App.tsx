@@ -377,6 +377,7 @@ function App() {
                     padding: "12px",
                     cursor: "pointer",
                     fontWeight: sidebarView === "sessions" ? 600 : "normal",
+                    color: sidebarView === "sessions" ? "var(--text-primary)" : "var(--text-muted)",
                     display: "flex", alignItems: "center", justifyContent: "center", gap: "8px"
                   }}
                   onClick={() => setSidebarView("sessions")}
@@ -393,6 +394,7 @@ function App() {
                     padding: "12px",
                     cursor: "pointer",
                     fontWeight: sidebarView === "snippets" ? 600 : "normal",
+                    color: sidebarView === "snippets" ? "var(--text-primary)" : "var(--text-muted)",
                     display: "flex", alignItems: "center", justifyContent: "center", gap: "8px"
                   }}
                   onClick={() => setSidebarView("snippets")}
@@ -722,7 +724,6 @@ function App() {
         <QuickConnectModal
           onClose={() => setShowQuickConnect(false)}
           onConnect={handleConnect}
-          testServer={TEST_SERVER}
         />
       )}
       {/* Settings Modal */}
@@ -814,10 +815,9 @@ interface QuickConnectModalProps {
     privateKeyPath?: string | null;
     sessionName: string;
   }, saveSession?: boolean, saveFavorite?: boolean) => void;
-  testServer: typeof TEST_SERVER;
 }
 
-function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModalProps) {
+function QuickConnectModal({ onClose, onConnect }: QuickConnectModalProps) {
   const [host, setHost] = useState("");
   const [port, setPort] = useState(22);
   const [username, setUsername] = useState("");
@@ -860,14 +860,6 @@ function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModal
     } catch (e) {
       console.error("Failed to select key", e);
     }
-  };
-
-  const handleUseTestServer = () => {
-    setHost(testServer.host);
-    setPort(testServer.port);
-    setUsername(testServer.username);
-    setPassword(testServer.password);
-    setSessionName("Rebex Test Server");
   };
 
   return (
@@ -976,19 +968,24 @@ function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModal
             </div>
 
             {/* Advanced Options Toggle */}
-            <div style={{ marginTop: "var(--space-3)" }}>
+            <div style={{
+              marginTop: "var(--space-4)",
+              borderTop: "1px solid var(--border-color)",
+              paddingTop: "var(--space-3)"
+            }}>
               <button
                 type="button"
                 onClick={() => setShowAdvanced(!showAdvanced)}
                 style={{
                   background: "none",
                   border: "none",
-                  color: "var(--col-blue)",
+                  color: "var(--text-secondary)",
                   cursor: "pointer",
                   fontSize: "13px",
                   display: "flex",
                   alignItems: "center",
-                  gap: "6px"
+                  gap: "6px",
+                  padding: "0"
                 }}
               >
                 <Icons.Settings /> Advanced Options
@@ -998,10 +995,10 @@ function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModal
 
             {showAdvanced && (
               <div style={{
-                marginTop: "var(--space-2)",
+                marginTop: "var(--space-3)",
                 padding: "var(--space-3)",
-                background: "var(--bg-tertiary)",
-                borderRadius: "6px",
+                background: "var(--bg-secondary)",
+                borderRadius: "8px",
                 border: "1px solid var(--border-color)"
               }}>
                 {/* Remote Command */}
@@ -1014,11 +1011,11 @@ function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModal
                     value={remoteCommand}
                     onChange={(e) => setRemoteCommand(e.target.value)}
                   />
-                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Run command instead of shell after login</span>
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", display: "block" }}>Run command instead of shell after login</span>
                 </div>
 
                 {/* Terminal Type */}
-                <div className="form-group" style={{ marginTop: "var(--space-2)" }}>
+                <div className="form-group" style={{ marginTop: "var(--space-3)" }}>
                   <label className="form-label">Terminal Type</label>
                   <select
                     className="input"
@@ -1036,7 +1033,7 @@ function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModal
                 </div>
 
                 {/* Backspace Mode */}
-                <div className="form-group" style={{ marginTop: "var(--space-2)" }}>
+                <div className="form-group" style={{ marginTop: "var(--space-3)" }}>
                   <label className="form-label">Backspace Sends</label>
                   <select
                     className="input"
@@ -1048,40 +1045,59 @@ function QuickConnectModal({ onClose, onConnect, testServer }: QuickConnectModal
                     <option value="ctrl-h">Control-H (^H, ASCII 8)</option>
                     <option value="ctrl-?">Control-? (^?, ASCII 127)</option>
                   </select>
-                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Fix backspace issues with some servers</span>
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", display: "block" }}>Fix backspace issues with some servers</span>
                 </div>
               </div>
             )}
 
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={handleUseTestServer}
-              style={{ width: "100%", marginTop: "var(--space-3)" }}
-            >
-              <Icons.Zap />
-              Use Test Server (test.rebex.net)
-            </button>
-
-            <div style={{ marginTop: "var(--space-4)", borderTop: "1px solid var(--border-color)", paddingTop: "var(--space-3)" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", cursor: "pointer" }}>
+            {/* Save Session Options */}
+            <div style={{
+              marginTop: "var(--space-4)",
+              padding: "var(--space-3)",
+              background: "var(--bg-secondary)",
+              borderRadius: "8px",
+              border: "1px solid var(--border-color)"
+            }}>
+              <label style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                cursor: "pointer"
+              }}>
                 <input
                   type="checkbox"
                   checked={saveForLater}
                   onChange={(e) => setSaveForLater(e.target.checked)}
+                  style={{
+                    width: "18px",
+                    height: "18px",
+                    accentColor: "var(--col-blue)"
+                  }}
                 />
-                <span style={{ fontSize: "var(--text-sm)" }}>Save this connection for later</span>
+                <span style={{ fontSize: "14px", fontWeight: 500 }}>Save this connection for later</span>
               </label>
+
               {saveForLater && (
-                <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", cursor: "pointer", marginTop: "var(--space-2)", marginLeft: "var(--space-5)" }}>
+                <label style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  cursor: "pointer",
+                  marginTop: "12px",
+                  marginLeft: "30px"
+                }}>
                   <input
                     type="checkbox"
                     checked={addToFavorites}
                     onChange={(e) => setAddToFavorites(e.target.checked)}
+                    style={{
+                      width: "18px",
+                      height: "18px",
+                      accentColor: "var(--col-yellow)"
+                    }}
                   />
-                  <span style={{ fontSize: "var(--text-sm)", color: "var(--text-muted)" }}>
-                    <Icons.Star /> Add to favorites
-                  </span>
+                  <Icons.Star style={{ width: 16, height: 16, color: addToFavorites ? "var(--col-yellow)" : "var(--text-muted)" }} />
+                  <span style={{ fontSize: "14px", color: "var(--text-secondary)" }}>Add to favorites</span>
                 </label>
               )}
             </div>
