@@ -15,50 +15,40 @@ interface TerminalProps {
   fontSize?: number;
   themeName?: string;
   fontFamily?: string;
+  fontWeight?: string;
+  lineHeight?: number;
+  cursorStyle?: "block" | "underline" | "bar";
+  cursorBlink?: boolean;
+  scrollback?: number;
+  bellSound?: boolean;
+  copyOnSelect?: boolean;
   backspaceMode?: string;
+  isVisible?: boolean;
 }
 
-// Minimal Icons for Terminal UI
 interface TerminalData {
   session_id: string;
   data: string;
 }
 
-const Icons = {
-  Search: () => (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M11.742 10.344a6.5 6.5 0 10-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 001.415-1.414l-3.85-3.85a1.007 1.007 0 00-.115-.1zM12 6.5a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
-    </svg>
-  ),
-  Settings: () => (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M8 4.754a3.246 3.246 0 100 6.492 3.246 3.246 0 000-6.492zM5.754 8a2.246 2.246 0 114.492 0 2.246 2.246 0 01-4.492 0z" />
-      <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 01-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 01-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 01.52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 01-1.255-.52l-.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 011.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 01.52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 01-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 01-1.255-.52l-.094-.319z" />
-    </svg>
-  ),
-  Close: () => (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-      <path d="M3.5 3.5l5 5m0-5l-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  ),
-  Up: () => (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M8 5l-4 4h8l-4-4z" />
-    </svg>
-  ),
-  Down: () => (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M8 11l4-4H4l4 4z" />
-    </svg>
-  ),
-  Copy: () => (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M4 2a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2V4a2 2 0 00-2-2H4zm0 2h8v8H4V4zm-3 2a1 1 0 011-1h.5a.5.5 0 010 1H2v9a1 1 0 001 1h9a.5.5 0 010 1H3a2 2 0 01-2-2V6z" />
-    </svg>
-  )
-};
+import { Icons } from "./Icons";
 
-export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, fontSize = 14, themeName = "Safar Dark", fontFamily = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace", backspaceMode }: TerminalProps) {
+export function TerminalComponent({
+  sessionId,
+  onDisconnect: _onDisconnect,
+  fontSize = 14,
+  themeName = "Safar Dark",
+  fontFamily = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
+  fontWeight = "normal",
+  lineHeight = 1.2,
+  cursorStyle = "block",
+  cursorBlink = true,
+  scrollback = 1000,
+  bellSound = true,
+  copyOnSelect = true,
+  backspaceMode,
+  isVisible = true
+}: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -68,7 +58,6 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
   // UI State
   const [showSearch, setShowSearch] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  // Local settings UI toggle removed (controlled by App)
 
   // Send data to SSH server
   const sendData = useCallback(
@@ -87,40 +76,71 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
 
   // Safe fit function
   const safeFit = useCallback(() => {
-    if (fitAddonRef.current && xtermRef.current) {
-      try {
-        fitAddonRef.current.fit();
-      } catch (err) {
-        console.warn("[Terminal] Fit error (retrying):", err);
-        setTimeout(() => {
-          try {
-            fitAddonRef.current?.fit();
-          } catch (e) {
-            console.warn("[Terminal] Fit retry failed:", e);
-          }
-        }, 100);
-      }
+    // Only fit if visible and refs exist
+    if (!isVisible) return;
+    if (!terminalRef.current || !xtermRef.current || !fitAddonRef.current) return;
+
+    // Check strict dimensions to avoid XTerm RenderService crash
+    if (terminalRef.current.clientWidth === 0 || terminalRef.current.clientHeight === 0) {
+      // console.log("[Terminal] Skipping fit - 0 dimensions");
+      return;
     }
-  }, []);
+
+    try {
+      fitAddonRef.current.fit();
+    } catch (err) {
+      console.warn("[Terminal] Fit error (retrying):", err);
+      setTimeout(() => {
+        try {
+          if (terminalRef.current?.clientWidth && terminalRef.current?.clientHeight) {
+            fitAddonRef.current?.fit();
+          }
+        } catch (e) {
+          console.warn("[Terminal] Fit retry failed:", e);
+        }
+      }, 100);
+    }
+  }, [isVisible]);
+
+  // Re-fit when visibility changes
+  useEffect(() => {
+    if (isVisible) {
+      // Small delay to ensure layout is updated
+      setTimeout(safeFit, 50);
+    }
+  }, [isVisible, safeFit]);
 
   // Initialize Terminal
   useEffect(() => {
     if (!terminalRef.current) return;
 
-    console.log("[Terminal] Initializing for session:", sessionId);
+
 
     const initialTheme = TERMINAL_THEMES[themeName].colors;
 
+    // Don't init if container is invalid
+    if (terminalRef.current.clientWidth === 0) {
+      // This might happen if tab is hidden initially.
+      // We will init, but NOT fit yet.
+      // Or wait? Xterm needs to open on an element. 
+      // If element is display:none, xterm can open but renderer might choke on dimensions.
+      // We'll proceed but rely on safeFit guarding the fit call.
+    }
+
     const terminal = new Terminal({
-      cursorBlink: true,
-      cursorStyle: "block",
+      cursorBlink: cursorBlink,
+      cursorStyle: cursorStyle,
       fontSize: fontSize,
       fontFamily: fontFamily,
+      fontWeight: fontWeight as any, // Cast to avoid strict type mismatch if needed
+      lineHeight: lineHeight,
       theme: initialTheme,
       allowProposedApi: true,
-      scrollback: 10000,
+      scrollback: scrollback,
       macOptionIsMeta: true,
       macOptionClickForcesSelection: true,
+      // @ts-ignore - bellStyle exists in xterm.js but types might be outdated
+      bellStyle: bellSound ? "sound" : "none",
     });
 
     const fitAddon = new FitAddon();
@@ -135,8 +155,31 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
     fitAddonRef.current = fitAddon;
     searchAddonRef.current = searchAddon;
 
-    terminal.open(terminalRef.current);
-    terminal.write("\x1b[36m● Connecting to SSH session...\x1b[0m\r\n");
+    // Helper to safely open terminal only when dimensions are valid
+    const openTerminal = () => {
+      if (!terminalRef.current || !xtermRef.current) return;
+
+      // If already opened (element is set), skip
+      if (xtermRef.current.element) return;
+
+      if (terminalRef.current.clientWidth > 0 && terminalRef.current.clientHeight > 0) {
+        try {
+          xtermRef.current.open(terminalRef.current);
+          xtermRef.current.write("\x1b[36m● Connecting to SSH session...\x1b[0m\r\n");
+          safeFit();
+        } catch (err) {
+          console.error("[Terminal] Open error:", err);
+        }
+      } else {
+        // console.log("[Terminal] Waiting for dimensions...");
+        setTimeout(openTerminal, 50);
+      }
+    };
+
+    // Attempt to open
+    requestAnimationFrame(openTerminal);
+
+
 
     // Key handlers
     terminal.attachCustomKeyEventHandler((e) => {
@@ -174,6 +217,16 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
       return true;
     });
 
+    // Auto Copy Selection
+    terminal.onSelectionChange(() => {
+      if (copyOnSelect) {
+        const selection = terminal.getSelection();
+        if (selection) {
+          navigator.clipboard.writeText(selection).catch(console.error);
+        }
+      }
+    });
+
     terminal.onData((data) => sendData(data));
 
     terminal.onResize(({ cols, rows }) => {
@@ -182,14 +235,20 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
 
     // Listen for data
     let unlisten: UnlistenFn | null = null;
+    let isMounted = true;
+
     listen<TerminalData>("terminal-data", (event) => {
       if (event.payload.session_id === sessionId) {
         terminal.write(event.payload.data);
       }
     }).then((fn) => {
-      unlisten = fn;
-      unlistenRef.current = fn;
-      terminal.write("\x1b[32m● Connected! Waiting for shell...\x1b[0m\r\n\r\n");
+      if (!isMounted) {
+        fn(); // Unlisten immediately if already unmounted
+      } else {
+        unlisten = fn;
+        unlistenRef.current = fn;
+        terminal.write("\x1b[32m● Connected! Waiting for shell...\x1b[0m\r\n\r\n");
+      }
     });
 
     const handleResize = () => safeFit();
@@ -198,31 +257,41 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
     requestAnimationFrame(() => {
       setTimeout(() => {
         safeFit();
+        // Initial sync of size - but only if valid
         if (xtermRef.current) {
           const { cols, rows } = xtermRef.current;
-          invoke("ssh_resize", { sessionId, cols, rows }).catch(console.error);
+          // Only resize if cols/rows are valid (>0)
+          if (cols > 0 && rows > 0) {
+            invoke("ssh_resize", { sessionId, cols, rows }).catch(console.error);
+          }
+          terminal.focus();
         }
-        terminal.focus();
       }, 50);
     });
 
     return () => {
+      isMounted = false;
       window.removeEventListener("resize", handleResize);
       if (unlisten) unlisten();
       if (unlistenRef.current) unlistenRef.current();
       terminal.dispose();
     };
-  }, [sessionId, sendData, safeFit]);
+  }, [sessionId, sendData]); // Removed safeFit to prevent re-init on visibility change // Important: Adding dependencies here might cause re-init. Ideally we want to update options dynamically instead of re-init.
 
-  // Update Settings Effect
+  // Update Settings Effect (Dynamic Updates)
   useEffect(() => {
     if (xtermRef.current) {
       xtermRef.current.options.fontSize = fontSize;
       xtermRef.current.options.fontFamily = fontFamily;
+      xtermRef.current.options.fontWeight = fontWeight as any;
+      xtermRef.current.options.lineHeight = lineHeight;
+      xtermRef.current.options.cursorStyle = cursorStyle;
+      xtermRef.current.options.cursorBlink = cursorBlink;
+      xtermRef.current.options.scrollback = scrollback;
       xtermRef.current.options.theme = TERMINAL_THEMES[themeName].colors;
       safeFit();
     }
-  }, [fontSize, themeName, fontFamily, safeFit]);
+  }, [fontSize, themeName, fontFamily, fontWeight, lineHeight, cursorStyle, cursorBlink, scrollback, safeFit]);
 
   // Search Effect
   useEffect(() => {
@@ -239,37 +308,20 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
   const findPrev = () => searchAddonRef.current?.findPrevious(searchTerm);
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%", backgroundColor: TERMINAL_THEMES[themeName].colors.background }}>
+    <div className="terminal-container" style={{ backgroundColor: TERMINAL_THEMES[themeName].colors.background }}>
+      {/* We keep inline background color because it comes from the JS theme object which is dynamic */}
       <div
         ref={terminalRef}
-        style={{
-          width: "100%",
-          height: "100%",
-          padding: "8px",
-        }}
+        className="terminal-viewport"
       />
-
-
 
       {/* Search Bar */}
       {showSearch && (
-        <div style={{
-          position: "absolute",
-          top: "10px",
-          right: "60px",
-          zIndex: 20,
-          backgroundColor: "var(--bg-secondary)",
-          border: "1px solid var(--border-color)",
-          borderRadius: "4px",
-          display: "flex",
-          alignItems: "center",
-          padding: "4px",
-          boxShadow: "0 4px 6px rgba(0,0,0,0.3)",
-          gap: "4px"
-        }}>
+        <div className="terminal-search-bar">
           <input
             autoFocus
             type="text"
+            className="terminal-search-input"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             onKeyDown={(e) => {
@@ -279,25 +331,13 @@ export function TerminalComponent({ sessionId, onDisconnect: _onDisconnect, font
               if (e.key === "Escape") setShowSearch(false);
             }}
             placeholder="Find..."
-            style={{
-              background: "var(--input-bg)",
-              border: "none",
-              color: "var(--text-primary)",
-              outline: "none",
-              fontSize: "12px",
-              padding: "2px 4px",
-              width: "120px",
-              borderRadius: "2px"
-            }}
           />
-          <button onClick={findPrev} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.Up /></button>
-          <button onClick={findNext} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.Down /></button>
-          <div style={{ width: "1px", height: "12px", background: "var(--border-color)", margin: "0 2px" }} />
-          <button onClick={() => setShowSearch(false)} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.Close /></button>
+          <button onClick={findPrev} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretUp /></button>
+          <button onClick={findNext} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretDown /></button>
+          <div className="terminal-search-divider" />
+          <button onClick={() => setShowSearch(false)} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.X /></button>
         </div>
       )}
-
-
     </div>
   );
 }

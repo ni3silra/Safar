@@ -38,6 +38,14 @@ export interface SavedSession {
     backspace_mode?: string;
 }
 
+export interface LogEntry {
+    id: string;
+    timestamp: number;
+    level: "info" | "error" | "warning" | "success";
+    message: string;
+    source: "SSH" | "SFTP" | "SYSTEM";
+}
+
 // ============================================
 // API API TYPES
 // ============================================
@@ -59,6 +67,7 @@ export interface ConnectionResult {
     host: string;
     username: string;
     banner: string | null;
+    // session_id: string; // duplicate in original? Removed.
 }
 
 export interface CommandResponse<T> {
@@ -66,3 +75,18 @@ export interface CommandResponse<T> {
     data: T | null;
     error: string | null;
 }
+
+// ============================================
+// FILE BROWSER TYPES
+// ============================================
+
+export interface FileEntry {
+    name: string;
+    size: number;
+    is_dir: boolean;
+    modified: number;
+    permissions: string;
+}
+
+export type SortField = 'name' | 'modified' | 'size';
+export type SortDirection = 'asc' | 'desc';

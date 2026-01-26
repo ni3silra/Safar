@@ -1,12 +1,5 @@
 import { useRef, useEffect } from "react";
-
-export interface LogEntry {
-    id: string;
-    timestamp: number;
-    level: "info" | "error" | "warning" | "success";
-    message: string;
-    source: "SSH" | "SFTP" | "SYSTEM";
-}
+import { LogEntry } from "../types";
 
 interface SessionLogsProps {
     logs: LogEntry[];

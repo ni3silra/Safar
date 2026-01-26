@@ -1,111 +1,33 @@
 // File Browser Component (SFTP)
-import { useEffect, useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
+import { useFileBrowser } from "../hooks/useFileBrowser";
 import { FileEditor } from "./FileEditor";
-
-interface FileEntry {
-    name: string;
-    size: number;
-    is_dir: boolean;
-    modified: number;
-    permissions: string;
-}
-
-interface CommandResponse<T> {
-    success: boolean;
-    data: T | null;
-    error: string | null;
-}
+import { Icons } from "./Icons";
+import { FileEntry } from "../types";
 
 interface FileBrowserProps {
     sessionId: string;
 }
 
-// Icons
-const Icons = {
-    Folder: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M1 3.5A1.5 1.5 0 012.5 2h3.379a1.5 1.5 0 011.06.44L8.061 3.5H13.5A1.5 1.5 0 0115 5v8a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13V3.5z" />
-        </svg>
-    ),
-    File: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M4 1.5A1.5 1.5 0 002.5 3v10A1.5 1.5 0 004 14.5h8a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L9.647 1.939A1.5 1.5 0 008.586 1.5H4z" />
-        </svg>
-    ),
-    ArrowUp: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M3.5 8.5l4.5-5 4.5 5h-3v4h-3v-4h-3z" />
-        </svg>
-    ),
-    Refresh: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M8 3a5 5 0 00-5 5h2a3 3 0 11.88 2.12l1.41 1.41A5 5 0 108 3z" />
-            <path d="M2.5 9.5l3.5-4h-7z" style={{ transform: "rotate(-90deg)", transformOrigin: "center" }} />
-        </svg>
-    ),
-    Upload: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
-            <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z" />
-        </svg>
-    ),
-    Download: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
-            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z" />
-        </svg>
-    ),
-    Edit: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z" />
-        </svg>
-    )
-};
-
-type SortField = 'name' | 'modified' | 'size';
-type SortDirection = 'asc' | 'desc';
-
 export function FileBrowser({ sessionId }: FileBrowserProps) {
-    const [currentPath, setCurrentPath] = useState(".");
-    const [tempPath, setTempPath] = useState(".");
-    const [files, setFiles] = useState<FileEntry[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [editingFile, setEditingFile] = useState<string | null>(null);
-
-    // Sorting state
-    const [sortField, setSortField] = useState<SortField>('name');
-    const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
-
-    // Sorted files (folders first, then apply sort)
-    const sortedFiles = [...files].sort((a, b) => {
-        // Folders always come first
-        if (a.is_dir !== b.is_dir) {
-            return a.is_dir ? -1 : 1;
-        }
-
-        let comparison = 0;
-        if (sortField === 'name') {
-            comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-        } else if (sortField === 'modified') {
-            comparison = a.modified - b.modified;
-        } else if (sortField === 'size') {
-            comparison = a.size - b.size;
-        }
-
-        return sortDirection === 'asc' ? comparison : -comparison;
-    });
-
-    const handleSort = (field: SortField) => {
-        if (sortField === field) {
-            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-        } else {
-            setSortField(field);
-            setSortDirection('asc');
-        }
-    };
+    const {
+        currentPath,
+        tempPath,
+        setTempPath,
+        files,
+        loading,
+        error,
+        editingFile,
+        setEditingFile,
+        sortField,
+        sortDirection,
+        sortedFiles,
+        handleSort,
+        loadFiles,
+        handleNavigate,
+        handleUp,
+        handleDownload,
+        handleUpload
+    } = useFileBrowser(sessionId);
 
     const formatSize = (bytes: number) => {
         if (bytes === 0) return "0 B";
@@ -143,115 +65,6 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
         return [2, 3, 6, 7].includes(userPerm);
     };
 
-    const loadFiles = useCallback(async (path: string) => {
-        setLoading(true);
-        setError(null);
-        try {
-            // Use . as default if path is empty, but usually we track absolute path
-            // Note: "." usually resolves to home dir in sftp if not absolute
-            const response = await invoke<CommandResponse<FileEntry[]>>("ssh_sftp_ls", {
-                sessionId,
-                path,
-            });
-
-            if (response.success && response.data) {
-                setFiles(response.data);
-                setCurrentPath(path);
-            } else {
-                setError(response.error || "Failed to list files");
-            }
-        } catch (err) {
-            setError(String(err));
-        } finally {
-            setLoading(false);
-        }
-    }, [sessionId]);
-
-    // Initial load
-    useEffect(() => {
-        loadFiles(".");
-    }, [loadFiles]);
-
-    // Sync input with current path
-    useEffect(() => {
-        setTempPath(currentPath);
-    }, [currentPath]);
-
-    const handleNavigate = (entry: FileEntry) => {
-        if (entry.is_dir) {
-            // Simple path joining logic - works for unix
-            const newPath = currentPath === "." ? entry.name : `${currentPath}/${entry.name}`;
-            loadFiles(newPath);
-        } else {
-            // Open file for editing on double-click
-            const fullPath = currentPath === "." ? entry.name : `${currentPath}/${entry.name}`;
-            setEditingFile(fullPath);
-        }
-    };
-
-    const handleUp = () => {
-        if (currentPath === "." || currentPath === "/") return;
-        const parts = currentPath.split("/");
-        parts.pop();
-        const newPath = parts.length === 0 ? "." : parts.join("/");
-        loadFiles(newPath);
-    };
-
-    const handleDownload = async (file: FileEntry, e: React.MouseEvent) => {
-        e.stopPropagation();
-        if (file.is_dir) return;
-
-        try {
-            const localPath = await save({
-                defaultPath: file.name,
-            });
-
-            if (!localPath) return;
-
-            setLoading(true);
-            const remotePath = currentPath === "." ? file.name : `${currentPath}/${file.name}`;
-
-            await invoke("ssh_sftp_read", {
-                sessionId,
-                remotePath,
-                localPath
-            });
-        } catch (err) {
-            setError(`Download failed: ${err}`);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleUpload = async () => {
-        try {
-            const result = await openDialog({
-                multiple: false,
-                directory: false,
-            });
-
-            if (!result) return;
-            const localPath = result as string; // multiple:false ensures string
-
-            setLoading(true);
-            // simple basename extraction for windows/unix paths
-            const fileName = localPath.split(/[\\/]/).pop() || "upload";
-            const remotePath = currentPath === "." ? fileName : `${currentPath}/${fileName}`;
-
-            await invoke("ssh_sftp_write", {
-                sessionId,
-                localPath,
-                remotePath
-            });
-
-            loadFiles(currentPath);
-        } catch (err) {
-            setError(`Upload failed: ${err}`);
-        } finally {
-            setLoading(false);
-        }
-    };
-
     const handleEdit = (file: FileEntry, e: React.MouseEvent) => {
         e.stopPropagation();
         if (file.is_dir) return;
@@ -260,16 +73,9 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
     };
 
     return (
-        <div style={{ display: "flex", flexDirection: "column", height: "100%", color: "var(--text-primary)", background: "var(--bg-primary)" }}>
+        <div className="file-browser">
             {/* Toolbar */}
-            <div style={{
-                padding: "8px",
-                borderBottom: "1px solid var(--border-default)",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                background: "var(--bg-secondary)"
-            }}>
+            <div className="file-toolbar">
                 <button
                     className="icon-btn"
                     onClick={handleUp}
@@ -285,7 +91,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                 <button className="icon-btn" onClick={handleUpload} title="Upload File">
                     <Icons.Upload />
                 </button>
-                <div style={{ flex: 1, display: "flex", gap: "4px" }}>
+                <div className="file-path-container">
                     <input
                         type="text"
                         value={tempPath}
@@ -296,17 +102,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                 loadFiles(tempPath.trim());
                             }
                         }}
-                        style={{
-                            flex: 1,
-                            background: "var(--bg-primary)",
-                            padding: "4px 8px",
-                            borderRadius: "4px",
-                            fontSize: "13px",
-                            fontFamily: "monospace",
-                            border: "1px solid var(--border-default)",
-                            color: "var(--text-primary)",
-                            outline: "none"
-                        }}
+                        className="file-path-input"
                     />
                     <button
                         className="icon-btn"
@@ -314,32 +110,31 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                         title="Go to path"
                         style={{ padding: "4px" }}
                     >
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                            <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-                        </svg>
+                        <Icons.ChevronRight />
                     </button>
                 </div>
             </div>
 
             {/* File List */}
-            <div style={{ flex: 1, overflow: "auto" }}>
+            <div className="file-list-container">
                 {loading ? (
-                    <div style={{ padding: "20px", textAlign: "center", color: "var(--text-muted)" }}>
+                    <div className="file-loading">
                         Loading...
                     </div>
                 ) : error ? (
-                    <div style={{ padding: "20px", color: "var(--col-red)" }}>
+                    <div className="file-error">
                         Error: {error}
                     </div>
                 ) : (
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", tableLayout: "fixed" }}>
-                        <thead style={{ background: "var(--bg-secondary)", textAlign: "left", position: "sticky", top: 0 }}>
+                    <table className="file-table">
+                        <thead className="file-thead">
                             <tr>
                                 <th
-                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "40%", cursor: "pointer", userSelect: "none" }}
+                                    className="file-th"
+                                    style={{ width: "40%" }}
                                     onClick={() => handleSort('name')}
                                 >
-                                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <div className="file-th-content">
                                         Name
                                         {sortField === 'name' && (
                                             <span style={{ fontSize: "10px" }}>{sortDirection === 'asc' ? '▲' : '▼'}</span>
@@ -347,22 +142,24 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                     </div>
                                 </th>
                                 <th
-                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "15%", textAlign: "right", cursor: "pointer", userSelect: "none" }}
+                                    className="file-th"
+                                    style={{ width: "15%", textAlign: "right" }}
                                     onClick={() => handleSort('size')}
                                 >
-                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "6px" }}>
+                                    <div className="file-th-content right">
                                         Size
                                         {sortField === 'size' && (
                                             <span style={{ fontSize: "10px" }}>{sortDirection === 'asc' ? '▲' : '▼'}</span>
                                         )}
                                     </div>
                                 </th>
-                                <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "15%", color: "var(--text-muted)" }}>Security</th>
+                                <th className="file-th" style={{ width: "15%" }}>Security</th>
                                 <th
-                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "30%", cursor: "pointer", userSelect: "none" }}
+                                    className="file-th"
+                                    style={{ width: "30%" }}
                                     onClick={() => handleSort('modified')}
                                 >
-                                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <div className="file-th-content">
                                         Modified
                                         {sortField === 'modified' && (
                                             <span style={{ fontSize: "10px" }}>{sortDirection === 'asc' ? '▲' : '▼'}</span>
@@ -377,79 +174,38 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                 return (
                                     <tr
                                         key={file.name}
-                                        style={{
-                                            cursor: "pointer",
-                                            borderBottom: "1px solid var(--border-color-subtle)"
-                                        }}
                                         className="file-row"
                                         onDoubleClick={() => handleNavigate(file)}
                                     >
-                                        <td style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: "8px", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                            <span style={{ color: file.is_dir ? "var(--col-blue)" : "var(--text-muted)", flexShrink: 0 }}>
-                                                {file.is_dir ? <Icons.Folder /> : <Icons.File />}
-                                            </span>
-                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+                                        <td className="file-cell">
+                                            <div className="file-name-cell">
+                                                <span className={`file-icon ${file.is_dir ? "folder" : ""}`}>
+                                                    {file.is_dir ? <Icons.Folder /> : <Icons.File />}
+                                                </span>
+                                                <span className="truncate">{file.name}</span>
+                                            </div>
                                         </td>
-                                        <td style={{ padding: "8px 12px", color: "var(--text-muted)", textAlign: "right" }}>{file.is_dir ? "-" : formatSize(file.size)}</td>
-                                        <td style={{ padding: "8px 12px", color: "var(--text-muted)", fontFamily: "monospace", fontSize: "12px" }}>{formatPermissions(file.permissions)}</td>
-                                        <td style={{ padding: "8px 12px", color: "var(--text-muted)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                        <td className="file-cell file-size-cell">{file.is_dir ? "-" : formatSize(file.size)}</td>
+                                        <td className="file-cell file-perm-cell">{formatPermissions(file.permissions)}</td>
+                                        <td className="file-cell file-actions-cell">
                                             {formatDate(file.modified)}
                                             {!file.is_dir && (
-                                                <div style={{ display: "flex", gap: "6px", marginLeft: "12px" }}>
+                                                <div className="file-actions-group">
                                                     <button
                                                         onClick={(e) => handleEdit(file, e)}
                                                         title={writable ? "Edit file" : "View file (Read Only)"}
-                                                        style={{
-                                                            display: "flex",
-                                                            alignItems: "center",
-                                                            gap: "4px",
-                                                            padding: "4px 10px",
-                                                            borderRadius: "4px",
-                                                            border: "1px solid var(--border-color)",
-                                                            background: "var(--bg-tertiary)",
-                                                            cursor: "pointer",
-                                                            color: writable ? "var(--col-blue)" : "var(--text-muted)",
-                                                            fontSize: "11px",
-                                                            fontWeight: 500,
-                                                            transition: "all 0.15s ease"
-                                                        }}
-                                                        onMouseEnter={(e) => {
-                                                            e.currentTarget.style.background = writable ? "var(--col-blue)" : "var(--bg-secondary)";
-                                                            e.currentTarget.style.color = writable ? "white" : "var(--text-primary)";
-                                                        }}
-                                                        onMouseLeave={(e) => {
-                                                            e.currentTarget.style.background = "var(--bg-tertiary)";
-                                                            e.currentTarget.style.color = writable ? "var(--col-blue)" : "var(--text-muted)";
-                                                        }}
+                                                        className={`file-action-btn edit ${writable ? "writable" : ""}`}
                                                     >
                                                         {writable ? <Icons.Edit /> : <span style={{ fontSize: "14px" }}>👁</span>}
                                                         {writable ? "Edit" : "View"}
                                                     </button>
                                                     <button
-                                                        onClick={(e) => handleDownload(file, e)}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDownload(file);
+                                                        }}
                                                         title="Download file"
-                                                        style={{
-                                                            display: "flex",
-                                                            alignItems: "center",
-                                                            gap: "4px",
-                                                            padding: "4px 10px",
-                                                            borderRadius: "4px",
-                                                            border: "1px solid var(--border-color)",
-                                                            background: "var(--bg-tertiary)",
-                                                            cursor: "pointer",
-                                                            color: "var(--col-green)",
-                                                            fontSize: "11px",
-                                                            fontWeight: 500,
-                                                            transition: "all 0.15s ease"
-                                                        }}
-                                                        onMouseEnter={(e) => {
-                                                            e.currentTarget.style.background = "var(--col-green)";
-                                                            e.currentTarget.style.color = "white";
-                                                        }}
-                                                        onMouseLeave={(e) => {
-                                                            e.currentTarget.style.background = "var(--bg-tertiary)";
-                                                            e.currentTarget.style.color = "var(--col-green)";
-                                                        }}
+                                                        className="file-action-btn download"
                                                     >
                                                         <Icons.Download /> Save
                                                     </button>
@@ -472,14 +228,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
             </div>
 
             {/* Footer */}
-            <div style={{
-                padding: "4px 8px",
-                borderTop: "1px solid var(--border-color)",
-                fontSize: "11px",
-                color: "var(--text-muted)",
-                display: "flex",
-                justifyContent: "space-between"
-            }}>
+            <div className="file-footer">
                 <span>{files.length} items</span>
                 <span>SFTP Connected</span>
             </div>

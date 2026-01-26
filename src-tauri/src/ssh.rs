@@ -731,8 +731,45 @@ impl SshManager {
         Ok(ports)
     }
 }
+
 impl Default for SshManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// Cleanup on drop
+impl Drop for SshSession {
+    fn drop(&mut self) {
+        // Stop reader thread loop
+        *self.running.write() = false;
+        
+        // Stop all tunnels
+        for (_, running) in self.tunnels.iter() {
+            running.store(false, Ordering::SeqCst);
+        }
+
+        // Close channel if exists
+        if let Some(ref mut channel) = self.channel {
+            let _ = channel.close();
+        }
+        
+        // Disconnect session
+        let _ = self.session.disconnect(None, "Application closed", None);
+    }
+}
+
+impl Drop for SshManager {
+    fn drop(&mut self) {
+        let sessions = self.sessions.write();
+        for (_, session_arc) in sessions.iter() {
+            let mut session = session_arc.write();
+            // This triggers the SshSession drop logic for each session
+            *session.running.write() = false;
+             if let Some(ref mut channel) = session.channel {
+                let _ = channel.close();
+            }
+            let _ = session.session.disconnect(None, "Application closed", None);
+        }
     }
 }

@@ -1,0 +1,55 @@
+/* ============================================
+   TERMINAL STYLES
+   ============================================ */
+.terminal-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background-color: var(--bg-primary);
+    /* Should ideally inherit theme, but inline style handled specific theme bg. 
+       We will keep background dynamic in JS but structure here */
+}
+
+.terminal-viewport {
+    width: 100%;
+    height: 100%;
+    padding: 8px;
+}
+
+.terminal-search-bar {
+    position: absolute;
+    top: 10px;
+    right: 20px;
+    /* Adjusted to not overlap too much */
+    z-index: 20;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    padding: 4px;
+    box-shadow: var(--shadow-md);
+    gap: 4px;
+}
+
+.terminal-search-input {
+    background: var(--bg-primary);
+    border: none;
+    color: var(--text-primary);
+    outline: none;
+    font-size: 12px;
+    padding: 2px 4px;
+    width: 120px;
+    border-radius: 2px;
+}
+
+.terminal-search-input:focus {
+    box-shadow: 0 0 0 1px var(--accent-primary);
+}
+
+.terminal-search-divider {
+    width: 1px;
+    height: 12px;
+    background: var(--border-default);
+    margin: 0 2px;
+}

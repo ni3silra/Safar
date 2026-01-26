@@ -101,4 +101,79 @@ export const Icons = {
             <path d="M14.5 3a1 1 0 01-1 1H13v9a2 2 0 01-2 2H5a2 2 0 01-2-2V4h-.5a1 1 0 01-1-1V2a1 1 0 011-1H6a1 1 0 011-1h2a1 1 0 011 1h3.5a1 1 0 011 1v1zM4.118 4L4 4.059V13a1 1 0 001 1h6a1 1 0 001-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z" />
         </svg>
     ),
+    AlertTriangle: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M7.938 2.016a.146.146 0 00-.054.057L1.027 13.74a.176.176 0 00-.002.183c.016.03.037.05.076.068.039.018.09.016.124.016h13.55c.033 0 .085.002.124-.016a.16.16 0 00.076-.068.176.176 0 00-.002-.183L8.12 2.073a.146.146 0 00-.054-.057.13.13 0 00-.128 0z" />
+            <path d="M8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 01-1.1 0L7.1 5.995A.905.905 0 018 5zm.002 6a1 1 0 110 2 1 1 0 010-2z" />
+        </svg>
+    ),
+    File: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M4 1.5A1.5 1.5 0 002.5 3v10A1.5 1.5 0 004 14.5h8a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L9.647 1.939A1.5 1.5 0 008.586 1.5H4z" />
+        </svg>
+    ),
+    ArrowUp: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M3.5 8.5l4.5-5 4.5 5h-3v4h-3v-4h-3z" />
+        </svg>
+    ),
+    Refresh: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style} className={className}>
+            <path d="M23 4v6h-6"></path>
+            <path d="M1 20v-6h6"></path>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+        </svg>
+    ),
+    Upload: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
+            <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z" />
+        </svg>
+    ),
+    FileCode: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M4 1.5A1.5 1.5 0 002.5 3v10A1.5 1.5 0 004 14.5h8a1.5 1.5 0 001.5-1.5V3A1.5 1.5 0 0012 1.5H4zM12 2.5a.5.5 0 01.5.5v10a.5.5 0 01-.5.5H4a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h8z" />
+            <path d="M5.5 5.5A.5.5 0 016 5h4a.5.5 0 010 1H6a.5.5 0 01-.5-.5zm0 3A.5.5 0 016 8h4a.5.5 0 010 1H6a.5.5 0 01-.5-.5zm0 3A.5.5 0 016 11h2a.5.5 0 010 1H6a.5.5 0 01-.5-.5z" />
+        </svg>
+    ),
+    Search: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M11.742 10.344a6.5 6.5 0 10-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 001.415-1.414l-3.85-3.85a1.007 1.007 0 00-.115-.1zM12 6.5a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
+        </svg>
+    ),
+    CaretUp: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M8 5l-4 4h8l-4-4z" />
+        </svg>
+    ),
+    CaretDown: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M8 11l4-4H4l4 4z" />
+        </svg>
+    ),
+    Copy: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M4 2a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2V4a2 2 0 00-2-2H4zm0 2h8v8H4V4zm-3 2a1 1 0 011-1h.5a.5.5 0 010 1H2v9a1 1 0 001 1h9a.5.5 0 010 1H3a2 2 0 01-2-2V6z" />
+        </svg>
+    ),
+    Key: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M3.5 11.5a3.5 3.5 0 113.163-5H14L15.5 8 14 9.5l-1-1-1 1-1-1-1 1H6.663a3.5 3.5 0 01-3.163 2zM2.5 9a1 1 0 100-2 1 1 0 000 2z" />
+        </svg>
+    ),
+    ChevronRight: ({ style, className }: IconProps = {}) => (
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        </svg>
+    ),
+    Eye: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M8 3c-4 0-7 2.5-7 5s3 5 7 5 7-2.5 7-5-3-5-7-5zm0 8a3 3 0 110-6 3 3 0 010 6zm0-5a2 2 0 100 4 2 2 0 000-4z" />
+        </svg>
+    ),
+    Cpu: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M2.5 2.5h11v11h-11v-11zM1 1v14h14V1H1zm4 1.5h6v1H5v-1zm0 2h6v1H5v-1zm0 2h6v1H5v-1zm0 2h6v1H5v-1zm0 2h6v1H5v-1z" />
+        </svg>
+    ),
 };

@@ -1,0 +1,218 @@
+/* ============================================
+   FILE BROWSER STYLES
+   ============================================ */
+.file-browser {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+}
+
+.file-toolbar {
+    padding: 8px;
+    border-bottom: 1px solid var(--border-default);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-secondary);
+}
+
+.file-path-container {
+    flex: 1;
+    display: flex;
+    gap: 4px;
+}
+
+.file-path-input {
+    flex: 1;
+    background: var(--bg-primary);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: monospace;
+    border: 1px solid var(--border-default);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color var(--transition-fast);
+}
+
+.file-path-input:focus {
+    border-color: var(--accent-primary);
+}
+
+.file-list-container {
+    flex: 1;
+    overflow: auto;
+}
+
+.file-loading,
+.file-error,
+.file-empty {
+    padding: 20px;
+    text-align: center;
+}
+
+.file-loading {
+    color: var(--text-muted);
+}
+
+.file-error {
+    color: var(--accent-error);
+}
+
+.file-empty {
+    color: var(--text-muted);
+}
+
+.file-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    table-layout: fixed;
+}
+
+.file-thead {
+    background: var(--bg-secondary);
+    text-align: left;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.file-th {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-default);
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.file-th:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+}
+
+.file-th-content {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.file-th-content.right {
+    justify-content: flex-end;
+}
+
+.file-row {
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-subtle);
+    transition: background var(--transition-fast);
+}
+
+.file-row:hover {
+    background: var(--bg-tertiary);
+}
+
+.file-cell {
+    padding: 8px 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-name-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.file-icon {
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.file-icon.folder {
+    color: var(--safar-blue);
+}
+
+.file-size-cell {
+    color: var(--text-muted);
+    text-align: right;
+    font-family: var(--font-mono);
+}
+
+.file-perm-cell {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+}
+
+.file-actions-cell {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--text-muted);
+}
+
+.file-actions-group {
+    display: flex;
+    gap: 6px;
+    margin-left: 12px;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.file-row:hover .file-actions-group {
+    opacity: 1;
+}
+
+.file-action-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    transition: all 0.15s ease;
+}
+
+/* Edit specific */
+.file-action-btn.edit {
+    color: var(--text-muted);
+}
+
+.file-action-btn.edit.writable {
+    color: var(--safar-blue);
+}
+
+.file-action-btn.edit.writable:hover {
+    background: var(--safar-blue);
+    color: white;
+    border-color: var(--safar-blue);
+}
+
+/* Download specific */
+.file-action-btn.download {
+    color: var(--accent-secondary);
+}
+
+.file-action-btn.download:hover {
+    background: var(--accent-secondary);
+    color: white;
+    border-color: var(--accent-secondary);
+}
+
+.file-footer {
+    padding: 4px 8px;
+    border-top: 1px solid var(--border-default);
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    justify-content: space-between;
+    background: var(--bg-secondary);
+}

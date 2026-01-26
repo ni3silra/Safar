@@ -6,18 +6,7 @@ interface TunnelManagerProps {
     sessionId: string;
 }
 
-// Reuse IconProps or import if shared (assuming inline for now)
-const Icons = {
-    Trash: () => (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-    ),
-    Plus: () => (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-    ),
-    Refresh: () => (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-    )
-};
+import { Icons } from "./Icons";
 
 export function TunnelManager({ sessionId }: TunnelManagerProps) {
     const [tunnels, setTunnels] = useState<number[]>([]);
@@ -29,10 +18,18 @@ export function TunnelManager({ sessionId }: TunnelManagerProps) {
 
     const refreshTunnels = async () => {
         try {
-            const activeOrts = await invoke<number[]>("ssh_list_tunnels", { sessionId });
-            setTunnels(activeOrts.sort((a, b) => a - b));
+            const response = await invoke<any>("ssh_list_tunnels", { sessionId });
+            // Handle both direct array and CommandResponse format
+            const activePorts = Array.isArray(response) ? response : (response?.data || []);
+
+            if (Array.isArray(activePorts)) {
+                setTunnels([...activePorts].sort((a, b) => a - b));
+            } else {
+                setTunnels([]);
+            }
         } catch (err) {
             console.error("Failed to list tunnels:", err);
+            setTunnels([]);
         }
     };
 
@@ -86,7 +83,21 @@ export function TunnelManager({ sessionId }: TunnelManagerProps) {
     return (
         <div style={{ padding: "20px", height: "100%", display: "flex", flexDirection: "column", gap: "20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 600 }}>Port Forwarding (Local)</h3>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 600 }}>Port Forwarding</h3>
+                    <span style={{
+                        fontSize: "10px",
+                        textTransform: "uppercase",
+                        fontWeight: "bold",
+                        background: "var(--accent-warning)",
+                        color: "#000",
+                        padding: "2px 6px",
+                        borderRadius: "4px",
+                        letterSpacing: "0.5px"
+                    }}>
+                        Experimental
+                    </span>
+                </div>
                 <button className="icon-btn" onClick={refreshTunnels} data-tooltip="Refresh">
                     <Icons.Refresh />
                 </button>

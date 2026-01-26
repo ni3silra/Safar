@@ -19,10 +19,16 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
     const checkStatus = async () => {
         try {
             const hasPassword = await invoke<boolean>("storage_has_password");
+            console.log("[LockScreen] Check Status: hasPassword =", hasPassword);
+
             if (!hasPassword) {
-                setMode("setup");
+                console.log("[LockScreen] No password set -> Auto Unlocking");
+                // No password set, auto-unlock without forcing setup
+                onUnlock();
             } else {
                 const isLocked = await invoke<boolean>("storage_is_locked");
+                console.log("[LockScreen] isLocked =", isLocked);
+
                 if (isLocked) {
                     setMode("unlock");
                 } else {

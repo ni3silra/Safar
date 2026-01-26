@@ -2,12 +2,7 @@ import { Icons } from "./Icons";
 import { CommandPalette } from "./CommandPalette";
 import { Session, ConnectConfig, SavedSession } from "../types";
 
-const TEST_SERVER = {
-    host: "test.rebex.net",
-    port: 22,
-    username: "demo",
-    password: "password",
-};
+
 
 interface SidebarProps {
     sidebarCollapsed: boolean;
@@ -20,7 +15,6 @@ interface SidebarProps {
     favorites: SavedSession[];
     recent: SavedSession[];
     onConnect: (config: ConnectConfig) => void;
-    onExport: () => void;
     onEditSession: (session: SavedSession) => void;
     onDeleteSession: (sessionId: string) => void;
 }
@@ -36,7 +30,6 @@ export function Sidebar({
     favorites,
     recent,
     onConnect,
-    onExport,
     onEditSession,
     onDeleteSession,
 }: SidebarProps) {
@@ -113,14 +106,6 @@ export function Sidebar({
                             placeholder="Search sessions..."
                             style={{ fontSize: "var(--text-xs)", flex: 1 }}
                         />
-                        <button
-                            className="icon-btn"
-                            onClick={onExport}
-                            data-tooltip="Export Sessions"
-                            style={{ padding: "4px" }}
-                        >
-                            <Icons.Download />
-                        </button>
                     </div>
 
                     {/* Active Sessions */}
@@ -168,12 +153,14 @@ export function Sidebar({
                                             host: saved.host,
                                             port: saved.port,
                                             username: saved.username,
-                                            password: "", // Will need password prompt
+                                            password: saved.password || "",
+                                            privateKeyPath: saved.private_key_path,
                                             sessionName: saved.name,
+                                            termType: saved.term_type,
+                                            remoteCommand: saved.remote_command,
                                             backspaceMode: saved.backspace_mode,
                                         })
                                     }
-                                    style={{ cursor: "pointer" }}
                                 >
                                     <div className="session-icon">
                                         <Icons.Star />
@@ -183,10 +170,10 @@ export function Sidebar({
                                         <div className="session-host">{saved.username}@{saved.host}</div>
                                     </div>
                                     <div className="session-actions" onClick={(e) => e.stopPropagation()}>
-                                        <button className="icon-btn xs" onClick={() => onEditSession(saved)} title="Edit">
+                                        <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onEditSession(saved)} title="Edit">
                                             <Icons.Edit style={{ width: 12, height: 12 }} />
                                         </button>
-                                        <button className="icon-btn xs danger" onClick={() => onDeleteSession(saved.id)} title="Delete">
+                                        <button className="icon-btn" style={{ width: 24, height: 24, color: "var(--accent-error)" }} onClick={() => onDeleteSession(saved.id)} title="Delete">
                                             <Icons.Trash style={{ width: 12, height: 12 }} />
                                         </button>
                                     </div>
@@ -212,12 +199,14 @@ export function Sidebar({
                                             host: saved.host,
                                             port: saved.port,
                                             username: saved.username,
-                                            password: "", // Will need password prompt
+                                            password: saved.password || "",
+                                            privateKeyPath: saved.private_key_path,
                                             sessionName: saved.name,
+                                            termType: saved.term_type,
+                                            remoteCommand: saved.remote_command,
                                             backspaceMode: saved.backspace_mode,
                                         })
                                     }
-                                    style={{ cursor: "pointer" }}
                                 >
                                     <div className="session-icon">
                                         <Icons.Clock />
@@ -227,10 +216,10 @@ export function Sidebar({
                                         <div className="session-host">{saved.username}@{saved.host}</div>
                                     </div>
                                     <div className="session-actions" onClick={(e) => e.stopPropagation()}>
-                                        <button className="icon-btn xs" onClick={() => onEditSession(saved)} title="Edit">
+                                        <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onEditSession(saved)} title="Edit">
                                             <Icons.Edit style={{ width: 12, height: 12 }} />
                                         </button>
-                                        <button className="icon-btn xs danger" onClick={() => onDeleteSession(saved.id)} title="Delete">
+                                        <button className="icon-btn" style={{ width: 24, height: 24, color: "var(--accent-error)" }} onClick={() => onDeleteSession(saved.id)} title="Delete">
                                             <Icons.Trash style={{ width: 12, height: 12 }} />
                                         </button>
                                     </div>
@@ -240,31 +229,7 @@ export function Sidebar({
                     )}
 
                     {/* Demo Server (always show for testing) */}
-                    <div className="sidebar-section">
-                        <div className="sidebar-section-title">
-                            <span>
-                                <Icons.Zap /> Quick Start
-                            </span>
-                        </div>
-                        <div
-                            className="session-item"
-                            onClick={() =>
-                                onConnect({
-                                    ...TEST_SERVER,
-                                    sessionName: "Rebex Test Server",
-                                })
-                            }
-                            style={{ cursor: "pointer" }}
-                        >
-                            <div className="session-icon">
-                                <Icons.Zap />
-                            </div>
-                            <div className="session-info">
-                                <div className="session-name">Demo Server</div>
-                                <div className="session-host">{TEST_SERVER.host}</div>
-                            </div>
-                        </div>
-                    </div>
+
                 </div>
             )}
             {!sidebarCollapsed && sidebarView === "snippets" && (
