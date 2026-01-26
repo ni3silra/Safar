@@ -18,10 +18,18 @@ export function TunnelManager({ sessionId }: TunnelManagerProps) {
 
     const refreshTunnels = async () => {
         try {
-            const activeOrts = await invoke<number[]>("ssh_list_tunnels", { sessionId });
-            setTunnels(activeOrts.sort((a, b) => a - b));
+            const response = await invoke<any>("ssh_list_tunnels", { sessionId });
+            // Handle both direct array and CommandResponse format
+            const activePorts = Array.isArray(response) ? response : (response?.data || []);
+
+            if (Array.isArray(activePorts)) {
+                setTunnels([...activePorts].sort((a, b) => a - b));
+            } else {
+                setTunnels([]);
+            }
         } catch (err) {
             console.error("Failed to list tunnels:", err);
+            setTunnels([]);
         }
     };
 
@@ -75,7 +83,21 @@ export function TunnelManager({ sessionId }: TunnelManagerProps) {
     return (
         <div style={{ padding: "20px", height: "100%", display: "flex", flexDirection: "column", gap: "20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 600 }}>Port Forwarding (Local)</h3>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 600 }}>Port Forwarding</h3>
+                    <span style={{
+                        fontSize: "10px",
+                        textTransform: "uppercase",
+                        fontWeight: "bold",
+                        background: "var(--accent-warning)",
+                        color: "#000",
+                        padding: "2px 6px",
+                        borderRadius: "4px",
+                        letterSpacing: "0.5px"
+                    }}>
+                        Experimental
+                    </span>
+                </div>
                 <button className="icon-btn" onClick={refreshTunnels} data-tooltip="Refresh">
                     <Icons.Refresh />
                 </button>

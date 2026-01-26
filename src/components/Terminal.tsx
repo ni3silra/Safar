@@ -78,20 +78,27 @@ export function TerminalComponent({
   const safeFit = useCallback(() => {
     // Only fit if visible and refs exist
     if (!isVisible) return;
+    if (!terminalRef.current || !xtermRef.current || !fitAddonRef.current) return;
 
-    if (fitAddonRef.current && xtermRef.current) {
-      try {
-        fitAddonRef.current.fit();
-      } catch (err) {
-        console.warn("[Terminal] Fit error (retrying):", err);
-        setTimeout(() => {
-          try {
+    // Check strict dimensions to avoid XTerm RenderService crash
+    if (terminalRef.current.clientWidth === 0 || terminalRef.current.clientHeight === 0) {
+      // console.log("[Terminal] Skipping fit - 0 dimensions");
+      return;
+    }
+
+    try {
+      fitAddonRef.current.fit();
+    } catch (err) {
+      console.warn("[Terminal] Fit error (retrying):", err);
+      setTimeout(() => {
+        try {
+          if (terminalRef.current?.clientWidth && terminalRef.current?.clientHeight) {
             fitAddonRef.current?.fit();
-          } catch (e) {
-            console.warn("[Terminal] Fit retry failed:", e);
           }
-        }, 100);
-      }
+        } catch (e) {
+          console.warn("[Terminal] Fit retry failed:", e);
+        }
+      }, 100);
     }
   }, [isVisible]);
 
@@ -110,6 +117,15 @@ export function TerminalComponent({
     console.log("[Terminal] Initializing for session:", sessionId, "Backspace Mode:", backspaceMode);
 
     const initialTheme = TERMINAL_THEMES[themeName].colors;
+
+    // Don't init if container is invalid
+    if (terminalRef.current.clientWidth === 0) {
+      // This might happen if tab is hidden initially.
+      // We will init, but NOT fit yet.
+      // Or wait? Xterm needs to open on an element. 
+      // If element is display:none, xterm can open but renderer might choke on dimensions.
+      // We'll proceed but rely on safeFit guarding the fit call.
+    }
 
     const terminal = new Terminal({
       cursorBlink: cursorBlink,
@@ -139,8 +155,31 @@ export function TerminalComponent({
     fitAddonRef.current = fitAddon;
     searchAddonRef.current = searchAddon;
 
-    terminal.open(terminalRef.current);
-    terminal.write("\x1b[36m● Connecting to SSH session...\x1b[0m\r\n");
+    // Helper to safely open terminal only when dimensions are valid
+    const openTerminal = () => {
+      if (!terminalRef.current || !xtermRef.current) return;
+
+      // If already opened (element is set), skip
+      if (xtermRef.current.element) return;
+
+      if (terminalRef.current.clientWidth > 0 && terminalRef.current.clientHeight > 0) {
+        try {
+          xtermRef.current.open(terminalRef.current);
+          xtermRef.current.write("\x1b[36m● Connecting to SSH session...\x1b[0m\r\n");
+          safeFit();
+        } catch (err) {
+          console.error("[Terminal] Open error:", err);
+        }
+      } else {
+        // console.log("[Terminal] Waiting for dimensions...");
+        setTimeout(openTerminal, 50);
+      }
+    };
+
+    // Attempt to open
+    requestAnimationFrame(openTerminal);
+
+
 
     // Key handlers
     terminal.attachCustomKeyEventHandler((e) => {
