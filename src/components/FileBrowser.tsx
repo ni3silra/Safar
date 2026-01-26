@@ -73,16 +73,9 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
     };
 
     return (
-        <div style={{ display: "flex", flexDirection: "column", height: "100%", color: "var(--text-primary)", background: "var(--bg-primary)" }}>
+        <div className="file-browser">
             {/* Toolbar */}
-            <div style={{
-                padding: "8px",
-                borderBottom: "1px solid var(--border-default)",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                background: "var(--bg-secondary)"
-            }}>
+            <div className="file-toolbar">
                 <button
                     className="icon-btn"
                     onClick={handleUp}
@@ -98,7 +91,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                 <button className="icon-btn" onClick={handleUpload} title="Upload File">
                     <Icons.Upload />
                 </button>
-                <div style={{ flex: 1, display: "flex", gap: "4px" }}>
+                <div className="file-path-container">
                     <input
                         type="text"
                         value={tempPath}
@@ -109,17 +102,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                 loadFiles(tempPath.trim());
                             }
                         }}
-                        style={{
-                            flex: 1,
-                            background: "var(--bg-primary)",
-                            padding: "4px 8px",
-                            borderRadius: "4px",
-                            fontSize: "13px",
-                            fontFamily: "monospace",
-                            border: "1px solid var(--border-default)",
-                            color: "var(--text-primary)",
-                            outline: "none"
-                        }}
+                        className="file-path-input"
                     />
                     <button
                         className="icon-btn"
@@ -133,24 +116,25 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
             </div>
 
             {/* File List */}
-            <div style={{ flex: 1, overflow: "auto" }}>
+            <div className="file-list-container">
                 {loading ? (
-                    <div style={{ padding: "20px", textAlign: "center", color: "var(--text-muted)" }}>
+                    <div className="file-loading">
                         Loading...
                     </div>
                 ) : error ? (
-                    <div style={{ padding: "20px", color: "var(--col-red)" }}>
+                    <div className="file-error">
                         Error: {error}
                     </div>
                 ) : (
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", tableLayout: "fixed" }}>
-                        <thead style={{ background: "var(--bg-secondary)", textAlign: "left", position: "sticky", top: 0 }}>
+                    <table className="file-table">
+                        <thead className="file-thead">
                             <tr>
                                 <th
-                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "40%", cursor: "pointer", userSelect: "none" }}
+                                    className="file-th"
+                                    style={{ width: "40%" }}
                                     onClick={() => handleSort('name')}
                                 >
-                                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <div className="file-th-content">
                                         Name
                                         {sortField === 'name' && (
                                             <span style={{ fontSize: "10px" }}>{sortDirection === 'asc' ? '▲' : '▼'}</span>
@@ -158,22 +142,24 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                     </div>
                                 </th>
                                 <th
-                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "15%", textAlign: "right", cursor: "pointer", userSelect: "none" }}
+                                    className="file-th"
+                                    style={{ width: "15%", textAlign: "right" }}
                                     onClick={() => handleSort('size')}
                                 >
-                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "6px" }}>
+                                    <div className="file-th-content right">
                                         Size
                                         {sortField === 'size' && (
                                             <span style={{ fontSize: "10px" }}>{sortDirection === 'asc' ? '▲' : '▼'}</span>
                                         )}
                                     </div>
                                 </th>
-                                <th style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "15%", color: "var(--text-muted)" }}>Security</th>
+                                <th className="file-th" style={{ width: "15%" }}>Security</th>
                                 <th
-                                    style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-default)", width: "30%", cursor: "pointer", userSelect: "none" }}
+                                    className="file-th"
+                                    style={{ width: "30%" }}
                                     onClick={() => handleSort('modified')}
                                 >
-                                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <div className="file-th-content">
                                         Modified
                                         {sortField === 'modified' && (
                                             <span style={{ fontSize: "10px" }}>{sortDirection === 'asc' ? '▲' : '▼'}</span>
@@ -188,50 +174,27 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                 return (
                                     <tr
                                         key={file.name}
-                                        style={{
-                                            cursor: "pointer",
-                                            borderBottom: "1px solid var(--border-color-subtle)"
-                                        }}
                                         className="file-row"
                                         onDoubleClick={() => handleNavigate(file)}
                                     >
-                                        <td style={{ padding: "8px 12px", display: "flex", alignItems: "center", gap: "8px", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                            <span style={{ color: file.is_dir ? "var(--col-blue)" : "var(--text-muted)", flexShrink: 0 }}>
-                                                {file.is_dir ? <Icons.Folder /> : <Icons.File />}
-                                            </span>
-                                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+                                        <td className="file-cell">
+                                            <div className="file-name-cell">
+                                                <span className={`file-icon ${file.is_dir ? "folder" : ""}`}>
+                                                    {file.is_dir ? <Icons.Folder /> : <Icons.File />}
+                                                </span>
+                                                <span className="truncate">{file.name}</span>
+                                            </div>
                                         </td>
-                                        <td style={{ padding: "8px 12px", color: "var(--text-muted)", textAlign: "right" }}>{file.is_dir ? "-" : formatSize(file.size)}</td>
-                                        <td style={{ padding: "8px 12px", color: "var(--text-muted)", fontFamily: "monospace", fontSize: "12px" }}>{formatPermissions(file.permissions)}</td>
-                                        <td style={{ padding: "8px 12px", color: "var(--text-muted)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                        <td className="file-cell file-size-cell">{file.is_dir ? "-" : formatSize(file.size)}</td>
+                                        <td className="file-cell file-perm-cell">{formatPermissions(file.permissions)}</td>
+                                        <td className="file-cell file-actions-cell">
                                             {formatDate(file.modified)}
                                             {!file.is_dir && (
-                                                <div style={{ display: "flex", gap: "6px", marginLeft: "12px" }}>
+                                                <div className="file-actions-group">
                                                     <button
                                                         onClick={(e) => handleEdit(file, e)}
                                                         title={writable ? "Edit file" : "View file (Read Only)"}
-                                                        style={{
-                                                            display: "flex",
-                                                            alignItems: "center",
-                                                            gap: "4px",
-                                                            padding: "4px 10px",
-                                                            borderRadius: "4px",
-                                                            border: "1px solid var(--border-color)",
-                                                            background: "var(--bg-tertiary)",
-                                                            cursor: "pointer",
-                                                            color: writable ? "var(--col-blue)" : "var(--text-muted)",
-                                                            fontSize: "11px",
-                                                            fontWeight: 500,
-                                                            transition: "all 0.15s ease"
-                                                        }}
-                                                        onMouseEnter={(e) => {
-                                                            e.currentTarget.style.background = writable ? "var(--col-blue)" : "var(--bg-secondary)";
-                                                            e.currentTarget.style.color = writable ? "white" : "var(--text-primary)";
-                                                        }}
-                                                        onMouseLeave={(e) => {
-                                                            e.currentTarget.style.background = "var(--bg-tertiary)";
-                                                            e.currentTarget.style.color = writable ? "var(--col-blue)" : "var(--text-muted)";
-                                                        }}
+                                                        className={`file-action-btn edit ${writable ? "writable" : ""}`}
                                                     >
                                                         {writable ? <Icons.Edit /> : <span style={{ fontSize: "14px" }}>👁</span>}
                                                         {writable ? "Edit" : "View"}
@@ -242,28 +205,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                                             handleDownload(file);
                                                         }}
                                                         title="Download file"
-                                                        style={{
-                                                            display: "flex",
-                                                            alignItems: "center",
-                                                            gap: "4px",
-                                                            padding: "4px 10px",
-                                                            borderRadius: "4px",
-                                                            border: "1px solid var(--border-color)",
-                                                            background: "var(--bg-tertiary)",
-                                                            cursor: "pointer",
-                                                            color: "var(--col-green)",
-                                                            fontSize: "11px",
-                                                            fontWeight: 500,
-                                                            transition: "all 0.15s ease"
-                                                        }}
-                                                        onMouseEnter={(e) => {
-                                                            e.currentTarget.style.background = "var(--col-green)";
-                                                            e.currentTarget.style.color = "white";
-                                                        }}
-                                                        onMouseLeave={(e) => {
-                                                            e.currentTarget.style.background = "var(--bg-tertiary)";
-                                                            e.currentTarget.style.color = "var(--col-green)";
-                                                        }}
+                                                        className="file-action-btn download"
                                                     >
                                                         <Icons.Download /> Save
                                                     </button>
@@ -286,14 +228,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
             </div>
 
             {/* Footer */}
-            <div style={{
-                padding: "4px 8px",
-                borderTop: "1px solid var(--border-color)",
-                fontSize: "11px",
-                color: "var(--text-muted)",
-                display: "flex",
-                justifyContent: "space-between"
-            }}>
+            <div className="file-footer">
                 <span>{files.length} items</span>
                 <span>SFTP Connected</span>
             </div>

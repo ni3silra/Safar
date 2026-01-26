@@ -65,15 +65,7 @@ export function Workspace({
             <div className="content-main">
                 {/* Session Toolbar - Only show if we have an active session selected */}
                 {derivedActiveSession && (
-                    <div style={{
-                        display: "flex",
-                        alignItems: "center",
-                        padding: "0 8px",
-                        background: "var(--bg-secondary)",
-                        borderBottom: "1px solid var(--border-color)",
-                        height: "32px",
-                        gap: "1px"
-                    }}>
+                    <div className="session-toolbar">
                         <WorkspaceTabButton
                             active={derivedActiveSession.activeView === "terminal"}
                             onClick={() => updateSessionView(derivedActiveSession.id, "terminal")}
@@ -175,18 +167,7 @@ function WorkspaceTabButton({ active, onClick, icon, label }: { active: boolean,
     return (
         <button
             onClick={onClick}
-            style={{
-                background: active ? "var(--bg-primary)" : "transparent",
-                color: active ? "var(--col-blue)" : "var(--text-muted)",
-                border: "none",
-                borderTop: active ? "2px solid var(--col-blue)" : "2px solid transparent",
-                padding: "0 12px",
-                height: "100%",
-                cursor: "pointer",
-                fontSize: "12px",
-                fontWeight: active ? "600" : "normal",
-                display: "flex", alignItems: "center", gap: "6px"
-            }}
+            className={`session-view-tab ${active ? "active" : ""}`}
         >
             {icon} {label}
         </button>

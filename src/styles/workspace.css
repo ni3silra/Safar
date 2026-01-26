@@ -1,0 +1,230 @@
+/* ============================================
+   WORKSPACE STYLES
+   ============================================ */
+
+.content {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+.content-main {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Session Toolbar (Tabs for Terminal/Files/Logs etc inside a session) */
+.session-toolbar {
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    height: 32px;
+    gap: 1px;
+}
+
+.session-view-tab {
+    background: transparent;
+    color: var(--text-muted);
+    border: none;
+    border-top: 2px solid transparent;
+    padding: 0 12px;
+    height: 100%;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: normal;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all var(--transition-fast);
+}
+
+.session-view-tab.active {
+    background: var(--bg-primary);
+    color: var(--safar-blue);
+    border-top-color: var(--safar-blue);
+    font-weight: 600;
+}
+
+.session-view-tab:hover:not(.active) {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+/* ============================================
+   TAB BAR (Top Session Tabs)
+   ============================================ */
+.tab-bar {
+    display: flex;
+    align-items: center;
+    height: var(--tab-bar-height);
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-default);
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.tab-bar::-webkit-scrollbar {
+    height: 0;
+}
+
+.tab {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 100%;
+    padding: 0 var(--space-3);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+}
+
+.tab:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent-primary);
+    background: var(--bg-primary);
+}
+
+.tab-icon {
+    font-size: 14px;
+}
+
+.tab-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--radius-sm);
+    opacity: 0;
+    transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.tab:hover .tab-close {
+    opacity: 1;
+}
+
+.tab-close:hover {
+    background: var(--bg-elevated);
+}
+
+.tab-add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    margin: 0 var(--space-2);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 16px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.tab-add:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+
+/* ============================================
+   WELCOME SCREEN
+   ============================================ */
+.welcome-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: var(--space-8);
+    text-align: center;
+    animation: fadeIn var(--transition-slow);
+}
+
+.welcome-logo {
+    width: 120px;
+    height: 120px;
+    margin-bottom: var(--space-6);
+}
+
+.welcome-title {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: var(--space-2);
+    background: var(--safar-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.welcome-tagline {
+    font-size: var(--text-lg);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-8);
+}
+
+.welcome-actions {
+    display: flex;
+    gap: var(--space-3);
+    margin-bottom: var(--space-8);
+}
+
+.welcome-features {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-4);
+    max-width: 600px;
+}
+
+.feature-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: var(--space-4);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    transition: all var(--transition-base);
+}
+
+.feature-card:hover {
+    border-color: var(--accent-primary);
+    box-shadow: var(--shadow-glow);
+    transform: translateY(-2px);
+}
+
+.feature-icon {
+    font-size: 24px;
+    margin-bottom: var(--space-2);
+    color: var(--accent-primary);
+}
+
+.feature-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: var(--space-1);
+}
+
+.feature-desc {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+}

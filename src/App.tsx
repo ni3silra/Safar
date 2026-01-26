@@ -2,8 +2,13 @@ import { useState, useEffect } from "react";
 import { Toaster } from 'sonner';
 import { invoke } from "@tauri-apps/api/core";
 import "./styles/globals.css";
-import "./styles/App.css";
+// import "./styles/App.css"; // Removing chunky App.css in favor of modules
 import "./styles/components.css";
+import "./styles/layout.css";
+import "./styles/workspace.css";
+import "./styles/sidebar.css";
+import "./styles/filebrowser.css";
+import "./styles/terminal.css";
 
 import { useSessions } from "./hooks/useSessions";
 import { useTerminalConnection, ConnectConfig } from "./hooks/useTerminalConnection";

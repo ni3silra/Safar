@@ -237,35 +237,20 @@ export function TerminalComponent({
   const findPrev = () => searchAddonRef.current?.findPrevious(searchTerm);
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%", backgroundColor: TERMINAL_THEMES[themeName].colors.background }}>
+    <div className="terminal-container" style={{ backgroundColor: TERMINAL_THEMES[themeName].colors.background }}>
+      {/* We keep inline background color because it comes from the JS theme object which is dynamic */}
       <div
         ref={terminalRef}
-        style={{
-          width: "100%",
-          height: "100%",
-          padding: "8px",
-        }}
+        className="terminal-viewport"
       />
 
       {/* Search Bar */}
       {showSearch && (
-        <div style={{
-          position: "absolute",
-          top: "10px",
-          right: "60px",
-          zIndex: 20,
-          backgroundColor: "var(--bg-secondary)",
-          border: "1px solid var(--border-color)",
-          borderRadius: "4px",
-          display: "flex",
-          alignItems: "center",
-          padding: "4px",
-          boxShadow: "0 4px 6px rgba(0,0,0,0.3)",
-          gap: "4px"
-        }}>
+        <div className="terminal-search-bar">
           <input
             autoFocus
             type="text"
+            className="terminal-search-input"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             onKeyDown={(e) => {
@@ -275,21 +260,11 @@ export function TerminalComponent({
               if (e.key === "Escape") setShowSearch(false);
             }}
             placeholder="Find..."
-            style={{
-              background: "var(--input-bg)",
-              border: "none",
-              color: "var(--text-primary)",
-              outline: "none",
-              fontSize: "12px",
-              padding: "2px 4px",
-              width: "120px",
-              borderRadius: "2px"
-            }}
           />
-          <button onClick={findPrev} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.CaretUp /></button>
-          <button onClick={findNext} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.CaretDown /></button>
-          <div style={{ width: "1px", height: "12px", background: "var(--border-color)", margin: "0 2px" }} />
-          <button onClick={() => setShowSearch(false)} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.X /></button>
+          <button onClick={findPrev} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretUp /></button>
+          <button onClick={findNext} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretDown /></button>
+          <div className="terminal-search-divider" />
+          <button onClick={() => setShowSearch(false)} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.X /></button>
         </div>
       )}
     </div>

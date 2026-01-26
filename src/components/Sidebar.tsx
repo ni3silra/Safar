@@ -111,14 +111,6 @@ export function Sidebar({
                             placeholder="Search sessions..."
                             style={{ fontSize: "var(--text-xs)", flex: 1 }}
                         />
-                        {/* <button
-                            className="icon-btn"
-                            onClick={onExport}
-                            data-tooltip="Export Sessions"
-                            style={{ padding: "4px" }}
-                        >
-                            <Icons.Download />
-                        </button> */}
                     </div>
 
                     {/* Active Sessions */}
@@ -174,7 +166,6 @@ export function Sidebar({
                                             backspaceMode: saved.backspace_mode,
                                         })
                                     }
-                                    style={{ cursor: "pointer" }}
                                 >
                                     <div className="session-icon">
                                         <Icons.Star />
@@ -184,10 +175,10 @@ export function Sidebar({
                                         <div className="session-host">{saved.username}@{saved.host}</div>
                                     </div>
                                     <div className="session-actions" onClick={(e) => e.stopPropagation()}>
-                                        <button className="icon-btn xs" onClick={() => onEditSession(saved)} title="Edit">
+                                        <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onEditSession(saved)} title="Edit">
                                             <Icons.Edit style={{ width: 12, height: 12 }} />
                                         </button>
-                                        <button className="icon-btn xs danger" onClick={() => onDeleteSession(saved.id)} title="Delete">
+                                        <button className="icon-btn" style={{ width: 24, height: 24, color: "var(--accent-error)" }} onClick={() => onDeleteSession(saved.id)} title="Delete">
                                             <Icons.Trash style={{ width: 12, height: 12 }} />
                                         </button>
                                     </div>
@@ -221,7 +212,6 @@ export function Sidebar({
                                             backspaceMode: saved.backspace_mode,
                                         })
                                     }
-                                    style={{ cursor: "pointer" }}
                                 >
                                     <div className="session-icon">
                                         <Icons.Clock />
@@ -231,10 +221,10 @@ export function Sidebar({
                                         <div className="session-host">{saved.username}@{saved.host}</div>
                                     </div>
                                     <div className="session-actions" onClick={(e) => e.stopPropagation()}>
-                                        <button className="icon-btn xs" onClick={() => onEditSession(saved)} title="Edit">
+                                        <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onEditSession(saved)} title="Edit">
                                             <Icons.Edit style={{ width: 12, height: 12 }} />
                                         </button>
-                                        <button className="icon-btn xs danger" onClick={() => onDeleteSession(saved.id)} title="Delete">
+                                        <button className="icon-btn" style={{ width: 24, height: 24, color: "var(--accent-error)" }} onClick={() => onDeleteSession(saved.id)} title="Delete">
                                             <Icons.Trash style={{ width: 12, height: 12 }} />
                                         </button>
                                     </div>
