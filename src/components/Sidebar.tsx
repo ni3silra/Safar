@@ -2,12 +2,7 @@ import { Icons } from "./Icons";
 import { CommandPalette } from "./CommandPalette";
 import { Session, ConnectConfig, SavedSession } from "../types";
 
-const TEST_SERVER = {
-    host: "test.rebex.net",
-    port: 22,
-    username: "demo",
-    password: "password",
-};
+
 
 interface SidebarProps {
     sidebarCollapsed: boolean;
@@ -234,31 +229,7 @@ export function Sidebar({
                     )}
 
                     {/* Demo Server (always show for testing) */}
-                    <div className="sidebar-section">
-                        <div className="sidebar-section-title">
-                            <span>
-                                <Icons.Zap /> Quick Start
-                            </span>
-                        </div>
-                        <div
-                            className="session-item"
-                            onClick={() =>
-                                onConnect({
-                                    ...TEST_SERVER,
-                                    sessionName: "Rebex Test Server",
-                                })
-                            }
-                            style={{ cursor: "pointer" }}
-                        >
-                            <div className="session-icon">
-                                <Icons.Zap />
-                            </div>
-                            <div className="session-info">
-                                <div className="session-name">Demo Server</div>
-                                <div className="session-host">{TEST_SERVER.host}</div>
-                            </div>
-                        </div>
-                    </div>
+
                 </div>
             )}
             {!sidebarCollapsed && sidebarView === "snippets" && (
