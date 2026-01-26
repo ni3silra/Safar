@@ -1,0 +1,194 @@
+import { Icons } from "../Icons";
+import { Session, LogEntry, SavedSession } from "../../types";
+import { AppSettings } from "../SettingsTypes";
+import TerminalComponent from "../Terminal";
+import { FileBrowser } from "../FileBrowser";
+import { TunnelManager } from "../TunnelManager";
+import { SessionLogs } from "../SessionLogs";
+import { SessionStats } from "../SessionStats";
+import { WelcomeScreen } from "../WelcomeScreen";
+
+interface WorkspaceProps {
+    activeSessions: Session[];
+    activeSessionId: string | null;
+    setActiveSessionId: (id: string) => void;
+    disconnect: (id: string) => void;
+    updateSessionView: (sessionId: string, view: Session["activeView"]) => void;
+    sessionLogs: Record<string, LogEntry[]>;
+    appSettings: AppSettings;
+    onNewConnection: () => void;
+}
+
+export function Workspace({
+    activeSessions,
+    activeSessionId,
+    setActiveSessionId,
+    disconnect,
+    updateSessionView,
+    sessionLogs,
+    appSettings,
+    onNewConnection,
+}: WorkspaceProps) {
+    const derivedActiveSession = activeSessions.find(s => s.id === activeSessionId);
+
+    return (
+        <div className="content">
+            {/* Tab Bar */}
+            <div className="tab-bar">
+                {activeSessions.map((session) => (
+                    <button
+                        key={session.id}
+                        className={`tab ${activeSessionId === session.id ? "active" : ""}`}
+                        onClick={() => setActiveSessionId(session.id)}
+                    >
+                        <span className="tab-icon">
+                            <Icons.Terminal />
+                        </span>
+                        <span>{session.name}</span>
+                        <span
+                            className="tab-close"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                disconnect(session.id);
+                            }}
+                        >
+                            <Icons.X />
+                        </span>
+                    </button>
+                ))}
+                <button className="tab-add" onClick={onNewConnection}>
+                    <Icons.Plus />
+                </button>
+            </div>
+
+            {/* Main Content */}
+            <div className="content-main">
+                {/* Session Toolbar - Only show if we have an active session selected */}
+                {derivedActiveSession && (
+                    <div style={{
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "0 8px",
+                        background: "var(--bg-secondary)",
+                        borderBottom: "1px solid var(--border-color)",
+                        height: "32px",
+                        gap: "1px"
+                    }}>
+                        <WorkspaceTabButton
+                            active={derivedActiveSession.activeView === "terminal"}
+                            onClick={() => updateSessionView(derivedActiveSession.id, "terminal")}
+                            icon={<Icons.Terminal style={{ width: 12, height: 12 }} />}
+                            label="Terminal"
+                        />
+                        <WorkspaceTabButton
+                            active={derivedActiveSession.activeView === "files"}
+                            onClick={() => updateSessionView(derivedActiveSession.id, "files")}
+                            icon={<Icons.Folder style={{ width: 12, height: 12 }} />}
+                            label="Files"
+                        />
+                        <WorkspaceTabButton
+                            active={derivedActiveSession.activeView === "tunnels"}
+                            onClick={() => updateSessionView(derivedActiveSession.id, "tunnels")}
+                            icon={<Icons.Zap style={{ width: 12, height: 12 }} />}
+                            label="Tunnels"
+                        />
+                        <WorkspaceTabButton
+                            active={derivedActiveSession.activeView === "logs"}
+                            onClick={() => updateSessionView(derivedActiveSession.id, "logs")}
+                            icon={<Icons.Clock style={{ width: 12, height: 12 }} />}
+                            label="Logs"
+                        />
+                        <WorkspaceTabButton
+                            active={derivedActiveSession.activeView === "stats"}
+                            onClick={() => updateSessionView(derivedActiveSession.id, "stats")}
+                            icon={<Icons.Shield style={{ width: 12, height: 12 }} />}
+                            label="Info"
+                        />
+                    </div>
+                )}
+
+                {/* Session Content Area */}
+                <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+                    {/* Show Welcome Screen if no active session selected */}
+                    {!derivedActiveSession && (
+                        <WelcomeScreen
+                            onNewConnection={onNewConnection}
+                        />
+                    )}
+
+                    {/* Render ALL active sessions, but hide incorrect ones to preserve state */}
+                    {activeSessions.map((session) => (
+                        <div
+                            key={session.id}
+                            style={{
+                                display: activeSessionId === session.id ? "block" : "none",
+                                height: "100%"
+                            }}
+                        >
+                            <div style={{
+                                display: session.activeView === "terminal" ? "block" : "none",
+                                height: "100%"
+                            }}>
+                                <TerminalComponent
+                                    sessionId={session.id}
+                                    onDisconnect={() => disconnect(session.id)}
+                                    fontSize={appSettings.terminalFontSize}
+                                    themeName={appSettings.terminalTheme}
+                                    fontFamily={appSettings.terminalFontFamily}
+                                    backspaceMode={session.backspaceMode}
+                                    isVisible={activeSessionId === session.id && session.activeView === "terminal"}
+                                />
+                            </div>
+                            <div style={{
+                                display: session.activeView === "files" ? "block" : "none",
+                                height: "100%"
+                            }}>
+                                <FileBrowser sessionId={session.id} />
+                            </div>
+                            <div style={{
+                                display: session.activeView === "tunnels" ? "block" : "none",
+                                height: "100%"
+                            }}>
+                                <TunnelManager sessionId={session.id} />
+                            </div>
+                            <div style={{
+                                display: session.activeView === "logs" ? "block" : "none",
+                                height: "100%"
+                            }}>
+                                <SessionLogs logs={sessionLogs[session.id] || []} />
+                            </div>
+                            <div style={{
+                                display: session.activeView === "stats" ? "block" : "none",
+                                height: "100%"
+                            }}>
+                                <SessionStats session={session} />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function WorkspaceTabButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
+    return (
+        <button
+            onClick={onClick}
+            style={{
+                background: active ? "var(--bg-primary)" : "transparent",
+                color: active ? "var(--col-blue)" : "var(--text-muted)",
+                border: "none",
+                borderTop: active ? "2px solid var(--col-blue)" : "2px solid transparent",
+                padding: "0 12px",
+                height: "100%",
+                cursor: "pointer",
+                fontSize: "12px",
+                fontWeight: active ? "600" : "normal",
+                display: "flex", alignItems: "center", gap: "6px"
+            }}
+        >
+            {icon} {label}
+        </button>
+    );
+}

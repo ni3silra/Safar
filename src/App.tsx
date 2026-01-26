@@ -1,34 +1,29 @@
 import { useState, useEffect } from "react";
-// invoke removed as it's now in the hook
 import { Toaster } from 'sonner';
 import { invoke } from "@tauri-apps/api/core";
 import "./styles/globals.css";
 import "./styles/App.css";
 import "./styles/components.css";
-import TerminalComponent from "./components/Terminal";
-import { FileBrowser } from "./components/FileBrowser";
+
 import { useSessions } from "./hooks/useSessions";
 import { useTerminalConnection, ConnectConfig } from "./hooks/useTerminalConnection";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { Sidebar } from "./components/Sidebar";
 import { ImportModal } from "./components/ImportModal";
-import { TunnelManager } from "./components/TunnelManager";
 import { LockScreen } from "./components/LockScreen";
 import { ErrorModal } from "./components/ErrorModal";
 import { DeleteConfirmationModal } from "./components/DeleteConfirmationModal";
-import { Icons } from "./components/Icons";
 import { SavedSession, LogEntry } from "./types";
-import { SessionLogs } from "./components/SessionLogs";
-import { SessionStats } from "./components/SessionStats";
 
-// ============================================
-// MAIN APP
-// ============================================
+// Layout Components
+import { Toolbar } from "./components/Layout/Toolbar";
+import { StatusBar } from "./components/Layout/StatusBar";
+import { Workspace } from "./components/Layout/Workspace";
 
+// Modals
 import { SettingsModal } from "./components/SettingsModal";
 import { AppSettings, DEFAULT_SETTINGS } from "./components/SettingsTypes";
 import { HelpModal } from "./components/HelpModal";
-import { WelcomeScreen } from "./components/WelcomeScreen";
 import { QuickConnectModal } from "./components/QuickConnectModal";
 import { CredentialsModal } from "./components/CredentialsModal";
 
@@ -125,7 +120,6 @@ function App() {
     setActiveSessionId,
     connectionStatus,
     statusMessage,
-    derivedActiveSession,
     updateSessionView,
     connect,
     disconnect
@@ -138,7 +132,6 @@ function App() {
       theme: prev.theme === "dark" ? "light" : "dark"
     }));
   };
-
 
   const handleEditSession = (session: SavedSession) => {
     setEditingSession(session);
@@ -207,7 +200,6 @@ function App() {
     }
   };
 
-
   if (checkingLock) {
     return <div className="app-loading">Loading...</div>;
   }
@@ -218,48 +210,13 @@ function App() {
 
   return (
     <div className="app" data-theme={theme}>
-      {/* Toolbar */}
-      <div className="toolbar">
-        <div className="toolbar-group">
-          <img src="/safar-logo.svg" alt="Safar" width="24" height="24" />
-          <span style={{ fontWeight: 600, fontSize: "var(--text-base)" }}>Safar</span>
-        </div>
-
-        <div className="toolbar-divider" />
-
-        <div className="toolbar-group">
-          <button
-            className="btn btn-primary"
-            onClick={() => setShowQuickConnect(true)}
-            style={{ padding: "var(--space-1) var(--space-3)" }}
-          >
-            <Icons.Plus />
-            <span>New Connection</span>
-          </button>
-
-          <button
-            className="icon-btn"
-            data-tooltip="Quick Connect (Ctrl+N)"
-            onClick={() => setShowQuickConnect(true)}
-          >
-            <Icons.Zap />
-          </button>
-        </div>
-
-        <div style={{ flex: 1 }} />
-
-        <div className="toolbar-group">
-          <button className="icon-btn" onClick={toggleTheme} data-tooltip="Toggle Theme">
-            {theme === "dark" ? <Icons.Sun /> : <Icons.Moon />}
-          </button>
-          <button className="icon-btn" data-tooltip="Settings" onClick={() => setShowSettings(true)}>
-            <Icons.Settings />
-          </button>
-          <button className="icon-btn" data-tooltip="Help & About" onClick={() => setShowHelp(true)}>
-            <Icons.Help />
-          </button>
-        </div>
-      </div>
+      <Toolbar
+        onNewConnection={() => setShowQuickConnect(true)}
+        onToggleTheme={toggleTheme}
+        onOpenSettings={() => setShowSettings(true)}
+        onOpenHelp={() => setShowHelp(true)}
+        isDarkTheme={theme === "dark"}
+      />
 
       {/* Main Layout */}
       <div className="main-layout" style={{ position: "relative" }}>
@@ -284,211 +241,22 @@ function App() {
         />
 
         {/* Content Area */}
-        <div className="content">
-          {/* Tab Bar */}
-          <div className="tab-bar">
-            {activeSessions.map((session) => (
-              <button
-                key={session.id}
-                className={`tab ${activeSessionId === session.id ? "active" : ""}`}
-                onClick={() => setActiveSessionId(session.id)}
-              >
-                <span className="tab-icon">
-                  <Icons.Terminal />
-                </span>
-                <span>{session.name}</span>
-                <span
-                  className="tab-close"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    disconnect(session.id);
-                  }}
-                >
-                  <Icons.X />
-                </span>
-              </button>
-            ))}
-            <button className="tab-add" onClick={() => setShowQuickConnect(true)}>
-              <Icons.Plus />
-            </button>
-          </div>
-
-          {/* Main Content */}
-          <div className="content-main">
-            {/* Session Toolbar - Only show if we have an active session selected */}
-            {derivedActiveSession && (
-              <div style={{
-                display: "flex",
-                alignItems: "center",
-                padding: "0 8px",
-                background: "var(--bg-secondary)",
-                borderBottom: "1px solid var(--border-color)",
-                height: "32px",
-                gap: "1px"
-              }}>
-                <button
-                  onClick={() => updateSessionView(derivedActiveSession.id, "terminal")}
-                  style={{
-                    background: derivedActiveSession.activeView === "terminal" ? "var(--bg-primary)" : "transparent",
-                    color: derivedActiveSession.activeView === "terminal" ? "var(--col-blue)" : "var(--text-muted)",
-                    border: "none",
-                    borderTop: derivedActiveSession.activeView === "terminal" ? "2px solid var(--col-blue)" : "2px solid transparent",
-                    padding: "0 12px",
-                    height: "100%",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                    fontWeight: derivedActiveSession.activeView === "terminal" ? "600" : "normal",
-                    display: "flex", alignItems: "center", gap: "6px"
-                  }}
-                >
-                  <Icons.Terminal style={{ width: 12, height: 12 }} /> Terminal
-                </button>
-                <button
-                  onClick={() => updateSessionView(derivedActiveSession.id, "files")}
-                  style={{
-                    background: derivedActiveSession.activeView === "files" ? "var(--bg-primary)" : "transparent",
-                    color: derivedActiveSession.activeView === "files" ? "var(--col-blue)" : "var(--text-muted)",
-                    border: "none",
-                    borderTop: derivedActiveSession.activeView === "files" ? "2px solid var(--col-blue)" : "2px solid transparent",
-                    padding: "0 12px",
-                    height: "100%",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                    fontWeight: derivedActiveSession.activeView === "files" ? "600" : "normal",
-                    display: "flex", alignItems: "center", gap: "6px"
-                  }}
-                >
-                  <Icons.Folder style={{ width: 12, height: 12 }} /> Files
-                </button>
-                <button
-                  onClick={() => updateSessionView(derivedActiveSession.id, "tunnels")}
-                  style={{
-                    background: derivedActiveSession.activeView === "tunnels" ? "var(--bg-primary)" : "transparent",
-                    color: derivedActiveSession.activeView === "tunnels" ? "var(--col-blue)" : "var(--text-muted)",
-                    border: "none",
-                    borderTop: derivedActiveSession.activeView === "tunnels" ? "2px solid var(--col-blue)" : "2px solid transparent",
-                    padding: "0 12px",
-                    height: "100%",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                    fontWeight: derivedActiveSession.activeView === "tunnels" ? "600" : "normal",
-                    display: "flex", alignItems: "center", gap: "6px"
-                  }}
-                >
-                  <Icons.Zap style={{ width: 12, height: 12 }} /> Tunnels
-                </button>
-                <button
-                  onClick={() => updateSessionView(derivedActiveSession.id, "logs")}
-                  style={{
-                    background: derivedActiveSession.activeView === "logs" ? "var(--bg-primary)" : "transparent",
-                    color: derivedActiveSession.activeView === "logs" ? "var(--col-blue)" : "var(--text-muted)",
-                    border: "none",
-                    borderTop: derivedActiveSession.activeView === "logs" ? "2px solid var(--col-blue)" : "2px solid transparent",
-                    padding: "0 12px",
-                    height: "100%",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                    fontWeight: derivedActiveSession.activeView === "logs" ? "600" : "normal",
-                    display: "flex", alignItems: "center", gap: "6px"
-                  }}
-                >
-                  <Icons.Clock style={{ width: 12, height: 12 }} /> Logs
-                </button>
-                <button
-                  onClick={() => updateSessionView(derivedActiveSession.id, "stats")}
-                  style={{
-                    background: derivedActiveSession.activeView === "stats" ? "var(--bg-primary)" : "transparent",
-                    color: derivedActiveSession.activeView === "stats" ? "var(--col-blue)" : "var(--text-muted)",
-                    border: "none",
-                    borderTop: derivedActiveSession.activeView === "stats" ? "2px solid var(--col-blue)" : "2px solid transparent",
-                    padding: "0 12px",
-                    height: "100%",
-                    cursor: "pointer",
-                    fontSize: "12px",
-                    fontWeight: derivedActiveSession.activeView === "stats" ? "600" : "normal",
-                    display: "flex", alignItems: "center", gap: "6px"
-                  }}
-                >
-                  <Icons.Shield style={{ width: 12, height: 12 }} /> Info
-                </button>
-              </div>
-            )}
-
-            {/* Session Content Area */}
-            <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-              {/* Show Welcome Screen if no active session selected */}
-              {!derivedActiveSession && (
-                <WelcomeScreen
-                  onNewConnection={() => setShowQuickConnect(true)}
-                />
-              )}
-
-              {/* Render ALL active sessions, but hide incorrect ones to preserve state */}
-              {activeSessions.map((session) => (
-                <div
-                  key={session.id}
-                  style={{
-                    display: activeSessionId === session.id ? "block" : "none",
-                    height: "100%"
-                  }}
-                >
-                  <div style={{
-                    display: session.activeView === "terminal" ? "block" : "none",
-                    height: "100%"
-                  }}>
-                    <TerminalComponent
-                      sessionId={session.id}
-                      onDisconnect={() => disconnect(session.id)}
-                      fontSize={appSettings.terminalFontSize}
-                      themeName={appSettings.terminalTheme}
-                      fontFamily={appSettings.terminalFontFamily}
-                      backspaceMode={session.backspaceMode}
-                      isVisible={activeSessionId === session.id && session.activeView === "terminal"}
-                    />
-                  </div>
-                  <div style={{
-                    display: session.activeView === "files" ? "block" : "none",
-                    height: "100%"
-                  }}>
-                    <FileBrowser sessionId={session.id} />
-                  </div>
-                  <div style={{
-                    display: session.activeView === "tunnels" ? "block" : "none",
-                    height: "100%"
-                  }}>
-                    <TunnelManager sessionId={session.id} />
-                  </div>
-                  <div style={{
-                    display: session.activeView === "logs" ? "block" : "none",
-                    height: "100%"
-                  }}>
-                    <SessionLogs logs={sessionLogs[session.id] || []} />
-                  </div>
-                  <div style={{
-                    display: session.activeView === "stats" ? "block" : "none",
-                    height: "100%"
-                  }}>
-                    <SessionStats session={session} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <Workspace
+          activeSessions={activeSessions}
+          activeSessionId={activeSessionId}
+          setActiveSessionId={setActiveSessionId}
+          disconnect={disconnect}
+          updateSessionView={updateSessionView}
+          sessionLogs={sessionLogs}
+          appSettings={appSettings}
+          onNewConnection={() => setShowQuickConnect(true)}
+        />
       </div>
 
-      {/* Status Bar */}
-      <div className="status-bar">
-        <div className="status-bar-left">
-          <div className="status-item">
-            <div className={`status-indicator ${connectionStatus}`} />
-            <span>{statusMessage}</span>
-          </div>
-        </div>
-        <div className="status-bar-right">
-          <span>v0.3.0</span>
-        </div>
-      </div>
+      <StatusBar
+        statusMessage={statusMessage}
+        connectionStatus={connectionStatus}
+      />
 
       {/* Toaster */}
       <Toaster position="top-center" theme={theme} />
