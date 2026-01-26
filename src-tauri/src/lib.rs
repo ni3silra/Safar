@@ -95,7 +95,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_window_event(|window, event| {
+        .on_window_event(|_window, event| {
             if let tauri::WindowEvent::Destroyed = event {
                 // Window is being destroyed, triggering cleanup via Drop
                 // The AppState held by Tauri will also be dropped eventually

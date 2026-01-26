@@ -3,31 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { toast } from 'sonner';
 
-// Reusing IconProps from App (or defining locally since we don't have a shared UI lib yet)
-interface IconProps {
-    className?: string;
-    style?: React.CSSProperties;
-}
-
-const Icons = {
-    X: ({ style, className }: IconProps = {}) => (
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" style={style} className={className}>
-            <path d="M3.5 3.5l5 5m0-5l-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-    ),
-    Upload: ({ style, className }: IconProps = {}) => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
-            <path d="M8 12a.5.5 0 01-.5-.5V4.707L5.354 6.854a.5.5 0 11-.708-.708l3-3a.5.5 0 01.708 0l3 3a.5.5 0 01-.708.708L8 4.707V11.5a.5.5 0 01-.5.5z" />
-            <path d="M2.5 12a.5.5 0 01.5-.5h2a.5.5 0 010 1H3a.5.5 0 01-.5-.5zm8 0a.5.5 0 01.5-.5h2a.5.5 0 010 1h-2a.5.5 0 01-.5-.5z" />
-        </svg>
-    ),
-    FileCode: ({ style, className }: IconProps = {}) => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
-            <path d="M4 1.5A1.5 1.5 0 002.5 3v10A1.5 1.5 0 004 14.5h8a1.5 1.5 0 001.5-1.5V3A1.5 1.5 0 0012 1.5H4zM12 2.5a.5.5 0 01.5.5v10a.5.5 0 01-.5.5H4a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h8z" />
-            <path d="M5.5 5.5A.5.5 0 016 5h4a.5.5 0 010 1H6a.5.5 0 01-.5-.5zm0 3A.5.5 0 016 8h4a.5.5 0 010 1H6a.5.5 0 01-.5-.5zm0 3A.5.5 0 016 11h2a.5.5 0 010 1H6a.5.5 0 01-.5-.5z" />
-        </svg>
-    )
-};
+import { Icons } from "./Icons";
 
 interface ImportModalProps {
     onClose: () => void;

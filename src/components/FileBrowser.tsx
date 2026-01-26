@@ -22,47 +22,7 @@ interface FileBrowserProps {
     sessionId: string;
 }
 
-// Icons
-const Icons = {
-    Folder: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M1 3.5A1.5 1.5 0 012.5 2h3.379a1.5 1.5 0 011.06.44L8.061 3.5H13.5A1.5 1.5 0 0115 5v8a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13V3.5z" />
-        </svg>
-    ),
-    File: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M4 1.5A1.5 1.5 0 002.5 3v10A1.5 1.5 0 004 14.5h8a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L9.647 1.939A1.5 1.5 0 008.586 1.5H4z" />
-        </svg>
-    ),
-    ArrowUp: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M3.5 8.5l4.5-5 4.5 5h-3v4h-3v-4h-3z" />
-        </svg>
-    ),
-    Refresh: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M8 3a5 5 0 00-5 5h2a3 3 0 11.88 2.12l1.41 1.41A5 5 0 108 3z" />
-            <path d="M2.5 9.5l3.5-4h-7z" style={{ transform: "rotate(-90deg)", transformOrigin: "center" }} />
-        </svg>
-    ),
-    Upload: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
-            <path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z" />
-        </svg>
-    ),
-    Download: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
-            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z" />
-        </svg>
-    ),
-    Edit: () => (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z" />
-        </svg>
-    )
-};
+import { Icons } from "./Icons";
 
 type SortField = 'name' | 'modified' | 'size';
 type SortDirection = 'asc' | 'desc';
@@ -314,9 +274,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                         title="Go to path"
                         style={{ padding: "4px" }}
                     >
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                            <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-                        </svg>
+                        <Icons.ChevronRight />
                     </button>
                 </div>
             </div>

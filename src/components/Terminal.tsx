@@ -25,39 +25,7 @@ interface TerminalData {
   data: string;
 }
 
-const Icons = {
-  Search: () => (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M11.742 10.344a6.5 6.5 0 10-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 001.415-1.414l-3.85-3.85a1.007 1.007 0 00-.115-.1zM12 6.5a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
-    </svg>
-  ),
-  Settings: () => (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M8 4.754a3.246 3.246 0 100 6.492 3.246 3.246 0 000-6.492zM5.754 8a2.246 2.246 0 114.492 0 2.246 2.246 0 01-4.492 0z" />
-      <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 01-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 01-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 01.52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 01-1.255-.52l-.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 011.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 01.52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 01-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 01-1.255-.52l-.094-.319z" />
-    </svg>
-  ),
-  Close: () => (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-      <path d="M3.5 3.5l5 5m0-5l-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  ),
-  Up: () => (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M8 5l-4 4h8l-4-4z" />
-    </svg>
-  ),
-  Down: () => (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M8 11l4-4H4l4 4z" />
-    </svg>
-  ),
-  Copy: () => (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-      <path d="M4 2a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2V4a2 2 0 00-2-2H4zm0 2h8v8H4V4zm-3 2a1 1 0 011-1h.5a.5.5 0 010 1H2v9a1 1 0 001 1h9a.5.5 0 010 1H3a2 2 0 01-2-2V6z" />
-    </svg>
-  )
-};
+import { Icons } from "./Icons";
 
 export function TerminalComponent({
   sessionId,
@@ -318,10 +286,10 @@ export function TerminalComponent({
               borderRadius: "2px"
             }}
           />
-          <button onClick={findPrev} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.Up /></button>
-          <button onClick={findNext} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.Down /></button>
+          <button onClick={findPrev} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.CaretUp /></button>
+          <button onClick={findNext} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.CaretDown /></button>
           <div style={{ width: "1px", height: "12px", background: "var(--border-color)", margin: "0 2px" }} />
-          <button onClick={() => setShowSearch(false)} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.Close /></button>
+          <button onClick={() => setShowSearch(false)} className="icon-btn-small" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-primary)" }}><Icons.X /></button>
         </div>
       )}
     </div>
