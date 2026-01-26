@@ -1,71 +1,33 @@
 // File Browser Component (SFTP)
-import { useEffect, useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
+import { useFileBrowser } from "../hooks/useFileBrowser";
 import { FileEditor } from "./FileEditor";
-
-interface FileEntry {
-    name: string;
-    size: number;
-    is_dir: boolean;
-    modified: number;
-    permissions: string;
-}
-
-interface CommandResponse<T> {
-    success: boolean;
-    data: T | null;
-    error: string | null;
-}
+import { Icons } from "./Icons";
+import { FileEntry } from "../types";
 
 interface FileBrowserProps {
     sessionId: string;
 }
 
-import { Icons } from "./Icons";
-
-type SortField = 'name' | 'modified' | 'size';
-type SortDirection = 'asc' | 'desc';
-
 export function FileBrowser({ sessionId }: FileBrowserProps) {
-    const [currentPath, setCurrentPath] = useState(".");
-    const [tempPath, setTempPath] = useState(".");
-    const [files, setFiles] = useState<FileEntry[]>([]);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [editingFile, setEditingFile] = useState<string | null>(null);
-
-    // Sorting state
-    const [sortField, setSortField] = useState<SortField>('name');
-    const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
-
-    // Sorted files (folders first, then apply sort)
-    const sortedFiles = [...files].sort((a, b) => {
-        // Folders always come first
-        if (a.is_dir !== b.is_dir) {
-            return a.is_dir ? -1 : 1;
-        }
-
-        let comparison = 0;
-        if (sortField === 'name') {
-            comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-        } else if (sortField === 'modified') {
-            comparison = a.modified - b.modified;
-        } else if (sortField === 'size') {
-            comparison = a.size - b.size;
-        }
-
-        return sortDirection === 'asc' ? comparison : -comparison;
-    });
-
-    const handleSort = (field: SortField) => {
-        if (sortField === field) {
-            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-        } else {
-            setSortField(field);
-            setSortDirection('asc');
-        }
-    };
+    const {
+        currentPath,
+        tempPath,
+        setTempPath,
+        files,
+        loading,
+        error,
+        editingFile,
+        setEditingFile,
+        sortField,
+        sortDirection,
+        sortedFiles,
+        handleSort,
+        loadFiles,
+        handleNavigate,
+        handleUp,
+        handleDownload,
+        handleUpload
+    } = useFileBrowser(sessionId);
 
     const formatSize = (bytes: number) => {
         if (bytes === 0) return "0 B";
@@ -101,115 +63,6 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
         // 2 (010), 3 (011), 6 (110), 7 (111) have write bit set
         const userPerm = parseInt(p.charAt(0));
         return [2, 3, 6, 7].includes(userPerm);
-    };
-
-    const loadFiles = useCallback(async (path: string) => {
-        setLoading(true);
-        setError(null);
-        try {
-            // Use . as default if path is empty, but usually we track absolute path
-            // Note: "." usually resolves to home dir in sftp if not absolute
-            const response = await invoke<CommandResponse<FileEntry[]>>("ssh_sftp_ls", {
-                sessionId,
-                path,
-            });
-
-            if (response.success && response.data) {
-                setFiles(response.data);
-                setCurrentPath(path);
-            } else {
-                setError(response.error || "Failed to list files");
-            }
-        } catch (err) {
-            setError(String(err));
-        } finally {
-            setLoading(false);
-        }
-    }, [sessionId]);
-
-    // Initial load
-    useEffect(() => {
-        loadFiles(".");
-    }, [loadFiles]);
-
-    // Sync input with current path
-    useEffect(() => {
-        setTempPath(currentPath);
-    }, [currentPath]);
-
-    const handleNavigate = (entry: FileEntry) => {
-        if (entry.is_dir) {
-            // Simple path joining logic - works for unix
-            const newPath = currentPath === "." ? entry.name : `${currentPath}/${entry.name}`;
-            loadFiles(newPath);
-        } else {
-            // Open file for editing on double-click
-            const fullPath = currentPath === "." ? entry.name : `${currentPath}/${entry.name}`;
-            setEditingFile(fullPath);
-        }
-    };
-
-    const handleUp = () => {
-        if (currentPath === "." || currentPath === "/") return;
-        const parts = currentPath.split("/");
-        parts.pop();
-        const newPath = parts.length === 0 ? "." : parts.join("/");
-        loadFiles(newPath);
-    };
-
-    const handleDownload = async (file: FileEntry, e: React.MouseEvent) => {
-        e.stopPropagation();
-        if (file.is_dir) return;
-
-        try {
-            const localPath = await save({
-                defaultPath: file.name,
-            });
-
-            if (!localPath) return;
-
-            setLoading(true);
-            const remotePath = currentPath === "." ? file.name : `${currentPath}/${file.name}`;
-
-            await invoke("ssh_sftp_read", {
-                sessionId,
-                remotePath,
-                localPath
-            });
-        } catch (err) {
-            setError(`Download failed: ${err}`);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleUpload = async () => {
-        try {
-            const result = await openDialog({
-                multiple: false,
-                directory: false,
-            });
-
-            if (!result) return;
-            const localPath = result as string; // multiple:false ensures string
-
-            setLoading(true);
-            // simple basename extraction for windows/unix paths
-            const fileName = localPath.split(/[\\/]/).pop() || "upload";
-            const remotePath = currentPath === "." ? fileName : `${currentPath}/${fileName}`;
-
-            await invoke("ssh_sftp_write", {
-                sessionId,
-                localPath,
-                remotePath
-            });
-
-            loadFiles(currentPath);
-        } catch (err) {
-            setError(`Upload failed: ${err}`);
-        } finally {
-            setLoading(false);
-        }
     };
 
     const handleEdit = (file: FileEntry, e: React.MouseEvent) => {
@@ -384,7 +237,10 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                                         {writable ? "Edit" : "View"}
                                                     </button>
                                                     <button
-                                                        onClick={(e) => handleDownload(file, e)}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDownload(file);
+                                                        }}
                                                         title="Download file"
                                                         style={{
                                                             display: "flex",

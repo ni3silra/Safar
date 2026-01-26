@@ -1,5 +1,5 @@
 import { Icons } from "../Icons";
-import { Session, LogEntry, SavedSession } from "../../types";
+import { Session, LogEntry } from "../../types";
 import { AppSettings } from "../SettingsTypes";
 import TerminalComponent from "../Terminal";
 import { FileBrowser } from "../FileBrowser";

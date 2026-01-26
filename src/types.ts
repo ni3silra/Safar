@@ -75,3 +75,18 @@ export interface CommandResponse<T> {
     data: T | null;
     error: string | null;
 }
+
+// ============================================
+// FILE BROWSER TYPES
+// ============================================
+
+export interface FileEntry {
+    name: string;
+    size: number;
+    is_dir: boolean;
+    modified: number;
+    permissions: string;
+}
+
+export type SortField = 'name' | 'modified' | 'size';
+export type SortDirection = 'asc' | 'desc';
