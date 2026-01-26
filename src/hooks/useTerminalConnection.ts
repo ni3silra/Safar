@@ -60,6 +60,7 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
                     session_name: config.sessionName || `${config.username}@${config.host}`,
                     term_type: config.termType || null,
                     remote_command: config.remoteCommand || null,
+                    backspace_mode: config.backspaceMode || null,
                 },
             });
 
@@ -95,6 +96,8 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
                             private_key_path: config.privateKeyPath || undefined,
                             is_favorite: addToFav || false,
                             backspace_mode: config.backspaceMode,
+                            term_type: config.termType,
+                            remote_command: config.remoteCommand,
                             password: config.password, // Save password if provided
                         } as SavedSession); // simplified cast, saveSession usually handles ID generation
 

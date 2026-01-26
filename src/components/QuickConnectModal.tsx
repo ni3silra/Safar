@@ -50,7 +50,7 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
 
     // Advanced Options
     const [remoteCommand, setRemoteCommand] = useState(initialConfig?.remoteCommand || "");
-    const [backspaceMode, setBackspaceMode] = useState<"auto" | "ctrl-h" | "ctrl-?">("auto");
+    const [backspaceMode, setBackspaceMode] = useState(initialConfig?.backspaceMode as "auto" | "ctrl-h" | "ctrl-?" || "auto");
     const [terminalType, setTerminalType] = useState(initialConfig?.termType || "xterm-256color");
 
     const handleSubmit = async (e: React.FormEvent) => {
