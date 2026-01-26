@@ -166,4 +166,14 @@ export const Icons = {
             <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
         </svg>
     ),
+    Eye: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M8 3c-4 0-7 2.5-7 5s3 5 7 5 7-2.5 7-5-3-5-7-5zm0 8a3 3 0 110-6 3 3 0 010 6zm0-5a2 2 0 100 4 2 2 0 000-4z" />
+        </svg>
+    ),
+    Cpu: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M2.5 2.5h11v11h-11v-11zM1 1v14h14V1H1zm4 1.5h6v1H5v-1zm0 2h6v1H5v-1zm0 2h6v1H5v-1zm0 2h6v1H5v-1zm0 2h6v1H5v-1z" />
+        </svg>
+    ),
 };

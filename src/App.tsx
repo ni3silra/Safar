@@ -9,6 +9,7 @@ import "./styles/workspace.css";
 import "./styles/sidebar.css";
 import "./styles/filebrowser.css";
 import "./styles/terminal.css";
+import "./styles/settings.css";
 
 import { useSessions } from "./hooks/useSessions";
 import { useTerminalConnection, ConnectConfig } from "./hooks/useTerminalConnection";

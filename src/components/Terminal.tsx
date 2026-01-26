@@ -15,11 +15,17 @@ interface TerminalProps {
   fontSize?: number;
   themeName?: string;
   fontFamily?: string;
+  fontWeight?: string;
+  lineHeight?: number;
+  cursorStyle?: "block" | "underline" | "bar";
+  cursorBlink?: boolean;
+  scrollback?: number;
+  bellSound?: boolean;
+  copyOnSelect?: boolean;
   backspaceMode?: string;
   isVisible?: boolean;
 }
 
-// Minimal Icons for Terminal UI
 interface TerminalData {
   session_id: string;
   data: string;
@@ -33,6 +39,13 @@ export function TerminalComponent({
   fontSize = 14,
   themeName = "Safar Dark",
   fontFamily = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
+  fontWeight = "normal",
+  lineHeight = 1.2,
+  cursorStyle = "block",
+  cursorBlink = true,
+  scrollback = 1000,
+  bellSound = true,
+  copyOnSelect = true,
   backspaceMode,
   isVisible = true
 }: TerminalProps) {
@@ -99,15 +112,18 @@ export function TerminalComponent({
     const initialTheme = TERMINAL_THEMES[themeName].colors;
 
     const terminal = new Terminal({
-      cursorBlink: true,
-      cursorStyle: "block",
+      cursorBlink: cursorBlink,
+      cursorStyle: cursorStyle,
       fontSize: fontSize,
       fontFamily: fontFamily,
+      fontWeight: fontWeight as any, // Cast to avoid strict type mismatch if needed
+      lineHeight: lineHeight,
       theme: initialTheme,
       allowProposedApi: true,
-      scrollback: 10000,
+      scrollback: scrollback,
       macOptionIsMeta: true,
       macOptionClickForcesSelection: true,
+      bellSound: bellSound ? "bell" : undefined, // Assuming xterm support or handling externally? Xterm default handles bell logic but sound might need custom handling if xterm doesn't play it directly without configuration
     });
 
     const fitAddon = new FitAddon();
@@ -161,6 +177,16 @@ export function TerminalComponent({
       return true;
     });
 
+    // Auto Copy Selection
+    terminal.onSelectionChange(() => {
+      if (copyOnSelect) {
+        const selection = terminal.getSelection();
+        if (selection) {
+          navigator.clipboard.writeText(selection).catch(console.error);
+        }
+      }
+    });
+
     terminal.onData((data) => sendData(data));
 
     terminal.onResize(({ cols, rows }) => {
@@ -210,17 +236,22 @@ export function TerminalComponent({
       if (unlistenRef.current) unlistenRef.current();
       terminal.dispose();
     };
-  }, [sessionId, sendData, safeFit]);
+  }, [sessionId, sendData, safeFit]); // Important: Adding dependencies here might cause re-init. Ideally we want to update options dynamically instead of re-init.
 
-  // Update Settings Effect
+  // Update Settings Effect (Dynamic Updates)
   useEffect(() => {
     if (xtermRef.current) {
       xtermRef.current.options.fontSize = fontSize;
       xtermRef.current.options.fontFamily = fontFamily;
+      xtermRef.current.options.fontWeight = fontWeight as any;
+      xtermRef.current.options.lineHeight = lineHeight;
+      xtermRef.current.options.cursorStyle = cursorStyle;
+      xtermRef.current.options.cursorBlink = cursorBlink;
+      xtermRef.current.options.scrollback = scrollback;
       xtermRef.current.options.theme = TERMINAL_THEMES[themeName].colors;
       safeFit();
     }
-  }, [fontSize, themeName, fontFamily, safeFit]);
+  }, [fontSize, themeName, fontFamily, fontWeight, lineHeight, cursorStyle, cursorBlink, scrollback, safeFit]);
 
   // Search Effect
   useEffect(() => {

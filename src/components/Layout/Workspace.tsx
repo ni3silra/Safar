@@ -127,6 +127,13 @@ export function Workspace({
                                     fontSize={appSettings.terminalFontSize}
                                     themeName={appSettings.terminalTheme}
                                     fontFamily={appSettings.terminalFontFamily}
+                                    fontWeight={appSettings.terminalFontWeight}
+                                    lineHeight={appSettings.terminalLineHeight}
+                                    cursorStyle={appSettings.cursorStyle}
+                                    cursorBlink={appSettings.cursorBlink}
+                                    scrollback={appSettings.scrollback}
+                                    bellSound={appSettings.bellSound}
+                                    copyOnSelect={appSettings.copyOnSelect}
                                     backspaceMode={session.backspaceMode}
                                     isVisible={activeSessionId === session.id && session.activeView === "terminal"}
                                 />
