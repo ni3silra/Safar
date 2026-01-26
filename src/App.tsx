@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Toaster } from 'sonner';
-import { invoke } from "@tauri-apps/api/core";
+// import { invoke } from "@tauri-apps/api/core";
 import "./styles/globals.css";
 // import "./styles/App.css"; // Removing chunky App.css in favor of modules
 import "./styles/components.css";
@@ -16,7 +16,7 @@ import { useTerminalConnection, ConnectConfig } from "./hooks/useTerminalConnect
 import { useShortcuts } from "./hooks/useShortcuts";
 import { Sidebar } from "./components/Sidebar";
 import { ImportModal } from "./components/ImportModal";
-import { LockScreen } from "./components/LockScreen";
+// import { LockScreen } from "./components/LockScreen";
 import { ErrorModal } from "./components/ErrorModal";
 import { DeleteConfirmationModal } from "./components/DeleteConfirmationModal";
 import { SavedSession, LogEntry } from "./types";
@@ -51,9 +51,9 @@ function App() {
   const [editingSession, setEditingSession] = useState<SavedSession | null>(null);
   const [retryConfig, setRetryConfig] = useState<ConnectConfig | null>(null);
 
-  // Security State
-  const [isLocked, setIsLocked] = useState(true); // Default to locked until checked
-  const [checkingLock, setCheckingLock] = useState(true);
+  // Security State (Removed)
+  // const [isLocked, setIsLocked] = useState(true); 
+  // const [checkingLock, setCheckingLock] = useState(true);
 
   // Logs State
   const [sessionLogs, setSessionLogs] = useState<Record<string, LogEntry[]>>({});
@@ -90,35 +90,20 @@ function App() {
     document.documentElement.setAttribute("data-theme", appSettings.theme);
   }, [appSettings]);
 
-  // Check Lock Status on Mount
-  useEffect(() => {
-    const checkLock = async () => {
-      try {
-        const locked = await invoke<boolean>("storage_is_locked");
-        setIsLocked(locked);
-      } catch (err) {
-        console.error("Failed to check lock status:", err);
-      } finally {
-        setCheckingLock(false);
-      }
-    };
-    checkLock();
-  }, []);
+  // Check Lock Status on Mount (Removed)
 
   // Hook Integrations
   useShortcuts({
-    onNewConnection: () => !isLocked && setShowQuickConnect(true),
-    onSettings: () => !isLocked && setShowSettings(true)
+    onNewConnection: () => setShowQuickConnect(true),
+    onSettings: () => setShowSettings(true)
   });
 
   const { sessions, favorites, recent, saveSession, addToRecent, deleteSession, loadSessions } = useSessions();
 
-  // Reload sessions when unlocked
+  // Reload sessions on mount
   useEffect(() => {
-    if (!isLocked && !checkingLock) {
-      loadSessions();
-    }
-  }, [isLocked, checkingLock, loadSessions]);
+    loadSessions();
+  }, [loadSessions]);
 
   const {
     activeSessions,
@@ -205,14 +190,6 @@ function App() {
       }
     }
   };
-
-  if (checkingLock) {
-    return <div className="app-loading">Loading...</div>;
-  }
-
-  if (isLocked) {
-    return <LockScreen onUnlock={() => setIsLocked(false)} />;
-  }
 
   return (
     <div className="app" data-theme={theme}>

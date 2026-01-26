@@ -2,8 +2,8 @@
    SETTINGS MODAL STYLES
    ============================================ */
 .settings-modal {
-    width: 700px;
-    height: 500px;
+    width: 900px;
+    height: 650px;
     display: flex;
     flex-direction: column;
 }

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { TERMINAL_THEMES } from "../config/themes";
-import { SecuritySettings } from "./SecuritySettings";
 import { Icons } from "./Icons";
 import { AppSettings, DEFAULT_SETTINGS, FONT_OPTIONS } from "./SettingsTypes";
 
@@ -64,12 +63,6 @@ export function SettingsModal({ onClose, currentSettings, onSave }: SettingsModa
                             onClick={() => setActiveTab("behavior")}
                         >
                             <Icons.Cpu style={{ width: 14, height: 14 }} /> Behavior
-                        </button>
-                        <button
-                            className={`settings-nav-item ${activeTab === "security" ? "active" : ""}`}
-                            onClick={() => setActiveTab("security")}
-                        >
-                            <Icons.Lock style={{ width: 14, height: 14 }} /> Security
                         </button>
                     </div>
 
@@ -294,12 +287,7 @@ export function SettingsModal({ onClose, currentSettings, onSave }: SettingsModa
                             </>
                         )}
 
-                        {activeTab === "security" && (
-                            <>
-                                <h3 className="settings-section-title">Security & Storage</h3>
-                                <SecuritySettings />
-                            </>
-                        )}
+
                     </div>
                 </div>
 
