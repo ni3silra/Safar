@@ -107,7 +107,7 @@ export function TerminalComponent({
   useEffect(() => {
     if (!terminalRef.current) return;
 
-    console.log("[Terminal] Initializing for session:", sessionId);
+    console.log("[Terminal] Initializing for session:", sessionId, "Backspace Mode:", backspaceMode);
 
     const initialTheme = TERMINAL_THEMES[themeName].colors;
 
@@ -123,7 +123,8 @@ export function TerminalComponent({
       scrollback: scrollback,
       macOptionIsMeta: true,
       macOptionClickForcesSelection: true,
-      bellSound: bellSound ? "bell" : undefined, // Assuming xterm support or handling externally? Xterm default handles bell logic but sound might need custom handling if xterm doesn't play it directly without configuration
+      // @ts-ignore - bellStyle exists in xterm.js but types might be outdated
+      bellStyle: bellSound ? "sound" : "none",
     });
 
     const fitAddon = new FitAddon();
@@ -236,7 +237,7 @@ export function TerminalComponent({
       if (unlistenRef.current) unlistenRef.current();
       terminal.dispose();
     };
-  }, [sessionId, sendData, safeFit]); // Important: Adding dependencies here might cause re-init. Ideally we want to update options dynamically instead of re-init.
+  }, [sessionId, sendData]); // Removed safeFit to prevent re-init on visibility change // Important: Adding dependencies here might cause re-init. Ideally we want to update options dynamically instead of re-init.
 
   // Update Settings Effect (Dynamic Updates)
   useEffect(() => {

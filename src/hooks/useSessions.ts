@@ -63,6 +63,7 @@ export function useSessions() {
                     password: session.password,
                     term_type: session.term_type,
                     remote_command: session.remote_command,
+                    backspace_mode: session.backspace_mode,
                 };
 
                 const res = await invoke<CommandResponse<SavedSession>>("sessions_save", {
