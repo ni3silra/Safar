@@ -2,15 +2,20 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icons } from "./Icons";
 import { Session } from "../types";
+import { useSessions } from "../hooks/useSessions";
 
 interface SessionStatsProps {
     session: Session;
 }
 
 export function SessionStats({ session }: SessionStatsProps) {
+    const { sessions } = useSessions();
     const [latency, setLatency] = useState<number | null>(null);
     const [lastPing, setLastPing] = useState<number>(Date.now());
     const [uptime, setUptime] = useState<string>("0s");
+
+    // Attempt to find the saved session details to show extra info like notes/group
+    const savedDetails = sessions.find(s => s.id === session.id);
 
     // Fake uptime for now (calculated from component mount)
     const [startTime] = useState<number>(Date.now());
@@ -46,7 +51,7 @@ export function SessionStats({ session }: SessionStatsProps) {
     }, [session.id]);
 
     return (
-        <div className="session-stats" style={{ padding: "20px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: "16px" }}>
+        <div className="session-stats" style={{ padding: "20px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "16px" }}>
 
             {/* CARD 1: Connection Info */}
             <div className="stat-card" style={cardStyle}>
@@ -63,6 +68,12 @@ export function SessionStats({ session }: SessionStatsProps) {
                     <span style={labelStyle}>User</span>
                     <span style={valueStyle}>{session.username}</span>
                 </div>
+                {savedDetails && (
+                    <div style={rowStyle}>
+                        <span style={labelStyle}>Auth Type</span>
+                        <span style={{ ...valueStyle, textTransform: "capitalize" }}>{savedDetails.auth_type}</span>
+                    </div>
+                )}
             </div>
 
             {/* CARD 2: Network */}
@@ -101,9 +112,48 @@ export function SessionStats({ session }: SessionStatsProps) {
                 </div>
             </div>
 
-            {/* CARD 4: Client */}
+            {/* CARD 4: Configuration / Metadata */}
             <div className="stat-card" style={cardStyle}>
-                <h3 style={headerStyle}><Icons.Shield style={{ marginRight: 8 }} /> Technical</h3>
+                <h3 style={headerStyle}><Icons.Shield style={{ marginRight: 8 }} /> Configuration</h3>
+                {savedDetails?.group && (
+                    <div style={rowStyle}>
+                        <span style={labelStyle}>Group</span>
+                        <span style={valueStyle}>{savedDetails.group}</span>
+                    </div>
+                )}
+                {savedDetails?.term_type && (
+                    <div style={rowStyle}>
+                        <span style={labelStyle}>Term Type</span>
+                        <span style={valueStyle}>{savedDetails.term_type}</span>
+                    </div>
+                )}
+                <div style={rowStyle}>
+                    <span style={labelStyle}>Backspace</span>
+                    <span style={valueStyle}>{session.backspaceMode || "Default"}</span>
+                </div>
+                {savedDetails?.remote_command && (
+                    <div style={{ ...rowStyle, flexDirection: "column", gap: "4px" }}>
+                        <span style={labelStyle}>Remote Command</span>
+                        <span style={{ ...valueStyle, fontFamily: "monospace", fontSize: "12px", background: "rgba(0,0,0,0.2)", padding: "2px 4px", borderRadius: "4px" }}>
+                            {savedDetails.remote_command}
+                        </span>
+                    </div>
+                )}
+            </div>
+
+            {/* CARD 5: Notes (Full Width if notes exist) */}
+            {savedDetails?.notes && (
+                <div className="stat-card" style={{ ...cardStyle, gridColumn: "1 / -1" }}>
+                    <h3 style={headerStyle}><Icons.Edit style={{ marginRight: 8 }} /> Notes</h3>
+                    <div style={{ color: "var(--text-primary)", fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-wrap" }}>
+                        {savedDetails.notes}
+                    </div>
+                </div>
+            )}
+
+            {/* CARD 6: Technical */}
+            <div className="stat-card" style={cardStyle}>
+                <h3 style={headerStyle}><Icons.Cpu style={{ marginRight: 8 }} /> Technical</h3>
                 <div style={rowStyle}>
                     <span style={labelStyle}>Protocol</span>
                     <span style={valueStyle}>SSH-2.0</span>
