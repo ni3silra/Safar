@@ -100,7 +100,7 @@ export function Workspace({
                 )}
 
                 {/* Session Content Area */}
-                <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+                <div className="session-content-area">
                     {/* Show Welcome Screen if no active session selected */}
                     {!derivedActiveSession && (
                         <WelcomeScreen

@@ -11,9 +11,17 @@
 }
 
 .content-main {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     overflow: hidden;
     position: relative;
+}
+
+.session-content-area {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
 }
 
 /* Session Toolbar (Tabs for Terminal/Files/Logs etc inside a session) */
