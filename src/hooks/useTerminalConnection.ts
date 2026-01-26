@@ -64,11 +64,7 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
                 },
             });
 
-            // console.log("[Connection] Connecting with config:", {
-            //     host: config.host,
-            //     backspace: config.backspaceMode,
-            //     term: config.termType
-            // });
+
 
             if (response.success && response.data) {
                 const newSession: Session = {

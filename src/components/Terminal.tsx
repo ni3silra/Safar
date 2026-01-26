@@ -114,7 +114,7 @@ export function TerminalComponent({
   useEffect(() => {
     if (!terminalRef.current) return;
 
-    console.log("[Terminal] Initializing for session:", sessionId, "Backspace Mode:", backspaceMode);
+
 
     const initialTheme = TERMINAL_THEMES[themeName].colors;
 
