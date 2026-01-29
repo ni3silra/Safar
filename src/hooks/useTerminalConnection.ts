@@ -70,8 +70,7 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
 
                 savedSessionId = savedSession?.id;
             } catch (err) {
-                console.error("Failed to save session:", err);
-                // Don't show toast here - continue with connection attempt
+                toast.error("Failed to save session");
             }
         }
 
@@ -166,7 +165,6 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
                 setStatusMessage("Disconnected");
             }
         } catch (error) {
-            console.error("Disconnect error:", error);
             toast.error(`Disconnect failed: ${error}`);
         }
     };

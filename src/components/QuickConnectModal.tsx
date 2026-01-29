@@ -2,6 +2,7 @@ import { useState } from "react";
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { writeTextFile, mkdir, BaseDirectory, exists } from '@tauri-apps/plugin-fs';
 import { appLocalDataDir, join } from '@tauri-apps/api/path';
+import { toast } from 'sonner';
 import { Icons } from "./Icons";
 
 interface QuickConnectModalProps {
@@ -80,8 +81,7 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
                 finalKeyPath = filePath;
 
             } catch (err) {
-                console.error("Failed to save pasted key:", err);
-                alert("Failed to save pasted key: " + String(err));
+                toast.error("Failed to save pasted key: " + String(err));
                 return;
             }
         }
@@ -112,7 +112,7 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
                 setPassword(""); // Clear password if selecting key
             }
         } catch (e) {
-            console.error("Failed to select key", e);
+            toast.error("Failed to select key file");
         }
     };
 

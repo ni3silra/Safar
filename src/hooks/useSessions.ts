@@ -1,6 +1,7 @@
 // Session hooks for managing saved sessions
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 
 import { SavedSession } from "../types";
 
@@ -38,7 +39,7 @@ export function useSessions() {
                 setRecent(recentRes.data);
             }
         } catch (err) {
-            console.error("[Sessions] Load failed:", err);
+            toast.error("Failed to load sessions");
             setError(String(err));
         } finally {
             setLoading(false);
@@ -77,7 +78,7 @@ export function useSessions() {
                     throw new Error(res.error || "Failed to save session");
                 }
             } catch (err) {
-                console.error("[Sessions] Save failed:", err);
+                toast.error("Failed to save session");
                 throw err;
             }
         },
@@ -98,7 +99,7 @@ export function useSessions() {
                     throw new Error(res.error || "Failed to delete session");
                 }
             } catch (err) {
-                console.error("[Sessions] Delete failed:", err);
+                toast.error("Failed to delete session");
                 throw err;
             }
         },
@@ -120,7 +121,7 @@ export function useSessions() {
                     throw new Error(res.error || "Failed to toggle favorite");
                 }
             } catch (err) {
-                console.error("[Sessions] Toggle favorite failed:", err);
+                toast.error("Failed to toggle favorite");
                 throw err;
             }
         },
@@ -136,7 +137,7 @@ export function useSessions() {
                 });
                 await loadSessions();
             } catch (err) {
-                console.error("[Sessions] Add recent failed:", err);
+                toast.error("Failed to update recent sessions");
             }
         },
         [loadSessions]

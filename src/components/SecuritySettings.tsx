@@ -27,7 +27,7 @@ export function SecuritySettings({ onStatusChange }: Props) {
                 setHasPassword(res.data);
             }
         } catch (e) {
-            console.error("Failed to check security status:", e);
+            toast.error("Failed to check security status");
         } finally {
             setLoading(false);
         }

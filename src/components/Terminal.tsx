@@ -66,7 +66,7 @@ export function TerminalComponent({
       try {
         await invoke("ssh_send", { sessionId, data });
       } catch (error) {
-        console.error("[Terminal] Failed to send data:", error);
+        // Error shown in terminal output
         if (xtermRef.current) {
           xtermRef.current.write(`\r\n\x1b[31mError: ${error}\x1b[0m\r\n`);
         }

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { open } from '@tauri-apps/plugin-dialog';
+import { toast } from 'sonner';
 import { Icons } from "./Icons";
 
 interface CredentialsModalProps {
@@ -39,7 +40,7 @@ export function CredentialsModal({ onClose, onSubmit, username, host, initialKey
                 setPrivateKeyPath(selected as string);
             }
         } catch (err) {
-            console.error("Failed to browse key:", err);
+            toast.error("Failed to browse key file");
         }
     };
 

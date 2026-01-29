@@ -49,7 +49,7 @@ export function CommandPalette({ sessionId, onExecute }: CommandPaletteProps) {
                 setSnippets(res.data);
             }
         } catch (err) {
-            console.error("Failed to load snippets", err);
+            toast.error("Failed to load snippets");
         }
     };
 
@@ -101,7 +101,6 @@ export function CommandPalette({ sessionId, onExecute }: CommandPaletteProps) {
             toast.success("Command sent");
             if (onExecute) onExecute();
         } catch (err) {
-            console.error("Snippet execution error:", err);
             toast.error(`Failed to send command: ${err}`);
         }
     };

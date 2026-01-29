@@ -28,7 +28,7 @@ export function TunnelManager({ sessionId }: TunnelManagerProps) {
                 setTunnels([]);
             }
         } catch (err) {
-            console.error("Failed to list tunnels:", err);
+            toast.error("Failed to list tunnels");
             setTunnels([]);
         }
     };
