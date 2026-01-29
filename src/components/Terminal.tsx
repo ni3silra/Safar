@@ -24,6 +24,9 @@ interface TerminalProps {
   copyOnSelect?: boolean;
   backspaceMode?: string;
   isVisible?: boolean;
+  useCustomColors?: boolean;
+  customForeground?: string;
+  customBackground?: string;
 }
 
 interface TerminalData {
@@ -47,7 +50,10 @@ export function TerminalComponent({
   bellSound = true,
   copyOnSelect = true,
   backspaceMode,
-  isVisible = true
+  isVisible = true,
+  useCustomColors = false,
+  customForeground = "#e6edf3",
+  customBackground = "#0d1117"
 }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -122,7 +128,10 @@ export function TerminalComponent({
 
 
 
-    const initialTheme = TERMINAL_THEMES[themeName].colors;
+    const baseTheme = TERMINAL_THEMES[themeName].colors;
+    const initialTheme = useCustomColors
+      ? { ...baseTheme, foreground: customForeground, background: customBackground }
+      : baseTheme;
 
     // Don't init if container is invalid
     if (terminalRef.current.clientWidth === 0) {
@@ -295,10 +304,13 @@ export function TerminalComponent({
       xtermRef.current.options.cursorStyle = cursorStyle;
       xtermRef.current.options.cursorBlink = cursorBlink;
       xtermRef.current.options.scrollback = scrollback;
-      xtermRef.current.options.theme = TERMINAL_THEMES[themeName].colors;
+      const baseTheme = TERMINAL_THEMES[themeName].colors;
+      xtermRef.current.options.theme = useCustomColors
+        ? { ...baseTheme, foreground: customForeground, background: customBackground }
+        : baseTheme;
       safeFit();
     }
-  }, [fontSize, themeName, fontFamily, fontWeight, lineHeight, cursorStyle, cursorBlink, scrollback, safeFit]);
+  }, [fontSize, themeName, fontFamily, fontWeight, lineHeight, cursorStyle, cursorBlink, scrollback, useCustomColors, customForeground, customBackground, safeFit]);
 
   // Search Effect
   useEffect(() => {
@@ -315,7 +327,7 @@ export function TerminalComponent({
   const findPrev = () => searchAddonRef.current?.findPrevious(searchTerm);
 
   return (
-    <div className="terminal-container" style={{ backgroundColor: TERMINAL_THEMES[themeName].colors.background }}>
+    <div className="terminal-container" style={{ backgroundColor: useCustomColors ? customBackground : TERMINAL_THEMES[themeName].colors.background }}>
       {/* We keep inline background color because it comes from the JS theme object which is dynamic */}
       <div
         ref={terminalRef}

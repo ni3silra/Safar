@@ -136,6 +136,9 @@ export function Workspace({
                                     copyOnSelect={appSettings.copyOnSelect}
                                     backspaceMode={session.backspaceMode}
                                     isVisible={activeSessionId === session.id && session.activeView === "terminal"}
+                                    useCustomColors={appSettings.useCustomColors}
+                                    customForeground={appSettings.customForeground}
+                                    customBackground={appSettings.customBackground}
                                 />
                             </div>
                             <div style={{

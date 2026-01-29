@@ -154,6 +154,46 @@ pub fn snippets_delete(state: State<AppState>, snippet_id: String) -> CommandRes
 }
 
 // ============================================
+// CUSTOM THEME COMMANDS
+// ============================================
+
+/// Get all custom themes
+#[tauri::command]
+pub fn custom_themes_get_all(state: State<AppState>) -> CommandResponse<Vec<crate::storage::CustomTheme>> {
+    let storage = state.session_storage.read();
+    match storage.as_ref() {
+        Some(s) => CommandResponse::ok(s.get_custom_themes()),
+        None => CommandResponse::err("Storage not initialized".to_string()),
+    }
+}
+
+/// Save a custom theme
+#[tauri::command]
+pub fn custom_themes_save(state: State<AppState>, theme: crate::storage::CustomTheme) -> CommandResponse<crate::storage::CustomTheme> {
+    let mut storage = state.session_storage.write();
+    match storage.as_mut() {
+        Some(s) => match s.save_custom_theme(theme) {
+            Ok(saved) => CommandResponse::ok(saved),
+            Err(e) => CommandResponse::err(e.to_string()),
+        },
+        None => CommandResponse::err("Storage not initialized".to_string()),
+    }
+}
+
+/// Delete a custom theme
+#[tauri::command]
+pub fn custom_themes_delete(state: State<AppState>, theme_id: String) -> CommandResponse<()> {
+    let mut storage = state.session_storage.write();
+    match storage.as_mut() {
+        Some(s) => match s.delete_custom_theme(&theme_id) {
+            Ok(()) => CommandResponse::ok(()),
+            Err(e) => CommandResponse::err(e.to_string()),
+        },
+        None => CommandResponse::err("Storage not initialized".to_string()),
+    }
+}
+
+// ============================================
 // SECURITY COMMANDS
 // ============================================
 

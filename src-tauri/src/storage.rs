@@ -87,12 +87,22 @@ pub struct CommandSnippet {
 
 fn default_newline() -> String { "lf".to_string() }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomTheme {
+    pub id: String,
+    pub name: String,
+    pub foreground: String,
+    pub background: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionStore {
     pub sessions: Vec<SavedSession>,
     pub recent: Vec<String>, // Session IDs in order of recency
     #[serde(default)]
     pub snippets: Vec<CommandSnippet>,
+    #[serde(default)]
+    pub custom_themes: Vec<CustomTheme>,
 }
 
 impl SavedSession {
@@ -390,6 +400,37 @@ impl SessionStorage {
     pub fn delete_snippet(&mut self, id: &str) -> Result<(), StorageError> {
         let idx = self.store.snippets.iter().position(|s| s.id == id).ok_or_else(|| StorageError::SessionNotFound(id.to_string()))?;
         self.store.snippets.remove(idx);
+        self.save()?;
+        Ok(())
+    }
+
+    /// Get all custom themes
+    pub fn get_custom_themes(&self) -> Vec<CustomTheme> {
+        self.store.custom_themes.clone()
+    }
+
+    /// Save (add/update) a custom theme
+    pub fn save_custom_theme(&mut self, mut theme: CustomTheme) -> Result<CustomTheme, StorageError> {
+        if theme.id.is_empty() {
+            theme.id = Uuid::new_v4().to_string();
+        }
+
+        let existing_idx = self.store.custom_themes.iter().position(|t| t.id == theme.id);
+
+        if let Some(idx) = existing_idx {
+            self.store.custom_themes[idx] = theme.clone();
+        } else {
+            self.store.custom_themes.push(theme.clone());
+        }
+
+        self.save()?;
+        Ok(theme)
+    }
+
+    /// Delete a custom theme
+    pub fn delete_custom_theme(&mut self, id: &str) -> Result<(), StorageError> {
+        let idx = self.store.custom_themes.iter().position(|t| t.id == id).ok_or_else(|| StorageError::SessionNotFound(id.to_string()))?;
+        self.store.custom_themes.remove(idx);
         self.save()?;
         Ok(())
     }
