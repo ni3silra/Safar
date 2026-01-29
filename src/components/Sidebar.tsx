@@ -12,6 +12,7 @@ interface SidebarProps {
     activeSessions: Session[];
     activeSessionId: string | null;
     setActiveSessionId: (id: string) => void;
+    sessions: SavedSession[]; // All saved sessions
     favorites: SavedSession[];
     recent: SavedSession[];
     onConnect: (config: ConnectConfig) => void;
@@ -27,12 +28,15 @@ export function Sidebar({
     activeSessions,
     activeSessionId,
     setActiveSessionId,
+    sessions,
     favorites,
     recent,
     onConnect,
     onEditSession,
     onDeleteSession,
 }: SidebarProps) {
+    // Filter sessions that are NOT favorites (to avoid duplicates)
+    const nonFavoriteSessions = sessions.filter(s => !s.is_favorite);
     return (
         <div className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
             <div className="sidebar-header" style={{ padding: "0" }}>
@@ -136,6 +140,52 @@ export function Sidebar({
                         </div>
                     )}
 
+                    {/* Recent */}
+                    {recent.length > 0 && (
+                        <div className="sidebar-section">
+                            <div className="sidebar-section-title">
+                                <span>
+                                    <Icons.Clock /> Recent
+                                </span>
+                            </div>
+                            {recent.slice(0, 5).map((saved) => (
+                                <div
+                                    key={saved.id}
+                                    className="session-item"
+                                    onClick={() =>
+                                        onConnect({
+                                            host: saved.host,
+                                            port: saved.port,
+                                            username: saved.username,
+                                            password: saved.password || "",
+                                            privateKeyPath: saved.private_key_path,
+                                            sessionName: saved.name,
+                                            termType: saved.term_type,
+                                            remoteCommand: saved.remote_command,
+                                            backspaceMode: saved.backspace_mode,
+                                        })
+                                    }
+                                >
+                                    <div className="session-icon">
+                                        <Icons.Clock />
+                                    </div>
+                                    <div className="session-info">
+                                        <div className="session-name">{saved.name}</div>
+                                        <div className="session-host">{saved.username}@{saved.host}</div>
+                                    </div>
+                                    <div className="session-actions" onClick={(e) => e.stopPropagation()}>
+                                        <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onEditSession(saved)} title="Edit">
+                                            <Icons.Edit style={{ width: 12, height: 12 }} />
+                                        </button>
+                                        <button className="icon-btn" style={{ width: 24, height: 24, color: "var(--accent-error)" }} onClick={() => onDeleteSession(saved.id)} title="Delete">
+                                            <Icons.Trash style={{ width: 12, height: 12 }} />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
                     {/* Favorites */}
                     {favorites.length > 0 && (
                         <div className="sidebar-section">
@@ -182,15 +232,15 @@ export function Sidebar({
                         </div>
                     )}
 
-                    {/* Recent */}
-                    {recent.length > 0 && (
+                    {/* All Sessions (non-favorites) */}
+                    {nonFavoriteSessions.length > 0 && (
                         <div className="sidebar-section">
                             <div className="sidebar-section-title">
                                 <span>
-                                    <Icons.Clock /> Recent
+                                    <Icons.Folder /> All Sessions
                                 </span>
                             </div>
-                            {recent.slice(0, 5).map((saved) => (
+                            {nonFavoriteSessions.map((saved) => (
                                 <div
                                     key={saved.id}
                                     className="session-item"
@@ -209,7 +259,7 @@ export function Sidebar({
                                     }
                                 >
                                     <div className="session-icon">
-                                        <Icons.Clock />
+                                        <Icons.Server />
                                     </div>
                                     <div className="session-info">
                                         <div className="session-name">{saved.name}</div>

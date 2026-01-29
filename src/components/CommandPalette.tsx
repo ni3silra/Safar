@@ -23,7 +23,20 @@ interface CommandPaletteProps {
 export function CommandPalette({ sessionId, onExecute }: CommandPaletteProps) {
     const [snippets, setSnippets] = useState<CommandSnippet[]>([]);
     const [showAdd, setShowAdd] = useState(false);
+    const [editingSnippet, setEditingSnippet] = useState<CommandSnippet | null>(null);
     const [newSnippet, setNewSnippet] = useState({ name: "", command: "" });
+
+    const startEdit = (snippet: CommandSnippet) => {
+        setEditingSnippet(snippet);
+        setNewSnippet({ name: snippet.name, command: snippet.command });
+        setShowAdd(true);
+    };
+
+    const resetForm = () => {
+        setEditingSnippet(null);
+        setNewSnippet({ name: "", command: "" });
+        setShowAdd(false);
+    };
 
     useEffect(() => {
         loadSnippets();
@@ -45,18 +58,17 @@ export function CommandPalette({ sessionId, onExecute }: CommandPaletteProps) {
 
         try {
             const snippet = {
-                id: "",
+                id: editingSnippet?.id || "",
                 name: newSnippet.name,
                 command: newSnippet.command,
-                category: "General"
+                category: editingSnippet?.category || "General"
             };
 
             const res = await invoke<CommandResponse<CommandSnippet>>("snippets_save", { snippet });
 
             if (res.success) {
-                toast.success("Snippet saved");
-                setNewSnippet({ name: "", command: "" });
-                setShowAdd(false);
+                toast.success(editingSnippet ? "Snippet updated" : "Snippet saved");
+                resetForm();
                 loadSnippets();
             } else {
                 toast.error(res.error || "Failed to save");
@@ -78,7 +90,7 @@ export function CommandPalette({ sessionId, onExecute }: CommandPaletteProps) {
 
     const handleRun = async (cmd: string) => {
         if (!sessionId) {
-            toast.error("No active session");
+            toast.error("No active SSH session. Select a connected session first.");
             return;
         }
 
@@ -89,7 +101,8 @@ export function CommandPalette({ sessionId, onExecute }: CommandPaletteProps) {
             toast.success("Command sent");
             if (onExecute) onExecute();
         } catch (err) {
-            toast.error("Failed to send command");
+            console.error("Snippet execution error:", err);
+            toast.error(`Failed to send command: ${err}`);
         }
     };
 
@@ -128,9 +141,16 @@ export function CommandPalette({ sessionId, onExecute }: CommandPaletteProps) {
                         onChange={e => setNewSnippet({ ...newSnippet, command: e.target.value })}
                         style={{ marginBottom: "var(--space-2)", fontFamily: "monospace", minHeight: "60px" }}
                     />
-                    <button className="btn btn-primary" style={{ width: "100%" }} onClick={handleSave}>
-                        Save Snippet
-                    </button>
+                    <div style={{ display: "flex", gap: "var(--space-2)" }}>
+                        <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleSave}>
+                            {editingSnippet ? "Update Snippet" : "Save Snippet"}
+                        </button>
+                        {editingSnippet && (
+                            <button className="btn" style={{ flex: 0 }} onClick={resetForm}>
+                                Cancel
+                            </button>
+                        )}
+                    </div>
                 </div>
             )}
 
@@ -156,13 +176,24 @@ export function CommandPalette({ sessionId, onExecute }: CommandPaletteProps) {
                             >
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
                                     <span style={{ fontWeight: 500 }}>{s.name}</span>
-                                    <button
-                                        className="icon-btn"
-                                        onClick={(e) => { e.stopPropagation(); handleDelete(s.id); }}
-                                        style={{ opacity: 0.5, fontSize: "12px" }}
-                                    >
-                                        🗑️
-                                    </button>
+                                    <div style={{ display: "flex", gap: "4px" }}>
+                                        <button
+                                            className="icon-btn"
+                                            onClick={(e) => { e.stopPropagation(); startEdit(s); }}
+                                            style={{ opacity: 0.5, fontSize: "12px" }}
+                                            title="Edit snippet"
+                                        >
+                                            ✏️
+                                        </button>
+                                        <button
+                                            className="icon-btn"
+                                            onClick={(e) => { e.stopPropagation(); handleDelete(s.id); }}
+                                            style={{ opacity: 0.5, fontSize: "12px" }}
+                                            title="Delete snippet"
+                                        >
+                                            🗑️
+                                        </button>
+                                    </div>
                                 </div>
                                 <div style={{
                                     fontFamily: "monospace",

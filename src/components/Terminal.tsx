@@ -54,6 +54,7 @@ export function TerminalComponent({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  const backspaceModeRef = useRef(backspaceMode); // Track latest backspace mode for closure
 
   // UI State
   const [showSearch, setShowSearch] = useState(false);
@@ -109,6 +110,11 @@ export function TerminalComponent({
       setTimeout(safeFit, 50);
     }
   }, [isVisible, safeFit]);
+
+  // Keep backspace mode ref in sync with prop
+  useEffect(() => {
+    backspaceModeRef.current = backspaceMode;
+  }, [backspaceMode]);
 
   // Initialize Terminal
   useEffect(() => {
@@ -183,12 +189,13 @@ export function TerminalComponent({
 
     // Key handlers
     terminal.attachCustomKeyEventHandler((e) => {
-      // Handle Custom Backspace
+      // Handle Custom Backspace (use ref for current value)
+      const currentBackspaceMode = backspaceModeRef.current;
       if (e.key === "Backspace" && e.type === "keydown") {
-        if (backspaceMode === "ctrl-h") {
+        if (currentBackspaceMode === "ctrl-h") {
           sendData("\x08"); // ^H
           return false;
-        } else if (backspaceMode === "ctrl-?") {
+        } else if (currentBackspaceMode === "ctrl-?") {
           sendData("\x7f"); // ^?
           return false;
         }

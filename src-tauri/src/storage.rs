@@ -373,7 +373,7 @@ impl SessionStorage {
         if let Some(idx) = existing_idx {
             self.store.snippets[idx] = snippet.clone();
         } else {
-            self.store.snippets.push(snippet.clone());
+            self.store.snippets.insert(0, snippet.clone()); // New snippets at top
         }
 
         self.save()?;
