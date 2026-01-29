@@ -79,7 +79,13 @@ pub struct CommandSnippet {
     pub command: String,
     #[serde(default)]
     pub category: Option<String>,
+    #[serde(default)]
+    pub hide_command: bool,
+    #[serde(default = "default_newline")]
+    pub newline_type: String,  // "none", "lf" (\n), "crlf" (\r\n)
 }
+
+fn default_newline() -> String { "lf".to_string() }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionStore {
@@ -373,7 +379,7 @@ impl SessionStorage {
         if let Some(idx) = existing_idx {
             self.store.snippets[idx] = snippet.clone();
         } else {
-            self.store.snippets.insert(0, snippet.clone()); // New snippets at top
+            self.store.snippets.push(snippet.clone());
         }
 
         self.save()?;
