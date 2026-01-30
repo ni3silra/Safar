@@ -24,6 +24,9 @@ interface TerminalProps {
   copyOnSelect?: boolean;
   backspaceMode?: string;
   isVisible?: boolean;
+  useCustomColors?: boolean;
+  customForeground?: string;
+  customBackground?: string;
 }
 
 interface TerminalData {
@@ -47,13 +50,17 @@ export function TerminalComponent({
   bellSound = true,
   copyOnSelect = true,
   backspaceMode,
-  isVisible = true
+  isVisible = true,
+  useCustomColors = false,
+  customForeground = "#e6edf3",
+  customBackground = "#0d1117"
 }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  const backspaceModeRef = useRef(backspaceMode); // Track latest backspace mode for closure
 
   // UI State
   const [showSearch, setShowSearch] = useState(false);
@@ -65,7 +72,7 @@ export function TerminalComponent({
       try {
         await invoke("ssh_send", { sessionId, data });
       } catch (error) {
-        console.error("[Terminal] Failed to send data:", error);
+        // Error shown in terminal output
         if (xtermRef.current) {
           xtermRef.current.write(`\r\n\x1b[31mError: ${error}\x1b[0m\r\n`);
         }
@@ -110,13 +117,21 @@ export function TerminalComponent({
     }
   }, [isVisible, safeFit]);
 
+  // Keep backspace mode ref in sync with prop
+  useEffect(() => {
+    backspaceModeRef.current = backspaceMode;
+  }, [backspaceMode]);
+
   // Initialize Terminal
   useEffect(() => {
     if (!terminalRef.current) return;
 
 
 
-    const initialTheme = TERMINAL_THEMES[themeName].colors;
+    const baseTheme = TERMINAL_THEMES[themeName].colors;
+    const initialTheme = useCustomColors
+      ? { ...baseTheme, foreground: customForeground, background: customBackground }
+      : baseTheme;
 
     // Don't init if container is invalid
     if (terminalRef.current.clientWidth === 0) {
@@ -183,12 +198,13 @@ export function TerminalComponent({
 
     // Key handlers
     terminal.attachCustomKeyEventHandler((e) => {
-      // Handle Custom Backspace
+      // Handle Custom Backspace (use ref for current value)
+      const currentBackspaceMode = backspaceModeRef.current;
       if (e.key === "Backspace" && e.type === "keydown") {
-        if (backspaceMode === "ctrl-h") {
+        if (currentBackspaceMode === "ctrl-h") {
           sendData("\x08"); // ^H
           return false;
-        } else if (backspaceMode === "ctrl-?") {
+        } else if (currentBackspaceMode === "ctrl-?") {
           sendData("\x7f"); // ^?
           return false;
         }
@@ -288,10 +304,13 @@ export function TerminalComponent({
       xtermRef.current.options.cursorStyle = cursorStyle;
       xtermRef.current.options.cursorBlink = cursorBlink;
       xtermRef.current.options.scrollback = scrollback;
-      xtermRef.current.options.theme = TERMINAL_THEMES[themeName].colors;
+      const baseTheme = TERMINAL_THEMES[themeName].colors;
+      xtermRef.current.options.theme = useCustomColors
+        ? { ...baseTheme, foreground: customForeground, background: customBackground }
+        : baseTheme;
       safeFit();
     }
-  }, [fontSize, themeName, fontFamily, fontWeight, lineHeight, cursorStyle, cursorBlink, scrollback, safeFit]);
+  }, [fontSize, themeName, fontFamily, fontWeight, lineHeight, cursorStyle, cursorBlink, scrollback, useCustomColors, customForeground, customBackground, safeFit]);
 
   // Search Effect
   useEffect(() => {
@@ -308,7 +327,7 @@ export function TerminalComponent({
   const findPrev = () => searchAddonRef.current?.findPrevious(searchTerm);
 
   return (
-    <div className="terminal-container" style={{ backgroundColor: TERMINAL_THEMES[themeName].colors.background }}>
+    <div className="terminal-container" style={{ backgroundColor: useCustomColors ? customBackground : TERMINAL_THEMES[themeName].colors.background }}>
       {/* We keep inline background color because it comes from the JS theme object which is dynamic */}
       <div
         ref={terminalRef}

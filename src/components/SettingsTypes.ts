@@ -8,6 +8,11 @@ export interface AppSettings {
     terminalFontWeight: "normal" | "bold" | "100" | "200" | "300" | "400" | "500" | "600" | "700" | "800" | "900";
     terminalLineHeight: number;
 
+    // Custom Terminal Colors (override theme colors)
+    useCustomColors: boolean;
+    customForeground: string;
+    customBackground: string;
+
     // Terminal Cursor
     cursorStyle: "block" | "underline" | "bar";
     cursorBlink: boolean;
@@ -30,6 +35,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     terminalFontWeight: "normal",
     terminalLineHeight: 1.2,
 
+    useCustomColors: false,
+    customForeground: "#e6edf3",
+    customBackground: "#0d1117",
+
     cursorStyle: "block",
     cursorBlink: true,
 
@@ -39,6 +48,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
     confirmOnClose: true
 };
+
+export interface CustomTheme {
+    id: string;
+    name: string;
+    foreground: string;
+    background: string;
+}
 
 export const FONT_OPTIONS = [
     { label: "Default (Cascadia/Fira)", value: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace" },

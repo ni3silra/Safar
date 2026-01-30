@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import { TERMINAL_THEMES } from "../config/themes";
 import { Icons } from "./Icons";
-import { AppSettings, DEFAULT_SETTINGS, FONT_OPTIONS } from "./SettingsTypes";
+import { AppSettings, DEFAULT_SETTINGS, FONT_OPTIONS, CustomTheme } from "./SettingsTypes";
 
 interface SettingsModalProps {
     onClose: () => void;
@@ -18,6 +20,77 @@ export function SettingsModal({ onClose, currentSettings, onSave }: SettingsModa
     });
 
     const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+    const [customThemes, setCustomThemes] = useState<CustomTheme[]>([]);
+    const [themeNameInput, setThemeNameInput] = useState("");
+    const [showSaveTheme, setShowSaveTheme] = useState(false);
+
+    useEffect(() => {
+        loadCustomThemes();
+    }, []);
+
+    const loadCustomThemes = async () => {
+        try {
+            const res = await invoke<{ success: boolean, data: CustomTheme[] }>("custom_themes_get_all");
+            if (res.success) {
+                setCustomThemes(res.data);
+            }
+        } catch (err) {
+            console.error("Failed to load custom themes:", err);
+        }
+    };
+
+    const handleSaveTheme = async () => {
+        if (!themeNameInput.trim()) {
+            toast.error("Please enter a theme name");
+            return;
+        }
+
+        const newTheme = {
+            id: "",
+            name: themeNameInput.trim(),
+            foreground: settings.customForeground,
+            background: settings.customBackground
+        };
+
+        try {
+            const res = await invoke<{ success: boolean, data: CustomTheme }>("custom_themes_save", { theme: newTheme });
+            if (res.success) {
+                toast.success("Theme saved");
+                setThemeNameInput("");
+                setShowSaveTheme(false);
+                loadCustomThemes();
+            } else {
+                toast.error("Failed to save theme");
+            }
+        } catch (err) {
+            toast.error("Error saving theme");
+        }
+    };
+
+    const handleDeleteTheme = async (id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        try {
+            const res = await invoke<{ success: boolean }>("custom_themes_delete", { themeId: id });
+            if (res.success) {
+                toast.success("Theme deleted");
+                loadCustomThemes();
+            } else {
+                toast.error("Failed to delete theme");
+            }
+        } catch (err) {
+            toast.error("Error deleting theme");
+        }
+    };
+
+    const applyCustomTheme = (theme: CustomTheme) => {
+        setSettings({
+            ...settings,
+            useCustomColors: true,
+            customForeground: theme.foreground,
+            customBackground: theme.background
+        });
+        toast.info(`Applied theme: ${theme.name}`);
+    };
 
     const handleSave = () => {
         onSave(settings);
@@ -139,10 +212,12 @@ export function SettingsModal({ onClose, currentSettings, onSave }: SettingsModa
                                         <div className="settings-controls">
                                             <input
                                                 type="range"
+                                                className="settings-slider"
                                                 min="10"
                                                 max="32"
                                                 value={settings.terminalFontSize}
                                                 onChange={(e) => setSettings({ ...settings, terminalFontSize: parseInt(e.target.value) })}
+                                                style={{ width: "120px" }}
                                             />
                                             <input
                                                 type="number"
@@ -190,6 +265,148 @@ export function SettingsModal({ onClose, currentSettings, onSave }: SettingsModa
                                             ))}
                                         </select>
                                     </div>
+                                    <div className="settings-row">
+                                        <div>
+                                            <div className="settings-label">Use Custom Colors</div>
+                                            <span className="settings-desc">Override theme with custom foreground/background colors</span>
+                                        </div>
+                                        <label className="toggle-switch">
+                                            <input
+                                                type="checkbox"
+                                                className="toggle-input"
+                                                checked={settings.useCustomColors}
+                                                onChange={(e) => setSettings({ ...settings, useCustomColors: e.target.checked })}
+                                            />
+                                            <div className="toggle-slider"></div>
+                                        </label>
+                                    </div>
+                                    {settings.useCustomColors && (
+                                        <>
+                                            <div className="settings-row">
+                                                <div className="settings-label">Foreground Color</div>
+                                                <div className="color-input-group">
+                                                    <input
+                                                        type="color"
+                                                        value={settings.customForeground}
+                                                        onChange={(e) => setSettings({ ...settings, customForeground: e.target.value })}
+                                                        className="color-swatch"
+                                                    />
+                                                    <input
+                                                        type="text"
+                                                        className="settings-input color-hex-input"
+                                                        value={settings.customForeground}
+                                                        onChange={(e) => setSettings({ ...settings, customForeground: e.target.value })}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="settings-row">
+                                                <div className="settings-label">Background Color</div>
+                                                <div className="color-input-group">
+                                                    <input
+                                                        type="color"
+                                                        value={settings.customBackground}
+                                                        onChange={(e) => setSettings({ ...settings, customBackground: e.target.value })}
+                                                        className="color-swatch"
+                                                    />
+                                                    <input
+                                                        type="text"
+                                                        className="settings-input color-hex-input"
+                                                        value={settings.customBackground}
+                                                        onChange={(e) => setSettings({ ...settings, customBackground: e.target.value })}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="settings-row" style={{ marginTop: "8px" }}>
+                                                <div className="settings-label">Preview</div>
+                                                <div
+                                                    className="settings-preview"
+                                                    style={{
+                                                        fontFamily: settings.terminalFontFamily,
+                                                        background: settings.customBackground,
+                                                        color: settings.customForeground,
+                                                        flex: 1
+                                                    }}
+                                                >
+                                                    user@server:~$ ls -la
+                                                </div>
+                                            </div>
+
+                                            {/* Save Theme Section */}
+                                            <div className="theme-section-divider">
+                                                <div className="settings-label">Saved Custom Themes</div>
+                                                <span className="settings-desc" style={{ marginBottom: "16px" }}>Save your color combination as a reusable theme</span>
+
+                                                {!showSaveTheme ? (
+                                                    <button
+                                                        className="btn btn-secondary"
+                                                        onClick={() => setShowSaveTheme(true)}
+                                                    >
+                                                        <Icons.Plus style={{ width: 14, height: 14 }} /> Save Current as Theme
+                                                    </button>
+                                                ) : (
+                                                    <div className="theme-save-row">
+                                                        <input
+                                                            className="input"
+                                                            placeholder="Theme Name (e.g., My Dark Mode)"
+                                                            value={themeNameInput}
+                                                            onChange={e => setThemeNameInput(e.target.value)}
+                                                            autoFocus
+                                                        />
+                                                        <button className="btn btn-primary" onClick={handleSaveTheme}>Save</button>
+                                                        <button className="btn btn-ghost" onClick={() => setShowSaveTheme(false)}>Cancel</button>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Saved Themes List */}
+                                            {customThemes.length > 0 && (
+                                                <div className="theme-grid">
+                                                    {customThemes.map(theme => (
+                                                        <div
+                                                            key={theme.id}
+                                                            className="theme-card"
+                                                            onClick={() => applyCustomTheme(theme)}
+                                                            title="Click to apply"
+                                                        >
+                                                            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                                                <div
+                                                                    style={{
+                                                                        width: 24,
+                                                                        height: 24,
+                                                                        borderRadius: "50%",
+                                                                        background: theme.background,
+                                                                        border: "2px solid var(--border-color)",
+                                                                        position: "relative"
+                                                                    }}
+                                                                >
+                                                                    <div
+                                                                        style={{
+                                                                            position: "absolute",
+                                                                            top: "50%",
+                                                                            left: "50%",
+                                                                            transform: "translate(-50%, -50%)",
+                                                                            width: 10,
+                                                                            height: 10,
+                                                                            borderRadius: "50%",
+                                                                            background: theme.foreground
+                                                                        }}
+                                                                    />
+                                                                </div>
+                                                                <span className="theme-card-name" style={{ color: "var(--text-primary)" }}>{theme.name}</span>
+                                                            </div>
+                                                            <button
+                                                                className="icon-btn"
+                                                                onClick={(e) => handleDeleteTheme(theme.id, e)}
+                                                                title="Delete theme"
+                                                            >
+                                                                <Icons.Trash style={{ width: 14, height: 14 }} />
+                                                            </button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
                                 </div>
                             </>
                         )}

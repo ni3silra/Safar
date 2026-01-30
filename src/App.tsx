@@ -212,6 +212,7 @@ function App() {
           activeSessions={activeSessions}
           activeSessionId={activeSessionId}
           setActiveSessionId={setActiveSessionId}
+          sessions={sessions}
           favorites={favorites}
           recent={recent}
           onConnect={(config) => handleConnect({

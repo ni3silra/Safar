@@ -133,6 +133,10 @@ pub fn run() {
             snippets_get_all,
             snippets_save,
             snippets_delete,
+            // Custom theme commands
+            custom_themes_get_all,
+            custom_themes_save,
+            custom_themes_delete,
             // Security commands
             storage_is_locked,
             storage_has_password,
