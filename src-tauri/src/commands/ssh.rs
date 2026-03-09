@@ -206,3 +206,43 @@ pub fn ssh_list_tunnels(
         Err(e) => CommandResponse::err(e.to_string()),
     }
 }
+
+/// Start a remote port forward (Remote -> Local)
+#[tauri::command]
+pub fn ssh_forward_remote(
+    state: State<AppState>,
+    session_id: String,
+    remote_port: u16,
+    local_host: String,
+    local_port: u16,
+) -> CommandResponse<()> {
+    match state.ssh_manager.start_remote_forward(&session_id, remote_port, &local_host, local_port) {
+        Ok(()) => CommandResponse::ok(()),
+        Err(e) => CommandResponse::err(e.to_string()),
+    }
+}
+
+/// Stop a remote port forward
+#[tauri::command]
+pub fn ssh_stop_forward_remote(
+    state: State<AppState>,
+    session_id: String,
+    remote_port: u16,
+) -> CommandResponse<()> {
+    match state.ssh_manager.stop_remote_forward(&session_id, remote_port) {
+        Ok(()) => CommandResponse::ok(()),
+        Err(e) => CommandResponse::err(e.to_string()),
+    }
+}
+
+/// List active remote port forwards
+#[tauri::command]
+pub fn ssh_list_remote_tunnels(
+    state: State<AppState>,
+    session_id: String,
+) -> CommandResponse<Vec<u16>> {
+    match state.ssh_manager.list_remote_tunnels(&session_id) {
+        Ok(tunnels) => CommandResponse::ok(tunnels),
+        Err(e) => CommandResponse::err(e.to_string()),
+    }
+}

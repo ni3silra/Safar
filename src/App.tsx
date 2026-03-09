@@ -234,6 +234,12 @@ function App() {
           sessionLogs={sessionLogs}
           appSettings={appSettings}
           onNewConnection={() => setShowQuickConnect(true)}
+          sessions={sessions}
+          onConnectSession={(config) => handleConnect({
+            ...config,
+            password: config.password || "",
+            sessionName: config.sessionName || "",
+          }, false)}
         />
       </div>
 

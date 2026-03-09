@@ -118,6 +118,9 @@ pub fn run() {
             ssh_stop_forward,
             ssh_forward_local,
             ssh_list_tunnels,
+            ssh_forward_remote,
+            ssh_stop_forward_remote,
+            ssh_list_remote_tunnels,
             // Session storage commands
             sessions_get_all,
             sessions_get_favorites,

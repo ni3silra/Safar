@@ -73,7 +73,7 @@
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-default);
     overflow-x: auto;
-    overflow-y: hidden;
+    overflow-y: visible;
 }
 
 .tab-bar::-webkit-scrollbar {
