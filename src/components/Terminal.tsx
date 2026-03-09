@@ -277,8 +277,8 @@ export function TerminalComponent({
       // Data from xterm can be multiple characters (e.g. paste) or ANSI escape sequences (arrows).
       const isEscapeSequence = data.startsWith("\x1b");
 
-      // Check current auto-detected mode
-      const isBlock = isBlockModeRef.current;
+      // Check current auto-detected mode (Temporarily Disabled - Forced to Line Mode)
+      const isBlock = false; // isBlockModeRef.current;
 
       // --- History Tracking (Both Modes) ---
       if (!isEscapeSequence) {
@@ -359,9 +359,10 @@ export function TerminalComponent({
         const incomingData = event.payload.data;
 
         // --- Packet Sniffing for Block Mode Heuristic ---
+        // (TEMPORARILY DISABLED: Causing adverse effects on HP NS Guardian)
         // If the server clears the screen or enters alt buffer, toggle Block Mode ON
         if (incomingData.includes("\x1b[?1049h") || incomingData.includes("\x1b[?47h") || incomingData.includes("\x1b[2J")) {
-          setIsBlockMode(true);
+          // setIsBlockMode(true);
         }
         // If the server disables alt buffer, toggle Block Mode OFF
         else if (incomingData.includes("\x1b[?1049l") || incomingData.includes("\x1b[?47l")) {
@@ -460,6 +461,22 @@ export function TerminalComponent({
           {isBlockMode ? "Block Mode" : "Line Mode"}
         </div>
 
+        {/* Clear Button */}
+        <button
+          className="btn btn-secondary"
+          style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px", color: "var(--col-red)", borderColor: "rgba(239, 68, 68, 0.3)" }}
+          onClick={() => {
+            blockBufferRef.current = "";
+            xtermRef.current?.clear();
+            terminalRef.current?.focus();
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.1)"}
+          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+          title="Clear Terminal Display"
+        >
+          Clear
+        </button>
+
         {/* History Button */}
         <button
           className="btn btn-secondary"
@@ -472,6 +489,7 @@ export function TerminalComponent({
           <Icons.Clock style={{ width: 12, height: 12 }} />
           History
         </button>
+
 
         <button
           className="btn btn-secondary"
@@ -543,24 +561,6 @@ export function TerminalComponent({
                   {key}
                 </button>
               ))}
-              {/* Clear Buffer & Screen Button */}
-              <button
-                onClick={() => {
-                  blockBufferRef.current = "";
-                  xtermRef.current?.clear();
-                  terminalRef.current?.focus();
-                }}
-                style={{
-                  padding: "4px 8px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.2)",
-                  color: "#ef4444", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0,
-                  marginLeft: "10px"
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.25)"}
-                onMouseLeave={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.1)"}
-                title="Clear Block Buffer & Screen"
-              >
-                Clear
-              </button>
             </div>
           </div>
         )
@@ -600,22 +600,24 @@ export function TerminalComponent({
       }
 
       {/* History Modal Viewer */}
-      {showHistoryModal && (
-        <CommandHistoryModal
-          onClose={() => setShowHistoryModal(false)}
-          onSelect={(cmd) => {
-            if (isBlockModeRef.current) {
-              blockBufferRef.current += cmd;
-              xtermRef.current?.write(cmd);
-              xtermRef.current?.focus();
-            } else {
-              sendData(cmd + "\r");
-              xtermRef.current?.focus();
-            }
-            setShowHistoryModal(false);
-          }}
-        />
-      )}
+      {
+        showHistoryModal && (
+          <CommandHistoryModal
+            onClose={() => setShowHistoryModal(false)}
+            onSelect={(cmd) => {
+              if (isBlockModeRef.current) {
+                blockBufferRef.current += cmd;
+                xtermRef.current?.write(cmd);
+                xtermRef.current?.focus();
+              } else {
+                sendData(cmd + "\r");
+                xtermRef.current?.focus();
+              }
+              setShowHistoryModal(false);
+            }}
+          />
+        )
+      }
 
     </div >
   );
