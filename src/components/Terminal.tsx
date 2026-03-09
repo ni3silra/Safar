@@ -34,6 +34,22 @@ interface TerminalData {
   data: string;
 }
 
+// Map for common control sequences
+const CONTROL_SEQUENCES: Record<string, string> = {
+  "Ctrl+C": "\x03",
+  "Up": "\x1b[A",
+  "Down": "\x1b[B",
+  "F1": "\x1bOP", "F2": "\x1bOQ", "F3": "\x1bOR", "F4": "\x1bOS",
+  "F5": "\x1b[15~", "F6": "\x1b[17~", "F7": "\x1b[18~", "F8": "\x1b[19~",
+  "F9": "\x1b[20~", "F10": "\x1b[21~", "F11": "\x1b[23~", "F12": "\x1b[24~",
+  "F13": "\x1b[25~", "F14": "\x1b[26~", "F15": "\x1b[28~", "F16": "\x1b[29~",
+
+  "S-F1": "\x1b[1;2P", "S-F2": "\x1b[1;2Q", "S-F3": "\x1b[1;2R", "S-F4": "\x1b[1;2S",
+  "S-F5": "\x1b[15;2~", "S-F6": "\x1b[17;2~", "S-F7": "\x1b[18;2~", "S-F8": "\x1b[19;2~",
+  "S-F9": "\x1b[20;2~", "S-F10": "\x1b[21;2~", "S-F11": "\x1b[23;2~", "S-F12": "\x1b[24;2~",
+  "S-F13": "\x1b[25;2~", "S-F14": "\x1b[26;2~", "S-F15": "\x1b[28;2~", "S-F16": "\x1b[29;2~",
+};
+
 import { Icons } from "./Icons";
 
 export function TerminalComponent({
@@ -61,10 +77,12 @@ export function TerminalComponent({
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const backspaceModeRef = useRef(backspaceMode); // Track latest backspace mode for closure
+  const blockBufferRef = useRef(""); // Buffer for Inbuilt Block Mode
 
   // UI State
   const [showSearch, setShowSearch] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [showToolbar, setShowToolbar] = useState(false); // Collapsible toolbar state
 
   // Send data to SSH server
   const sendData = useCallback(
@@ -243,7 +261,66 @@ export function TerminalComponent({
       }
     });
 
-    terminal.onData((data) => sendData(data));
+    // Inbuilt Block Mode Handler
+    terminal.onData((data) => {
+      // Data from xterm can be multiple characters (e.g. paste) or ANSI escape sequences (arrows).
+      // A typical ANSI escape sequence starts with \x1b (ESC).
+      const isEscapeSequence = data.startsWith("\x1b");
+
+      if (isEscapeSequence) {
+        // Control sequences (arrow keys, function keys, etc) bypass the block buffer.
+        // We send them immediately so things like history recall (Up Arrow) still work.
+        sendData(data);
+        return;
+      }
+
+      // Check for Submit (Enter / \r)
+      if (data === "\r" || data === "\n") {
+        const bufferedCommand = blockBufferRef.current;
+        // The server will execute the command and usually echo the output.
+        // To prevent "double echo" (our manual typing + the server's echo of our buffer),
+        // we first erase our local block buffer from the terminal screen
+        // by writing backspaces for the length of the buffer.
+        let erasure = "";
+        for (let i = 0; i < bufferedCommand.length; i++) {
+          erasure += "\b \b";
+        }
+        terminal.write(erasure);
+
+        // Then flush the entire accumulated block buffer to the server + the enter key.
+        // The server will then echo the command natively to the screen.
+        sendData(bufferedCommand + "\r");
+
+        // Clear the internal buffer state
+        blockBufferRef.current = "";
+        return;
+      }
+
+      // Check for Backspace/Delete (\x7f or \b)
+      if (data === "\x7f" || data === "\b") {
+        if (blockBufferRef.current.length > 0) {
+          // Pop the last character from our local block buffer
+          blockBufferRef.current = blockBufferRef.current.slice(0, -1);
+          // Echo the destructive backspace to the terminal locally (move left, space, move left)
+          terminal.write("\b \b");
+        }
+        return;
+      }
+
+      // Check for Ctrl+C (\x03) or Ctrl+D (\x04)
+      if (data === "\x03" || data === "\x04") {
+        // Usually these should bypass the buffer or scrap it
+        blockBufferRef.current = "";
+        sendData(data);
+        return;
+      }
+
+      // Standard printable characters (including pasting entire text blocks)
+      // Accumulate into the local block buffer
+      blockBufferRef.current += data;
+      // Echo it locally so the user can see what they are typing in Block Mode
+      terminal.write(data);
+    });
 
     terminal.onResize(({ cols, rows }) => {
       invoke("ssh_resize", { sessionId, cols, rows }).catch(console.error);
@@ -327,11 +404,112 @@ export function TerminalComponent({
   const findPrev = () => searchAddonRef.current?.findPrevious(searchTerm);
 
   return (
-    <div className="terminal-container" style={{ backgroundColor: useCustomColors ? customBackground : TERMINAL_THEMES[themeName].colors.background }}>
+    <div className="terminal-container" style={{ backgroundColor: useCustomColors ? customBackground : TERMINAL_THEMES[themeName].colors.background, display: "flex", flexDirection: "column" }}>
+
+      {/* Toolbar Toggle Bar */}
+      <div style={{
+        display: "flex", justifyContent: "flex-end", padding: "2px 10px",
+        background: "rgba(0, 0, 0, 0.1)", borderBottom: showToolbar ? "none" : "1px solid rgba(255, 255, 255, 0.05)",
+      }}>
+        <button
+          onClick={() => {
+            setShowToolbar(!showToolbar);
+            terminalRef.current?.focus();
+          }}
+          style={{
+            background: "transparent", border: "none", color: "var(--text-muted)",
+            fontSize: "11px", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px",
+            padding: "2px 4px", borderRadius: "4px"
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
+          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+          title="Toggle Control Sequences"
+        >
+          {showToolbar ? <Icons.CaretUp style={{ width: 12, height: 12 }} /> : <Icons.CaretDown style={{ width: 12, height: 12 }} />}
+          {showToolbar ? "Hide Controls" : "Show Controls"}
+        </button>
+      </div>
+
+      {/* Control Sequence Toolbar Header */}
+      {showToolbar && (
+        <div style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid rgba(255, 255, 255, 0.05)" }}>
+          {/* Row 1 */}
+          <div style={{
+            display: "flex", gap: "6px", padding: "4px 6px 2px 6px",
+            background: "rgba(0, 0, 0, 0.2)",
+            overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
+          }}>
+            {["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16"].map(key => (
+              <button
+                key={key}
+                onClick={() => {
+                  sendData(CONTROL_SEQUENCES[key]);
+                  terminalRef.current?.focus();
+                }}
+                style={{
+                  padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
+                  color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
+                title={`Send ${key}`}
+              >
+                {key}
+              </button>
+            ))}
+          </div>
+
+          {/* Row 2 */}
+          <div style={{
+            display: "flex", gap: "6px", padding: "2px 6px 6px 6px",
+            background: "rgba(0, 0, 0, 0.2)",
+            overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
+          }}>
+            {["S-F1", "S-F2", "S-F3", "S-F4", "S-F5", "S-F6", "S-F7", "S-F8", "S-F9", "S-F10", "S-F11", "S-F12", "S-F13", "S-F14", "S-F15", "S-F16", "Ctrl+C", "Up", "Down"].map(key => (
+              <button
+                key={key}
+                onClick={() => {
+                  sendData(CONTROL_SEQUENCES[key]);
+                  terminalRef.current?.focus();
+                }}
+                style={{
+                  padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
+                  color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
+                title={`Send ${key}`}
+              >
+                {key}
+              </button>
+            ))}
+            {/* Clear Buffer & Screen Button */}
+            <button
+              onClick={() => {
+                blockBufferRef.current = "";
+                xtermRef.current?.clear();
+                terminalRef.current?.focus();
+              }}
+              style={{
+                padding: "4px 8px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.2)",
+                color: "#ef4444", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0,
+                marginLeft: "10px"
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.25)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.1)"}
+              title="Clear Block Buffer & Screen"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* We keep inline background color because it comes from the JS theme object which is dynamic */}
       <div
         ref={terminalRef}
         className="terminal-viewport"
+        style={{ flex: 1, overflow: "hidden" }}
       />
 
       {/* Search Bar */}
@@ -357,6 +535,7 @@ export function TerminalComponent({
           <button onClick={() => setShowSearch(false)} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.X /></button>
         </div>
       )}
+
     </div>
   );
 }

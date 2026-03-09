@@ -47,7 +47,7 @@ function App() {
   // Delete Modal State
   const [deleteModal, setDeleteModal] = useState<{ id: string, name: string } | null>(null);
 
-  const [sidebarView, setSidebarView] = useState<"sessions" | "snippets">("sessions");
+  const [sidebarView, setSidebarView] = useState<"sessions" | "snippets" | "controls">("sessions");
   const [editingSession, setEditingSession] = useState<SavedSession | null>(null);
   const [retryConfig, setRetryConfig] = useState<ConnectConfig | null>(null);
 

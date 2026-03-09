@@ -1,5 +1,6 @@
 import { Icons } from "./Icons";
 import { CommandPalette } from "./CommandPalette";
+import { SidebarControls } from "./SidebarControls";
 import { Session, ConnectConfig, SavedSession } from "../types";
 
 
@@ -7,8 +8,8 @@ import { Session, ConnectConfig, SavedSession } from "../types";
 interface SidebarProps {
     sidebarCollapsed: boolean;
     setSidebarCollapsed: (collapsed: boolean) => void;
-    sidebarView: "sessions" | "snippets";
-    setSidebarView: (view: "sessions" | "snippets") => void;
+    sidebarView: "sessions" | "snippets" | "controls";
+    setSidebarView: (view: "sessions" | "snippets" | "controls") => void;
     activeSessions: Session[];
     activeSessionId: string | null;
     setActiveSessionId: (id: string) => void;
@@ -48,16 +49,18 @@ export function Sidebar({
                                 background: sidebarView === "sessions" ? "transparent" : "var(--bg-secondary)",
                                 border: "none",
                                 borderBottom: sidebarView === "sessions" ? "2px solid var(--col-blue)" : "2px solid transparent",
-                                padding: "12px",
+                                padding: "8px 4px",
                                 cursor: "pointer",
                                 fontWeight: sidebarView === "sessions" ? 600 : "normal",
                                 color: sidebarView === "sessions" ? "var(--text-primary)" : "var(--text-muted)",
-                                display: "flex", alignItems: "center", justifyContent: "center", gap: "8px"
+                                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "4px",
+                                transition: "all 0.15s ease"
                             }}
                             onClick={() => setSidebarView("sessions")}
-                            data-tooltip="Sessions"
+                            title="Recent & Saved Sessions"
                         >
-                            <Icons.Server /> Sessions
+                            <Icons.Server style={{ width: 16, height: 16 }} />
+                            <span style={{ fontSize: "10px", lineHeight: "1" }}>Sessions</span>
                         </button>
                         <button
                             style={{
@@ -65,16 +68,37 @@ export function Sidebar({
                                 background: sidebarView === "snippets" ? "transparent" : "var(--bg-secondary)",
                                 border: "none",
                                 borderBottom: sidebarView === "snippets" ? "2px solid var(--col-blue)" : "2px solid transparent",
-                                padding: "12px",
+                                padding: "8px 4px",
                                 cursor: "pointer",
                                 fontWeight: sidebarView === "snippets" ? 600 : "normal",
                                 color: sidebarView === "snippets" ? "var(--text-primary)" : "var(--text-muted)",
-                                display: "flex", alignItems: "center", justifyContent: "center", gap: "8px"
+                                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "4px",
+                                transition: "all 0.15s ease"
                             }}
                             onClick={() => setSidebarView("snippets")}
-                            data-tooltip="Snippets"
+                            title="Command Snippets"
                         >
-                            <span style={{ fontSize: "14px" }}>📋</span> Snippets
+                            <span style={{ fontSize: "16px", lineHeight: "1" }}>📋</span>
+                            <span style={{ fontSize: "10px", lineHeight: "1" }}>Snippets</span>
+                        </button>
+                        <button
+                            style={{
+                                flex: 1,
+                                background: sidebarView === "controls" ? "transparent" : "var(--bg-secondary)",
+                                border: "none",
+                                borderBottom: sidebarView === "controls" ? "2px solid var(--col-blue)" : "2px solid transparent",
+                                padding: "8px 4px",
+                                cursor: "pointer",
+                                fontWeight: sidebarView === "controls" ? 600 : "normal",
+                                color: sidebarView === "controls" ? "var(--text-primary)" : "var(--text-muted)",
+                                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "4px",
+                                transition: "all 0.15s ease"
+                            }}
+                            onClick={() => setSidebarView("controls")}
+                            title="F-Keys & Terminal Controls"
+                        >
+                            <Icons.Terminal style={{ width: 16, height: 16 }} />
+                            <span style={{ fontSize: "10px", lineHeight: "1" }}>Controls</span>
                         </button>
                     </div>
                 ) : (
@@ -284,6 +308,9 @@ export function Sidebar({
             )}
             {!sidebarCollapsed && sidebarView === "snippets" && (
                 <CommandPalette sessionId={activeSessionId} />
+            )}
+            {!sidebarCollapsed && sidebarView === "controls" && (
+                <SidebarControls sessionId={activeSessionId} />
             )}
         </div>
     );
