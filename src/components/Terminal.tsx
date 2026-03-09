@@ -8,6 +8,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
 import { TERMINAL_THEMES } from "../config/themes";
+import { CommandHistoryModal } from "./CommandHistoryModal";
+import { addHistory } from "../utils/history";
 
 interface TerminalProps {
   sessionId: string;
@@ -83,6 +85,10 @@ export function TerminalComponent({
   const [showSearch, setShowSearch] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [showToolbar, setShowToolbar] = useState(false); // Collapsible toolbar state
+  const [showHistoryModal, setShowHistoryModal] = useState(false); // History Modal State
+  const [isBlockMode, setIsBlockMode] = useState(false); // Auto-detected HP NS state
+  const isBlockModeRef = useRef(false); // Ref for closure sync
+  const historyBufferRef = useRef(""); // Generic command buffer for history
 
   // Send data to SSH server
   const sendData = useCallback(
@@ -139,6 +145,11 @@ export function TerminalComponent({
   useEffect(() => {
     backspaceModeRef.current = backspaceMode;
   }, [backspaceMode]);
+
+  // Keep block mode ref in sync with state for xterm closure
+  useEffect(() => {
+    isBlockModeRef.current = isBlockMode;
+  }, [isBlockMode]);
 
   // Initialize Terminal
   useEffect(() => {
@@ -261,15 +272,41 @@ export function TerminalComponent({
       }
     });
 
-    // Inbuilt Block Mode Handler
+    // User Input Handler (Block vs Line Mode Logic)
     terminal.onData((data) => {
       // Data from xterm can be multiple characters (e.g. paste) or ANSI escape sequences (arrows).
-      // A typical ANSI escape sequence starts with \x1b (ESC).
       const isEscapeSequence = data.startsWith("\x1b");
 
+      // Check current auto-detected mode
+      const isBlock = isBlockModeRef.current;
+
+      // --- History Tracking (Both Modes) ---
+      if (!isEscapeSequence) {
+        if (data === "\r" || data === "\n") {
+          const cmdToSave = isBlock ? blockBufferRef.current : historyBufferRef.current;
+          if (cmdToSave.trim()) addHistory(cmdToSave.trim());
+          historyBufferRef.current = "";
+        } else if (data === "\x7f" || data === "\b") {
+          historyBufferRef.current = historyBufferRef.current.slice(0, -1);
+        } else if (data === "\x03" || data === "\x04") {
+          historyBufferRef.current = "";
+        } else {
+          historyBufferRef.current += data;
+        }
+      }
+
+      // LINE MODE (Guardian)
+      if (!isBlock) {
+        sendData(data); // Immediate transmission
+        return;
+      }
+
+      // -----------------------------------------------------------------
+      // BLOCK MODE LOGIC (DBU/Pathway Forms)
+      // -----------------------------------------------------------------
+
+      // Control sequences bypass buffer
       if (isEscapeSequence) {
-        // Control sequences (arrow keys, function keys, etc) bypass the block buffer.
-        // We send them immediately so things like history recall (Up Arrow) still work.
         sendData(data);
         return;
       }
@@ -277,21 +314,13 @@ export function TerminalComponent({
       // Check for Submit (Enter / \r)
       if (data === "\r" || data === "\n") {
         const bufferedCommand = blockBufferRef.current;
-        // The server will execute the command and usually echo the output.
-        // To prevent "double echo" (our manual typing + the server's echo of our buffer),
-        // we first erase our local block buffer from the terminal screen
-        // by writing backspaces for the length of the buffer.
         let erasure = "";
         for (let i = 0; i < bufferedCommand.length; i++) {
           erasure += "\b \b";
         }
         terminal.write(erasure);
-
-        // Then flush the entire accumulated block buffer to the server + the enter key.
-        // The server will then echo the command natively to the screen.
         sendData(bufferedCommand + "\r");
 
-        // Clear the internal buffer state
         blockBufferRef.current = "";
         return;
       }
@@ -299,9 +328,7 @@ export function TerminalComponent({
       // Check for Backspace/Delete (\x7f or \b)
       if (data === "\x7f" || data === "\b") {
         if (blockBufferRef.current.length > 0) {
-          // Pop the last character from our local block buffer
           blockBufferRef.current = blockBufferRef.current.slice(0, -1);
-          // Echo the destructive backspace to the terminal locally (move left, space, move left)
           terminal.write("\b \b");
         }
         return;
@@ -309,16 +336,13 @@ export function TerminalComponent({
 
       // Check for Ctrl+C (\x03) or Ctrl+D (\x04)
       if (data === "\x03" || data === "\x04") {
-        // Usually these should bypass the buffer or scrap it
         blockBufferRef.current = "";
         sendData(data);
         return;
       }
 
-      // Standard printable characters (including pasting entire text blocks)
-      // Accumulate into the local block buffer
+      // Accumulate standard printable characters
       blockBufferRef.current += data;
-      // Echo it locally so the user can see what they are typing in Block Mode
       terminal.write(data);
     });
 
@@ -332,7 +356,20 @@ export function TerminalComponent({
 
     listen<TerminalData>("terminal-data", (event) => {
       if (event.payload.session_id === sessionId) {
-        terminal.write(event.payload.data);
+        const incomingData = event.payload.data;
+
+        // --- Packet Sniffing for Block Mode Heuristic ---
+        // If the server clears the screen or enters alt buffer, toggle Block Mode ON
+        if (incomingData.includes("\x1b[?1049h") || incomingData.includes("\x1b[?47h") || incomingData.includes("\x1b[2J")) {
+          setIsBlockMode(true);
+        }
+        // If the server disables alt buffer, toggle Block Mode OFF
+        else if (incomingData.includes("\x1b[?1049l") || incomingData.includes("\x1b[?47l")) {
+          setIsBlockMode(false);
+          blockBufferRef.current = ""; // Clear active buffer just in case
+        }
+
+        terminal.write(incomingData);
       }
     }).then((fn) => {
       if (!isMounted) {
@@ -406,20 +443,42 @@ export function TerminalComponent({
   return (
     <div className="terminal-container" style={{ backgroundColor: useCustomColors ? customBackground : TERMINAL_THEMES[themeName].colors.background, display: "flex", flexDirection: "column" }}>
 
-      {/* Toolbar Toggle Bar */}
-      <div style={{
-        display: "flex", justifyContent: "flex-end", padding: "2px 10px",
-        background: "rgba(0, 0, 0, 0.1)", borderBottom: showToolbar ? "none" : "1px solid rgba(255, 255, 255, 0.05)",
-      }}>
+      {/* Toolbar Trigger Area */}
+      <div style={{ position: "absolute", top: 4, right: 12, zIndex: 10, display: "flex", alignItems: "center", gap: "8px" }}>
+
+        {/* Auto-Detection Pill Indicator */}
+        <div style={{
+          background: "var(--bg-secondary)", border: "1px solid var(--border-color)",
+          padding: "2px 8px", borderRadius: "12px", fontSize: "11px",
+          color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "6px"
+        }}>
+          <span style={{
+            width: "6px", height: "6px", borderRadius: "50%",
+            background: isBlockMode ? "var(--accent-secondary)" : "var(--text-muted)",
+            boxShadow: isBlockMode ? "0 0 6px var(--accent-secondary)" : "none"
+          }} />
+          {isBlockMode ? "Block Mode" : "Line Mode"}
+        </div>
+
+        {/* History Button */}
         <button
+          className="btn btn-secondary"
+          style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px" }}
+          onClick={() => setShowHistoryModal(true)}
+          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
+          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+          title="Command History"
+        >
+          <Icons.Clock style={{ width: 12, height: 12 }} />
+          History
+        </button>
+
+        <button
+          className="btn btn-secondary"
+          style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px" }}
           onClick={() => {
             setShowToolbar(!showToolbar);
             terminalRef.current?.focus();
-          }}
-          style={{
-            background: "transparent", border: "none", color: "var(--text-muted)",
-            fontSize: "11px", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px",
-            padding: "2px 4px", borderRadius: "4px"
           }}
           onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
           onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
@@ -431,112 +490,134 @@ export function TerminalComponent({
       </div>
 
       {/* Control Sequence Toolbar Header */}
-      {showToolbar && (
-        <div style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid rgba(255, 255, 255, 0.05)" }}>
-          {/* Row 1 */}
-          <div style={{
-            display: "flex", gap: "6px", padding: "4px 6px 2px 6px",
-            background: "rgba(0, 0, 0, 0.2)",
-            overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
-          }}>
-            {["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16"].map(key => (
+      {
+        showToolbar && (
+          <div style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid rgba(255, 255, 255, 0.05)" }}>
+            {/* Row 1 */}
+            <div style={{
+              display: "flex", gap: "6px", padding: "4px 6px 2px 6px",
+              background: "rgba(0, 0, 0, 0.2)",
+              overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
+            }}>
+              {["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16"].map(key => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    sendData(CONTROL_SEQUENCES[key]);
+                    terminalRef.current?.focus();
+                  }}
+                  style={{
+                    padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
+                    color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
+                  title={`Send ${key}`}
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
+
+            {/* Row 2 */}
+            <div style={{
+              display: "flex", gap: "6px", padding: "2px 6px 6px 6px",
+              background: "rgba(0, 0, 0, 0.2)",
+              overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
+            }}>
+              {["S-F1", "S-F2", "S-F3", "S-F4", "S-F5", "S-F6", "S-F7", "S-F8", "S-F9", "S-F10", "S-F11", "S-F12", "S-F13", "S-F14", "S-F15", "S-F16", "Ctrl+C", "Up", "Down"].map(key => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    sendData(CONTROL_SEQUENCES[key]);
+                    terminalRef.current?.focus();
+                  }}
+                  style={{
+                    padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
+                    color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
+                  title={`Send ${key}`}
+                >
+                  {key}
+                </button>
+              ))}
+              {/* Clear Buffer & Screen Button */}
               <button
-                key={key}
                 onClick={() => {
-                  sendData(CONTROL_SEQUENCES[key]);
+                  blockBufferRef.current = "";
+                  xtermRef.current?.clear();
                   terminalRef.current?.focus();
                 }}
                 style={{
-                  padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
-                  color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
+                  padding: "4px 8px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.2)",
+                  color: "#ef4444", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0,
+                  marginLeft: "10px"
                 }}
-                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
-                onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
-                title={`Send ${key}`}
+                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.25)"}
+                onMouseLeave={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.1)"}
+                title="Clear Block Buffer & Screen"
               >
-                {key}
+                Clear
               </button>
-            ))}
+            </div>
           </div>
+        )
+      }
 
-          {/* Row 2 */}
-          <div style={{
-            display: "flex", gap: "6px", padding: "2px 6px 6px 6px",
-            background: "rgba(0, 0, 0, 0.2)",
-            overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
-          }}>
-            {["S-F1", "S-F2", "S-F3", "S-F4", "S-F5", "S-F6", "S-F7", "S-F8", "S-F9", "S-F10", "S-F11", "S-F12", "S-F13", "S-F14", "S-F15", "S-F16", "Ctrl+C", "Up", "Down"].map(key => (
-              <button
-                key={key}
-                onClick={() => {
-                  sendData(CONTROL_SEQUENCES[key]);
-                  terminalRef.current?.focus();
-                }}
-                style={{
-                  padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
-                  color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
-                onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
-                title={`Send ${key}`}
-              >
-                {key}
-              </button>
-            ))}
-            {/* Clear Buffer & Screen Button */}
-            <button
-              onClick={() => {
-                blockBufferRef.current = "";
-                xtermRef.current?.clear();
-                terminalRef.current?.focus();
-              }}
-              style={{
-                padding: "4px 8px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.2)",
-                color: "#ef4444", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0,
-                marginLeft: "10px"
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.25)"}
-              onMouseLeave={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.1)"}
-              title="Clear Block Buffer & Screen"
-            >
-              Clear
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* We keep inline background color because it comes from the JS theme object which is dynamic */}
+      {/* Terminal View */}
       <div
         ref={terminalRef}
-        className="terminal-viewport"
-        style={{ flex: 1, overflow: "hidden" }}
+        style={{ flex: 1, overflow: "hidden", padding: "8px" }}
+        className="xterm-wrapper"
       />
 
       {/* Search Bar */}
-      {showSearch && (
-        <div className="terminal-search-bar">
-          <input
-            autoFocus
-            type="text"
-            className="terminal-search-input"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.shiftKey ? findPrev() : findNext();
-              }
-              if (e.key === "Escape") setShowSearch(false);
-            }}
-            placeholder="Find..."
-          />
-          <button onClick={findPrev} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretUp /></button>
-          <button onClick={findNext} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretDown /></button>
-          <div className="terminal-search-divider" />
-          <button onClick={() => setShowSearch(false)} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.X /></button>
-        </div>
+      {
+        showSearch && (
+          <div className="terminal-search-bar">
+            <input
+              autoFocus
+              type="text"
+              className="terminal-search-input"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.shiftKey ? findPrev() : findNext();
+                }
+                if (e.key === "Escape") setShowSearch(false);
+              }}
+              placeholder="Find..."
+            />
+            <button onClick={findPrev} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretUp /></button>
+            <button onClick={findNext} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretDown /></button>
+            <div className="terminal-search-divider" />
+            <button onClick={() => setShowSearch(false)} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.X /></button>
+          </div>
+        )
+      }
+
+      {/* History Modal Viewer */}
+      {showHistoryModal && (
+        <CommandHistoryModal
+          onClose={() => setShowHistoryModal(false)}
+          onSelect={(cmd) => {
+            if (isBlockModeRef.current) {
+              blockBufferRef.current += cmd;
+              xtermRef.current?.write(cmd);
+              xtermRef.current?.focus();
+            } else {
+              sendData(cmd + "\r");
+              xtermRef.current?.focus();
+            }
+            setShowHistoryModal(false);
+          }}
+        />
       )}
 
-    </div>
+    </div >
   );
 }
 
