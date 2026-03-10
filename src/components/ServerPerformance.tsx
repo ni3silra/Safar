@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icons } from "./Icons";
-import { Session } from "../types";
+import { Session, CommandResponse } from "../types";
 
 interface ServerPerformanceProps {
     session: Session;
@@ -77,17 +77,109 @@ export function ServerPerformance({ session }: ServerPerformanceProps) {
         return parsedProcs;
     };
 
+    // Helper: Parse Unix ps -eo pid,user,pcpu,pmem,args
+    const parseUnixPS = (raw: string) => {
+        const lines = raw.split("\n").filter(l => l.trim().length > 0);
+        const parsedProcs: ProcessInfo[] = [];
+
+        let startIdx = lines[0].includes("PID") ? 1 : 0;
+        for (let i = startIdx; i < lines.length; i++) {
+            const parts = lines[i].trim().split(/\s+/);
+            // PID(0) USER(1) CPU(2) MEM(3) COMMAND(4+)
+            if (parts.length >= 5) {
+                parsedProcs.push({
+                    pid: parts[0],
+                    user: parts[1],
+                    cpu: parts[2],
+                    mem: parts[3],
+                    command: parts.slice(4).join(" ")
+                });
+            }
+        }
+        return parsedProcs;
+    };
+
+    // Helper: Parse Unix ps aux
+    const parseUnixPSAux = (raw: string) => {
+        const lines = raw.split("\n").filter(l => l.trim().length > 0);
+        const parsedProcs: ProcessInfo[] = [];
+
+        let startIdx = lines[0].includes("PID") ? 1 : 0;
+        for (let i = startIdx; i < lines.length; i++) {
+            const parts = lines[i].trim().split(/\s+/);
+            // USER(0) PID(1) CPU(2) MEM(3) COMMAND(10+)
+            if (parts.length >= 11) {
+                parsedProcs.push({
+                    pid: parts[1],
+                    user: parts[0],
+                    cpu: parts[2],
+                    mem: parts[3],
+                    command: parts.slice(10).join(" ")
+                });
+            } else if (parts.length >= 5) {
+                parsedProcs.push({
+                    pid: parts[1],
+                    user: parts[0],
+                    cpu: parts[2],
+                    mem: parts[3],
+                    command: parts.slice(4).join(" ")
+                });
+            }
+        }
+        return parsedProcs;
+    };
+
+    // Helper: Parse Unix ps -ef
+    const parseUnixPSEf = (raw: string) => {
+        const lines = raw.split("\n").filter(l => l.trim().length > 0);
+        const parsedProcs: ProcessInfo[] = [];
+
+        let startIdx = lines[0].includes("PID") ? 1 : 0;
+        for (let i = startIdx; i < lines.length; i++) {
+            const parts = lines[i].trim().split(/\s+/);
+            // UID(0) PID(1) PPID(2) C(3) STIME(4) TTY(5) TIME(6) CMD(7+)
+            if (parts.length >= 8) {
+                parsedProcs.push({
+                    pid: parts[1],
+                    user: parts[0],
+                    cpu: parts[3],
+                    mem: "-",
+                    command: parts.slice(7).join(" ")
+                });
+            } else if (parts.length >= 4) {
+                parsedProcs.push({
+                    pid: parts[1],
+                    user: parts[0],
+                    cpu: "-",
+                    mem: "-",
+                    command: parts.slice(3).join(" ")
+                });
+            }
+        }
+        return parsedProcs;
+    };
+
     const handleRefresh = async () => {
         if (!session.connected) return;
         setLoading(true);
         setError(null);
 
         try {
-            const resultJson = await invoke<string>("ssh_get_performance", { sessionId: session.id });
-            const data = JSON.parse(resultJson);
+            const response = await invoke<CommandResponse<string>>("ssh_get_performance", { sessionId: session.id });
 
-            if (data.error) {
-                setError(data.error);
+            if (!response.success || !response.data) {
+                setError(response.error || "Unknown error occurred.");
+                setProcesses([]);
+                return;
+            }
+
+            const data = JSON.parse(response.data);
+
+            if (data.error_detail) {
+                setError(data.error_detail);
+                setProcesses([]);
+            } else if (data.raw_output && data.raw_output.includes("METRICS_UNAVAILABLE")) {
+                setError("Metrics returned as UNAVAILABLE.");
                 setProcesses([]);
             } else {
                 setOsType(data.os);
@@ -97,6 +189,12 @@ export function ServerPerformance({ session }: ServerPerformanceProps) {
                     parsed = parseLinuxTop(data.raw_output);
                 } else if (data.os === "NONSTOP_KERNEL") {
                     parsed = parseHPNSStatus(data.raw_output);
+                } else if (data.os === "UNIX_PS") {
+                    parsed = parseUnixPS(data.raw_output);
+                } else if (data.os === "UNIX_PS_AUX") {
+                    parsed = parseUnixPSAux(data.raw_output);
+                } else if (data.os === "UNIX_PS_EF") {
+                    parsed = parseUnixPSEf(data.raw_output);
                 }
 
                 setProcesses(parsed);

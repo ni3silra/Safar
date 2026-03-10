@@ -366,9 +366,20 @@ impl SshManager {
             SshError::ChannelError(format!("Failed to read command output: {}", e))
         })?;
 
+        let mut stderr = String::new();
+        channel.stderr().read_to_string(&mut stderr).unwrap_or_default();
+
         channel.wait_close().map_err(|e| {
             SshError::ChannelError(format!("Failed to close channel: {}", e))
         })?;
+
+        let exit_status = channel.exit_status().unwrap_or(0);
+        if exit_status != 0 {
+            return Err(SshError::ChannelError(format!(
+                "Command failed with status {}. Stderr: {}", 
+                exit_status, stderr.trim()
+            )));
+        }
 
         Ok(output)
     }
@@ -377,29 +388,66 @@ impl SshManager {
     pub fn get_performance(&self, session_id: &str) -> Result<String, SshError> {
         // Attempt to determine OS via `uname -s` first. 
         // If it's NONSTOP_KERNEL, use STATUS. Else assume Linux and use top.
-        let os_type = self.execute_command(session_id, "uname -s").unwrap_or_else(|_| "UNKNOWN".to_string());
-        let os = os_type.trim().to_uppercase();
+        let os_type_res = self.execute_command(session_id, "uname -s");
+        let os = match &os_type_res {
+            Ok(val) => val.trim().to_uppercase(),
+            Err(_) => "UNKNOWN".to_string(), // uname might fail on HP NS
+        };
 
-        let metrics_json = if os.contains("NONSTOP") {
+        let metrics_json = if os.contains("NONSTOP") || os_type_res.is_err() {
             // HP NonStop Guardian/OSH
-            // Attempt a few commands securely
-            let output = self.execute_command(session_id, "status *, prog")
-                .or_else(|_| self.execute_command(session_id, "gtacl -c \"status *, prog\""))
-                .unwrap_or_else(|_| "HP_NS_METRICS_UNAVAILABLE".to_string());
+            let mut captured_error = String::new();
             
-            serde_json::json!({
-                "os": "NONSTOP_KERNEL",
-                "raw_output": output
-            }).to_string()
+            match self.execute_command(session_id, "status *, prog") {
+                Ok(out) => serde_json::json!({ "os": "NONSTOP_KERNEL", "raw_output": out }).to_string(),
+                Err(e1) => {
+                    captured_error.push_str(&format!("'status *, prog' failed: {}. ", e1));
+                    match self.execute_command(session_id, "gtacl -c \"status *, prog\"") {
+                        Ok(out2) => serde_json::json!({ "os": "NONSTOP_KERNEL", "raw_output": out2 }).to_string(),
+                        Err(e2) => {
+                            captured_error.push_str(&format!("'gtacl' failed: {}. ", e2));
+                            match self.execute_command(session_id, "ps -ef") {
+                                Ok(out3) => serde_json::json!({ "os": "UNIX_PS_EF", "raw_output": out3 }).to_string(),
+                                Err(e3) => {
+                                    captured_error.push_str(&format!("'ps -ef' failed: {}", e3));
+                                    serde_json::json!({
+                                        "os": "NONSTOP_KERNEL",
+                                        "raw_output": "HP_NS_METRICS_UNAVAILABLE",
+                                        "error_detail": captured_error
+                                    }).to_string()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             // Assume Standard Linux
-            // Run `top -b -n 1` and grab first 57 lines (header + 50 processes)
-            let output = self.execute_command(session_id, "top -b -n 1 | head -n 57").unwrap_or_else(|_| "LINUX_METRICS_UNAVAILABLE".to_string());
-            
-            serde_json::json!({
-                "os": "LINUX",
-                "raw_output": output
-            }).to_string()
+            let mut captured_error = String::new();
+            match self.execute_command(session_id, "top -b -n 1 | head -n 57") {
+                Ok(out) => serde_json::json!({ "os": "LINUX", "raw_output": out }).to_string(),
+                Err(e) => {
+                    captured_error.push_str(&format!("'top' command failed: {}. ", e));
+                    // Unix ps fallback
+                    match self.execute_command(session_id, "ps -eo pid,user,pcpu,pmem,args --sort=-pcpu | head -n 51") {
+                        Ok(out2) => serde_json::json!({ "os": "UNIX_PS", "raw_output": out2 }).to_string(),
+                        Err(e2) => {
+                            captured_error.push_str(&format!("'ps -eo' fallback failed: {}. ", e2));
+                            match self.execute_command(session_id, "ps aux | head -n 51") {
+                                Ok(out3) => serde_json::json!({ "os": "UNIX_PS_AUX", "raw_output": out3 }).to_string(),
+                                Err(e3) => {
+                                    captured_error.push_str(&format!("'ps aux' fallback failed: {}", e3));
+                                    serde_json::json!({
+                                        "os": "LINUX",
+                                        "raw_output": "LINUX_METRICS_UNAVAILABLE",
+                                        "error_detail": captured_error
+                                    }).to_string()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         };
 
         Ok(metrics_json)
