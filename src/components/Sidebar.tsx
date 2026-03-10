@@ -155,7 +155,10 @@ export function Sidebar({
                                         <Icons.Terminal />
                                     </div>
                                     <div className="session-info">
-                                        <div className="session-name">{session.name}</div>
+                                        <div className="session-name">
+                                            {session.name}
+                                            {session.dynamicTitle ? ` (${session.dynamicTitle})` : ''}
+                                        </div>
                                         <div className="session-host">{session.host}</div>
                                     </div>
                                     <div className={`session-status ${session.connected ? "connected" : ""}`} />

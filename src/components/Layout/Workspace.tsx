@@ -17,6 +17,7 @@ interface WorkspaceProps {
     setActiveSessionId: (id: string) => void;
     disconnect: (id: string) => void;
     updateSessionView: (sessionId: string, view: Session["activeView"]) => void;
+    updateSessionTitle: (sessionId: string, title: string) => void;
     sessionLogs: Record<string, LogEntry[]>;
     appSettings: AppSettings;
     onNewConnection: () => void;
@@ -30,6 +31,7 @@ export function Workspace({
     setActiveSessionId,
     disconnect,
     updateSessionView,
+    updateSessionTitle,
     sessionLogs,
     appSettings,
     onNewConnection,
@@ -76,7 +78,7 @@ export function Workspace({
                         <span className="tab-icon">
                             <Icons.Terminal />
                         </span>
-                        <span>{session.name}</span>
+                        <span>{session.name}{session.dynamicTitle ? ` (${session.dynamicTitle})` : ''}</span>
                         <span
                             className="tab-close"
                             onClick={(e) => {
@@ -275,6 +277,7 @@ export function Workspace({
                                     customForeground={appSettings.customForeground}
                                     customBackground={appSettings.customBackground}
                                     sessionTimeout={appSettings.sessionTimeout}
+                                    onTitleChange={(title) => updateSessionTitle(session.id, title)}
                                 />
                             </div>
                             <div style={{

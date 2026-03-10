@@ -36,6 +36,12 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
         );
     };
 
+    const updateSessionTitle = (sessionId: string, title: string) => {
+        setActiveSessions((prev) =>
+            prev.map((s) => (s.id === sessionId ? { ...s, dynamicTitle: title } : s))
+        );
+    };
+
     /**
      * Connects to an SSH server.
      * Returns true if connected successfully, false otherwise.
@@ -177,6 +183,7 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
         statusMessage,
         derivedActiveSession,
         updateSessionView,
+        updateSessionTitle,
         connect,
         disconnect
     };

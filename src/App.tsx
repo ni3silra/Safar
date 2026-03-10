@@ -112,6 +112,7 @@ function App() {
     connectionStatus,
     statusMessage,
     updateSessionView,
+    updateSessionTitle,
     connect,
     disconnect
   } = useTerminalConnection({ addLog, saveSession, addToRecent });
@@ -231,6 +232,7 @@ function App() {
           setActiveSessionId={setActiveSessionId}
           disconnect={disconnect}
           updateSessionView={updateSessionView}
+          updateSessionTitle={updateSessionTitle}
           sessionLogs={sessionLogs}
           appSettings={appSettings}
           onNewConnection={() => setShowQuickConnect(true)}

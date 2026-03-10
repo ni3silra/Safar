@@ -30,6 +30,7 @@ interface TerminalProps {
   customForeground?: string;
   customBackground?: string;
   sessionTimeout?: number;
+  onTitleChange?: (title: string) => void;
 }
 
 interface TerminalData {
@@ -73,7 +74,8 @@ export function TerminalComponent({
   useCustomColors = false,
   customForeground = "#e6edf3",
   customBackground = "#0d1117",
-  sessionTimeout = 120
+  sessionTimeout = 120,
+  onTitleChange
 }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -91,6 +93,7 @@ export function TerminalComponent({
   const [isBlockMode, setIsBlockMode] = useState(false); // Auto-detected HP NS state
   const isBlockModeRef = useRef(false); // Ref for closure sync
   const historyBufferRef = useRef(""); // Generic command buffer for history
+  const hpNsUserRef = useRef(""); // Tracks potential HP NS dynamic username
 
   // Inactivity State
   const [isInactive, setIsInactive] = useState(false);
@@ -246,7 +249,12 @@ export function TerminalComponent({
     // Attempt to open
     requestAnimationFrame(openTerminal);
 
-
+    // Native OS Window Title Tracking
+    terminal.onTitleChange((title) => {
+      if (onTitleChange && title) {
+        onTitleChange(title);
+      }
+    });
 
     // Key handlers
     terminal.attachCustomKeyEventHandler((e) => {
@@ -309,7 +317,27 @@ export function TerminalComponent({
       if (!isEscapeSequence) {
         if (data === "\r" || data === "\n") {
           const cmdToSave = isBlock ? blockBufferRef.current : historyBufferRef.current;
-          if (cmdToSave.trim()) addHistory(cmdToSave.trim());
+          const trimmedCmd = cmdToSave.trim();
+
+          if (trimmedCmd) {
+            addHistory(trimmedCmd);
+
+            // --- HP NS Heuristic Tracking ---
+            // Track when user executes SECOM, SECOM / SE, or OSH to switch accounts
+            const upperCmd = trimmedCmd.toUpperCase();
+            if (upperCmd.startsWith("SECOM / SE ")) {
+              const user = trimmedCmd.substring(11).trim();
+              hpNsUserRef.current = user.split(' ')[0]; // Take first token as user
+            } else if (upperCmd.startsWith("SECOM ")) {
+              const user = trimmedCmd.substring(6).trim();
+              hpNsUserRef.current = user.split(' ')[0];
+            } else if (upperCmd.startsWith("OSH ") || upperCmd === "OSH") {
+              // For OSH without a user, we might not know who they are, 
+              // but if they pass OSH -u user, we could parse it.
+              // Simple fallback: just mark as OSH user
+              hpNsUserRef.current = "OSH";
+            }
+          }
           historyBufferRef.current = "";
         } else if (data === "\x7f" || data === "\b") {
           historyBufferRef.current = historyBufferRef.current.slice(0, -1);
@@ -395,6 +423,17 @@ export function TerminalComponent({
         else if (incomingData.includes("\x1b[?1049l") || incomingData.includes("\x1b[?47l")) {
           setIsBlockMode(false);
           blockBufferRef.current = ""; // Clear active buffer just in case
+        }
+
+        // --- Execute HP NS Heuristic Sync on Prompts ---
+        // Basic detection for standard HP NS prompts (like `1> ` or `$ `)
+        // If we have a pending user switch from history and hit a clean prompt, update it
+        if (hpNsUserRef.current && onTitleChange) {
+          // Very simple check: if line contains > or # or $, assume prompt returned
+          if (incomingData.includes(">") || incomingData.includes("$") || incomingData.includes("#")) {
+            onTitleChange(hpNsUserRef.current);
+            // We keep it set so it persists, until they switch again.
+          }
         }
 
         terminal.write(incomingData);
