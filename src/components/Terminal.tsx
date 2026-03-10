@@ -29,6 +29,7 @@ interface TerminalProps {
   useCustomColors?: boolean;
   customForeground?: string;
   customBackground?: string;
+  sessionTimeout?: number;
 }
 
 interface TerminalData {
@@ -71,7 +72,8 @@ export function TerminalComponent({
   isVisible = true,
   useCustomColors = false,
   customForeground = "#e6edf3",
-  customBackground = "#0d1117"
+  customBackground = "#0d1117",
+  sessionTimeout = 120
 }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
@@ -89,6 +91,27 @@ export function TerminalComponent({
   const [isBlockMode, setIsBlockMode] = useState(false); // Auto-detected HP NS state
   const isBlockModeRef = useRef(false); // Ref for closure sync
   const historyBufferRef = useRef(""); // Generic command buffer for history
+
+  // Inactivity State
+  const [isInactive, setIsInactive] = useState(false);
+  const lastActivityRef = useRef(Date.now());
+
+  // Inactivity Timer Effect
+  useEffect(() => {
+    if (sessionTimeout <= 0) return;
+
+    const interval = setInterval(() => {
+      if (!isInactive) {
+        const timeSinceLastActivity = Date.now() - lastActivityRef.current;
+        const timeoutMs = sessionTimeout * 60 * 1000;
+        if (timeSinceLastActivity > timeoutMs) {
+          setIsInactive(true);
+        }
+      }
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [sessionTimeout, isInactive]);
 
   // Send data to SSH server
   const sendData = useCallback(
@@ -274,6 +297,8 @@ export function TerminalComponent({
 
     // User Input Handler (Block vs Line Mode Logic)
     terminal.onData((data) => {
+      lastActivityRef.current = Date.now(); // Update activity on keystrokes
+
       // Data from xterm can be multiple characters (e.g. paste) or ANSI escape sequences (arrows).
       const isEscapeSequence = data.startsWith("\x1b");
 
@@ -356,6 +381,8 @@ export function TerminalComponent({
 
     listen<TerminalData>("terminal-data", (event) => {
       if (event.payload.session_id === sessionId) {
+        lastActivityRef.current = Date.now(); // Update activity on server data
+
         const incomingData = event.payload.data;
 
         // --- Packet Sniffing for Block Mode Heuristic ---
@@ -619,6 +646,39 @@ export function TerminalComponent({
         )
       }
 
+      {/* Inactivity Overlay */}
+      {isInactive && (
+        <div style={{
+          position: "absolute",
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(0,0,0,0.8)",
+          backdropFilter: "blur(4px)",
+          zIndex: 50,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "white"
+        }}>
+          <Icons.Terminal style={{ width: 48, height: 48, marginBottom: "16px", opacity: 0.8 }} />
+          <h2 style={{ margin: "0 0 8px 0", fontSize: "20px" }}>Session Inactive</h2>
+          <p style={{ margin: "0 0 24px 0", color: "var(--text-muted)", fontSize: "14px" }}>
+            Terminal locked after {sessionTimeout} minutes of inactivity.
+          </p>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              setIsInactive(false);
+              lastActivityRef.current = Date.now();
+              terminalRef.current?.focus();
+            }}
+            style={{ padding: "8px 24px", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px" }}
+          >
+            <Icons.Zap style={{ width: 14, height: 14 }} />
+            Reconnect
+          </button>
+        </div>
+      )}
     </div >
   );
 }

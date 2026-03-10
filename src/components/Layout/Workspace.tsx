@@ -9,6 +9,7 @@ import { TunnelManager } from "../TunnelManager";
 import { SessionLogs } from "../SessionLogs";
 import { SessionStats } from "../SessionStats";
 import { WelcomeScreen } from "../WelcomeScreen";
+import { TransferManager } from "../TransferManager";
 
 interface WorkspaceProps {
     activeSessions: Session[];
@@ -230,6 +231,9 @@ export function Workspace({
                     </div>
                 )}
 
+                {/* Global SFTP Transfer Manager overlay */}
+                <TransferManager />
+
                 {/* Session Content Area */}
                 <div className="session-content-area">
                     {/* Show Welcome Screen if no active session selected */}
@@ -270,6 +274,7 @@ export function Workspace({
                                     useCustomColors={appSettings.useCustomColors}
                                     customForeground={appSettings.customForeground}
                                     customBackground={appSettings.customBackground}
+                                    sessionTimeout={appSettings.sessionTimeout}
                                 />
                             </div>
                             <div style={{

@@ -463,7 +463,10 @@ impl SshManager {
     }
 
     /// Read a remote file and save it locally
-    pub fn sftp_read_file(&self, session_id: &str, remote_path: &str, local_path: &str) -> Result<(), SshError> {
+    pub fn sftp_read_file<F>(&self, session_id: &str, remote_path: &str, local_path: &str, mut progress: F) -> Result<(), SshError> 
+    where
+        F: FnMut(u64, u64),
+    {
         let sessions = self.sessions.read();
         let session_arc = sessions
             .get(session_id)
@@ -488,17 +491,42 @@ impl SshManager {
             SshError::IoError(e)
         })?;
 
-        std::io::copy(&mut remote_file, &mut local_file).map_err(|e| {
+        let stat = remote_file.stat().map_err(|e| {
             session.session.set_blocking(false);
-            SshError::IoError(e)
+            SshError::Ssh2Error(e)
         })?;
+        let total_size = stat.size.unwrap_or(0);
+
+        use std::io::{Read, Write};
+        let mut buffer = [0u8; 65536];
+        let mut transferred: u64 = 0;
+
+        loop {
+            let n = remote_file.read(&mut buffer).map_err(|e| {
+                session.session.set_blocking(false);
+                SshError::IoError(e)
+            })?;
+            
+            if n == 0 { break; }
+            
+            local_file.write_all(&buffer[..n]).map_err(|e| {
+                session.session.set_blocking(false);
+                SshError::IoError(e)
+            })?;
+            
+            transferred += n as u64;
+            progress(transferred, total_size);
+        }
 
         session.session.set_blocking(false);
         Ok(())
     }
 
     /// Write a local file to a remote path
-    pub fn sftp_write_file(&self, session_id: &str, local_path: &str, remote_path: &str) -> Result<(), SshError> {
+    pub fn sftp_write_file<F>(&self, session_id: &str, local_path: &str, remote_path: &str, mut progress: F) -> Result<(), SshError> 
+    where
+        F: FnMut(u64, u64),
+    {
         let sessions = self.sessions.read();
         let session_arc = sessions
             .get(session_id)
@@ -523,10 +551,28 @@ impl SshManager {
             SshError::Ssh2Error(e)
         })?;
 
-        std::io::copy(&mut local_file, &mut remote_file).map_err(|e| {
-            session.session.set_blocking(false);
-            SshError::IoError(e)
-        })?;
+        let total_size = local_file.metadata().map(|m| m.len()).unwrap_or(0);
+
+        use std::io::{Read, Write};
+        let mut buffer = [0u8; 65536];
+        let mut transferred: u64 = 0;
+
+        loop {
+            let n = local_file.read(&mut buffer).map_err(|e| {
+                session.session.set_blocking(false);
+                SshError::IoError(e)
+            })?;
+            
+            if n == 0 { break; }
+            
+            remote_file.write_all(&buffer[..n]).map_err(|e| {
+                session.session.set_blocking(false);
+                SshError::IoError(e)
+            })?;
+            
+            transferred += n as u64;
+            progress(transferred, total_size);
+        }
 
         session.session.set_blocking(false);
         Ok(())

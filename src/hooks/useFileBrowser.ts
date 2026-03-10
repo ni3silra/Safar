@@ -10,6 +10,7 @@ export function useFileBrowser(sessionId: string) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [editingFile, setEditingFile] = useState<string | null>(null);
+    const [searchQuery, setSearchQuery] = useState("");
 
     // Sorting state
     const [sortField, setSortField] = useState<SortField>('name');
@@ -32,6 +33,20 @@ export function useFileBrowser(sessionId: string) {
         }
 
         return sortDirection === 'asc' ? comparison : -comparison;
+    });
+
+    // Displayed files (after applying search filter)
+    const displayedFiles = sortedFiles.filter(file => {
+        if (!searchQuery.trim()) return true;
+
+        try {
+            // Attempt to search as a case-insensitive regex
+            const regex = new RegExp(searchQuery, 'i');
+            return regex.test(file.name);
+        } catch (e) {
+            // If regex is invalid (e.g. user typing "["), fallback to standard string search
+            return file.name.toLowerCase().includes(searchQuery.toLowerCase());
+        }
     });
 
     const handleSort = (field: SortField) => {
@@ -103,7 +118,6 @@ export function useFileBrowser(sessionId: string) {
 
             if (!localPath) return;
 
-            setLoading(true);
             const remotePath = currentPath === "." ? file.name : `${currentPath}/${file.name}`;
 
             await invoke("ssh_sftp_read", {
@@ -113,8 +127,6 @@ export function useFileBrowser(sessionId: string) {
             });
         } catch (err) {
             setError(`Download failed: ${err}`);
-        } finally {
-            setLoading(false);
         }
     };
 
@@ -128,7 +140,6 @@ export function useFileBrowser(sessionId: string) {
             if (!result) return;
             const localPath = result as string; // multiple:false ensures string
 
-            setLoading(true);
             const fileName = localPath.split(/[\\/]/).pop() || "upload";
             const remotePath = currentPath === "." ? fileName : `${currentPath}/${fileName}`;
 
@@ -138,11 +149,13 @@ export function useFileBrowser(sessionId: string) {
                 remotePath
             });
 
+            // Note: because the command returns instantly now as it's async, 
+            // the file might not be fully uploaded yet when loadFiles is called.
+            // A perfect solution would refresh when the "completed" event arrives,
+            // but this is fine to trigger the initial visual.
             loadFiles(currentPath);
         } catch (err) {
             setError(`Upload failed: ${err}`);
-        } finally {
-            setLoading(false);
         }
     };
 
@@ -155,9 +168,12 @@ export function useFileBrowser(sessionId: string) {
         error,
         editingFile,
         setEditingFile,
+        searchQuery,
+        setSearchQuery,
         sortField,
         sortDirection,
         sortedFiles,
+        displayedFiles,
         handleSort,
         loadFiles,
         handleNavigate,

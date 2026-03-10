@@ -2,7 +2,18 @@ use crate::AppState;
 use crate::CommandResponse;
 use crate::ssh::{ConnectionConfig, ConnectionResult, FileEntry, SessionInfo};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, Emitter};
+
+#[derive(Clone, Serialize)]
+pub struct SftpProgressPayload {
+    pub session_id: String,
+    pub path: String,
+    pub transfer_type: String,
+    pub transferred: u64,
+    pub total: u64,
+    pub status: String,
+    pub error_msg: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectParams {
@@ -113,31 +124,147 @@ pub fn ssh_sftp_ls(
 }
 
 /// Read a remote file (Download)
-#[tauri::command(async)]
+#[tauri::command]
 pub fn ssh_sftp_read(
+    app: AppHandle,
     state: State<AppState>,
     session_id: String,
     remote_path: String,
     local_path: String,
 ) -> CommandResponse<()> {
-    match state.ssh_manager.sftp_read_file(&session_id, &remote_path, &local_path) {
-        Ok(()) => CommandResponse::ok(()),
-        Err(e) => CommandResponse::err(e.to_string()),
-    }
+    let ssh_manager = state.ssh_manager.clone();
+    
+    std::thread::spawn(move || {
+        let app_clone = app.clone();
+        let sid_clone = session_id.clone();
+        let path_clone = remote_path.clone(); // Use remote path as identifier
+        
+        let _ = app.emit("sftp-transfer", SftpProgressPayload {
+            session_id: session_id.clone(),
+            path: remote_path.clone(),
+            transfer_type: "download".to_string(),
+            transferred: 0,
+            total: 0,
+            status: "progress".to_string(),
+            error_msg: None,
+        });
+
+        let result = ssh_manager.sftp_read_file(
+            &session_id, 
+            &remote_path, 
+            &local_path, 
+            |transferred, total| {
+                let _ = app_clone.emit("sftp-transfer", SftpProgressPayload {
+                    session_id: sid_clone.clone(),
+                    path: path_clone.clone(),
+                    transfer_type: "download".to_string(),
+                    transferred,
+                    total,
+                    status: "progress".to_string(),
+                    error_msg: None,
+                });
+            }
+        );
+
+        match result {
+            Ok(_) => {
+                let _ = app.emit("sftp-transfer", SftpProgressPayload {
+                    session_id: session_id.clone(),
+                    path: remote_path.clone(),
+                    transfer_type: "download".to_string(),
+                    transferred: 0,
+                    total: 0,
+                    status: "completed".to_string(),
+                    error_msg: None,
+                });
+            },
+            Err(e) => {
+                let _ = app.emit("sftp-transfer", SftpProgressPayload {
+                    session_id: session_id.clone(),
+                    path: remote_path.clone(),
+                    transfer_type: "download".to_string(),
+                    transferred: 0,
+                    total: 0,
+                    status: "error".to_string(),
+                    error_msg: Some(e.to_string()),
+                });
+            }
+        }
+    });
+
+    CommandResponse::ok(())
 }
 
 /// Write a local file (Upload)
-#[tauri::command(async)]
+#[tauri::command]
 pub fn ssh_sftp_write(
+    app: AppHandle,
     state: State<AppState>,
     session_id: String,
     local_path: String,
     remote_path: String,
 ) -> CommandResponse<()> {
-    match state.ssh_manager.sftp_write_file(&session_id, &local_path, &remote_path) {
-        Ok(()) => CommandResponse::ok(()),
-        Err(e) => CommandResponse::err(e.to_string()),
-    }
+    let ssh_manager = state.ssh_manager.clone();
+    
+    std::thread::spawn(move || {
+        let app_clone = app.clone();
+        let sid_clone = session_id.clone();
+        let path_clone = remote_path.clone(); // Use remote path as identifier
+        
+        let _ = app.emit("sftp-transfer", SftpProgressPayload {
+            session_id: session_id.clone(),
+            path: remote_path.clone(),
+            transfer_type: "upload".to_string(),
+            transferred: 0,
+            total: 0,
+            status: "progress".to_string(),
+            error_msg: None,
+        });
+
+        let result = ssh_manager.sftp_write_file(
+            &session_id, 
+            &local_path, 
+            &remote_path, 
+            |transferred, total| {
+                let _ = app_clone.emit("sftp-transfer", SftpProgressPayload {
+                    session_id: sid_clone.clone(),
+                    path: path_clone.clone(),
+                    transfer_type: "upload".to_string(),
+                    transferred,
+                    total,
+                    status: "progress".to_string(),
+                    error_msg: None,
+                });
+            }
+        );
+
+        match result {
+            Ok(_) => {
+                let _ = app.emit("sftp-transfer", SftpProgressPayload {
+                    session_id: session_id.clone(),
+                    path: remote_path.clone(),
+                    transfer_type: "upload".to_string(),
+                    transferred: 0,
+                    total: 0,
+                    status: "completed".to_string(),
+                    error_msg: None,
+                });
+            },
+            Err(e) => {
+                let _ = app.emit("sftp-transfer", SftpProgressPayload {
+                    session_id: session_id.clone(),
+                    path: remote_path.clone(),
+                    transfer_type: "upload".to_string(),
+                    transferred: 0,
+                    total: 0,
+                    status: "error".to_string(),
+                    error_msg: Some(e.to_string()),
+                });
+            }
+        }
+    });
+
+    CommandResponse::ok(())
 }
 
 /// Read remote file as text
