@@ -681,6 +681,11 @@ export function TerminalComponent({
               }
               setShowHistoryModal(false);
             }}
+            theme={
+              useCustomColors
+                ? { ...TERMINAL_THEMES[themeName].colors, foreground: customForeground, background: customBackground }
+                : TERMINAL_THEMES[themeName].colors
+            }
           />
         )
       }
