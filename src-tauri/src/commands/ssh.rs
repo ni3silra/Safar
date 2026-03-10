@@ -103,6 +103,15 @@ pub fn ssh_list_sessions(state: State<AppState>) -> CommandResponse<Vec<SessionI
     CommandResponse::ok(sessions)
 }
 
+/// Get server performance metrics (CPU, Memory, Top 50 Processes)
+#[tauri::command]
+pub fn ssh_get_performance(state: State<AppState>, session_id: String) -> CommandResponse<String> {
+    match state.ssh_manager.get_performance(&session_id) {
+        Ok(metrics) => CommandResponse::ok(metrics),
+        Err(e) => CommandResponse::err(e.to_string()),
+    }
+}
+
 /// Check if a session is connected
 #[tauri::command]
 pub fn ssh_is_connected(state: State<AppState>, session_id: String) -> CommandResponse<bool> {

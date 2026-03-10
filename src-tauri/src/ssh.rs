@@ -343,18 +343,18 @@ impl SshManager {
         }
     }
 
-    /// Execute a command on a session (one-shot)
+    /// Execute a command and read entire output (blocking)
     pub fn execute_command(&self, session_id: &str, command: &str) -> Result<String, SshError> {
-        let sessions = self.sessions.read();
-        let session_arc = sessions
+        let guard = self.sessions.read();
+        let session_arc = guard
             .get(session_id)
             .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
 
-        let session = session_arc.read();
+        let session_guard = session_arc.write();
 
-        // Create a new channel for the command
-        let mut channel = session.session.channel_session().map_err(|e| {
-            SshError::ChannelError(format!("Failed to open channel: {}", e))
+        // Create new channel for the explicit command
+        let mut channel = session_guard.session.channel_session().map_err(|e| {
+            SshError::ChannelError(format!("Failed to open channel for command: {}", e))
         })?;
 
         channel.exec(command).map_err(|e| {
@@ -362,11 +362,47 @@ impl SshManager {
         })?;
 
         let mut output = String::new();
-        channel.read_to_string(&mut output)?;
+        channel.read_to_string(&mut output).map_err(|e| {
+            SshError::ChannelError(format!("Failed to read command output: {}", e))
+        })?;
 
-        channel.wait_close()?;
+        channel.wait_close().map_err(|e| {
+            SshError::ChannelError(format!("Failed to close channel: {}", e))
+        })?;
 
         Ok(output)
+    }
+
+    /// Retrieve Server Performance Metrics (Top 50 CPU/Mem Processes)
+    pub fn get_performance(&self, session_id: &str) -> Result<String, SshError> {
+        // Attempt to determine OS via `uname -s` first. 
+        // If it's NONSTOP_KERNEL, use STATUS. Else assume Linux and use top.
+        let os_type = self.execute_command(session_id, "uname -s").unwrap_or_else(|_| "UNKNOWN".to_string());
+        let os = os_type.trim().to_uppercase();
+
+        let metrics_json = if os.contains("NONSTOP") {
+            // HP NonStop Guardian/OSH
+            // Attempt a few commands securely
+            let output = self.execute_command(session_id, "status *, prog")
+                .or_else(|_| self.execute_command(session_id, "gtacl -c \"status *, prog\""))
+                .unwrap_or_else(|_| "HP_NS_METRICS_UNAVAILABLE".to_string());
+            
+            serde_json::json!({
+                "os": "NONSTOP_KERNEL",
+                "raw_output": output
+            }).to_string()
+        } else {
+            // Assume Standard Linux
+            // Run `top -b -n 1` and grab first 57 lines (header + 50 processes)
+            let output = self.execute_command(session_id, "top -b -n 1 | head -n 57").unwrap_or_else(|_| "LINUX_METRICS_UNAVAILABLE".to_string());
+            
+            serde_json::json!({
+                "os": "LINUX",
+                "raw_output": output
+            }).to_string()
+        };
+
+        Ok(metrics_json)
     }
 
     /// List all sessions

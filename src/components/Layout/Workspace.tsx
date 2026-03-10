@@ -8,6 +8,7 @@ import { FileBrowser } from "../FileBrowser";
 import { TunnelManager } from "../TunnelManager";
 import { SessionLogs } from "../SessionLogs";
 import { SessionStats } from "../SessionStats";
+import { ServerPerformance } from "../ServerPerformance";
 import { WelcomeScreen } from "../WelcomeScreen";
 import { TransferManager } from "../TransferManager";
 
@@ -230,6 +231,12 @@ export function Workspace({
                             icon={<Icons.Shield style={{ width: 12, height: 12 }} />}
                             label="Info"
                         />
+                        <WorkspaceTabButton
+                            active={derivedActiveSession.activeView === "performance"}
+                            onClick={() => updateSessionView(derivedActiveSession.id, "performance")}
+                            icon={<Icons.BarChart style={{ width: 12, height: 12 }} />}
+                            label="Activity"
+                        />
                     </div>
                 )}
 
@@ -303,6 +310,14 @@ export function Workspace({
                                 height: "100%"
                             }}>
                                 <SessionStats session={session} />
+                            </div>
+
+                            {/* Performance Dashboard */}
+                            <div style={{
+                                display: session.activeView === "performance" ? "block" : "none",
+                                height: "100%"
+                            }}>
+                                <ServerPerformance session={session} />
                             </div>
                         </div>
                     ))}

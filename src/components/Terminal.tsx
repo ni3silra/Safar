@@ -325,8 +325,8 @@ export function TerminalComponent({
             // --- HP NS Heuristic Tracking ---
             // Track when user executes SECOM, SECOM / SE, or OSH to switch accounts
             const upperCmd = trimmedCmd.toUpperCase();
-            if (upperCmd.startsWith("SECOM / SE ")) {
-              const user = trimmedCmd.substring(11).trim();
+            if (upperCmd.startsWith("SE ")) {
+              const user = trimmedCmd.substring(3).trim();
               hpNsUserRef.current = user.split(' ')[0]; // Take first token as user
             } else if (upperCmd.startsWith("SECOM ")) {
               const user = trimmedCmd.substring(6).trim();
