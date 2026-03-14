@@ -195,4 +195,14 @@ export const Icons = {
             <line x1="6" y1="20" x2="6" y2="14"></line>
         </svg>
     ),
+    Check: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style} className={className}>
+            <path d="M2 8l4 4 8-8" />
+        </svg>
+    ),
+    AlertCircle: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M8 0a8 8 0 100 16A8 8 0 008 0zm0 14.5a6.5 6.5 0 110-13 6.5 6.5 0 010 13zm-.75-9.5h1.5v5h-1.5V5zm0 6h1.5v1.5h-1.5V11z" />
+        </svg>
+    ),
 };
