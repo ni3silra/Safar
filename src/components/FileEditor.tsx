@@ -37,7 +37,7 @@ export function FileEditor({ sessionId, filePath, onClose, readOnly }: FileEdito
             case 'md': return 'markdown';
             case 'rs': return 'rust';
             case 'py': return 'python';
-            case 'sh': case 'bash': return 'shell';
+            case 'sh': case 'bash': case 'ksh': case 'zsh': return 'shell';
             case 'xml': return 'xml';
             case 'yml': case 'yaml': return 'yaml';
             case 'ini': case 'properties': case 'conf': case 'cfg': return 'ini';
