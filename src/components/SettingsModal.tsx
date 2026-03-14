@@ -185,6 +185,32 @@ export function SettingsModal({ onClose, currentSettings, onSave }: SettingsModa
                                             <div className="toggle-slider"></div>
                                         </label>
                                     </div>
+                                    <div className="settings-row">
+                                        <div>
+                                            <div className="settings-label">Session Auto-Timeout ({settings.sessionTimeout} minutes)</div>
+                                            <span className="settings-desc">Lock terminal window if idle for prolonged period</span>
+                                        </div>
+                                        <div className="settings-controls">
+                                            <input
+                                                type="range"
+                                                className="settings-slider"
+                                                min="1"
+                                                max="600"
+                                                step="1"
+                                                value={settings.sessionTimeout}
+                                                onChange={(e) => setSettings({ ...settings, sessionTimeout: parseInt(e.target.value) })}
+                                                style={{ width: "120px" }}
+                                            />
+                                            <input
+                                                type="number"
+                                                className="settings-input"
+                                                value={settings.sessionTimeout}
+                                                onChange={(e) => setSettings({ ...settings, sessionTimeout: parseInt(e.target.value) })}
+                                                min="1"
+                                                max="600"
+                                            />
+                                        </div>
+                                    </div>
                                 </div>
                             </>
                         )}

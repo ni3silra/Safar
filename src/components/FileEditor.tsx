@@ -31,15 +31,23 @@ export function FileEditor({ sessionId, filePath, onClose, readOnly }: FileEdito
             case 'ts': return 'typescript';
             case 'jsx': return 'javascript';
             case 'tsx': return 'typescript';
-            case 'html': return 'html';
+            case 'html': case 'htm': return 'html';
             case 'css': return 'css';
             case 'json': return 'json';
             case 'md': return 'markdown';
             case 'rs': return 'rust';
             case 'py': return 'python';
-            case 'sh': return 'shell';
+            case 'sh': case 'bash': return 'shell';
             case 'xml': return 'xml';
             case 'yml': case 'yaml': return 'yaml';
+            case 'ini': case 'properties': case 'conf': case 'cfg': return 'ini';
+            case 'sql': return 'sql';
+            case 'cpp': case 'c': case 'h': case 'hpp': return 'cpp';
+            case 'java': return 'java';
+            case 'go': return 'go';
+            case 'php': return 'php';
+            case 'cobol': case 'cbl': case 'cpy': return 'cobol';
+            case 'log': case 'txt': return 'plaintext';
             default: return 'plaintext';
         }
     };

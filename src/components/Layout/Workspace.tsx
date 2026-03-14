@@ -1,5 +1,7 @@
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { Icons } from "../Icons";
-import { Session, LogEntry } from "../../types";
+import { Session, LogEntry, SavedSession, ConnectConfig } from "../../types";
 import { AppSettings } from "../SettingsTypes";
 import TerminalComponent from "../Terminal";
 import { FileBrowser } from "../FileBrowser";
@@ -7,6 +9,7 @@ import { TunnelManager } from "../TunnelManager";
 import { SessionLogs } from "../SessionLogs";
 import { SessionStats } from "../SessionStats";
 import { WelcomeScreen } from "../WelcomeScreen";
+import { TransferManager } from "../TransferManager";
 
 interface WorkspaceProps {
     activeSessions: Session[];
@@ -14,9 +17,12 @@ interface WorkspaceProps {
     setActiveSessionId: (id: string) => void;
     disconnect: (id: string) => void;
     updateSessionView: (sessionId: string, view: Session["activeView"]) => void;
+    updateSessionTitle: (sessionId: string, title: string) => void;
     sessionLogs: Record<string, LogEntry[]>;
     appSettings: AppSettings;
     onNewConnection: () => void;
+    sessions: SavedSession[];
+    onConnectSession: (config: ConnectConfig) => void;
 }
 
 export function Workspace({
@@ -25,11 +31,39 @@ export function Workspace({
     setActiveSessionId,
     disconnect,
     updateSessionView,
+    updateSessionTitle,
     sessionLogs,
     appSettings,
     onNewConnection,
+    sessions,
+    onConnectSession,
 }: WorkspaceProps) {
     const derivedActiveSession = activeSessions.find(s => s.id === activeSessionId);
+    const [showAddMenu, setShowAddMenu] = useState(false);
+    const addMenuRef = useRef<HTMLDivElement>(null);
+    const buttonRef = useRef<HTMLButtonElement>(null);
+    const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (addMenuRef.current && !addMenuRef.current.contains(event.target as Node) &&
+                buttonRef.current && !buttonRef.current.contains(event.target as Node)) {
+                setShowAddMenu(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    useLayoutEffect(() => {
+        if (showAddMenu && buttonRef.current) {
+            const rect = buttonRef.current.getBoundingClientRect();
+            setMenuPosition({
+                top: rect.bottom + 4,
+                left: rect.left,
+            });
+        }
+    }, [showAddMenu, activeSessions]);
 
     return (
         <div className="content">
@@ -44,7 +78,7 @@ export function Workspace({
                         <span className="tab-icon">
                             <Icons.Terminal />
                         </span>
-                        <span>{session.name}</span>
+                        <span>{session.name}{session.dynamicTitle ? ` (${session.dynamicTitle})` : ''}</span>
                         <span
                             className="tab-close"
                             onClick={(e) => {
@@ -56,9 +90,109 @@ export function Workspace({
                         </span>
                     </button>
                 ))}
-                <button className="tab-add" onClick={onNewConnection}>
-                    <Icons.Plus />
-                </button>
+                <div style={{ position: "relative" }} ref={addMenuRef}>
+                    <button
+                        ref={buttonRef}
+                        className="tab-add"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setShowAddMenu(!showAddMenu);
+                        }}
+                        title="New Tab / Recent Connections"
+                    >
+                        <Icons.Plus />
+                    </button>
+                    {showAddMenu && createPortal(
+                        <div
+                            ref={addMenuRef}
+                            style={{
+                                position: "absolute",
+                                top: menuPosition.top,
+                                left: menuPosition.left,
+                                backgroundColor: "var(--bg-secondary)",
+                                border: "1px solid var(--border-color)",
+                                borderRadius: "6px",
+                                padding: "4px",
+                                minWidth: "200px",
+                                zIndex: 99999,
+                                pointerEvents: "auto",
+                                boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "2px"
+                            }}
+                        >
+                            <button
+                                style={{
+                                    display: "flex", alignItems: "center", gap: "8px",
+                                    padding: "8px 12px", border: "none", background: "transparent",
+                                    color: "var(--text-primary)", cursor: "pointer",
+                                    textAlign: "left", borderRadius: "4px", fontSize: "14px"
+                                }}
+                                onClick={() => {
+                                    setShowAddMenu(false);
+                                    onNewConnection();
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--bg-hover)"}
+                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
+                            >
+                                <Icons.Plus style={{ width: 14, height: 14 }} /> New Connection
+                            </button>
+
+                            {sessions && sessions.length > 0 && (
+                                <>
+                                    <div style={{
+                                        height: "1px", backgroundColor: "var(--border-color)",
+                                        margin: "4px 0"
+                                    }} />
+                                    <div style={{
+                                        padding: "4px 12px", fontSize: "12px",
+                                        color: "var(--text-muted)", fontWeight: 600,
+                                        textTransform: "uppercase", letterSpacing: "0.5px"
+                                    }}>
+                                        Available Sessions
+                                    </div>
+                                    <div style={{ maxHeight: "200px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "2px" }}>
+                                        {sessions.map(session => (
+                                            <button
+                                                key={session.id}
+                                                style={{
+                                                    display: "flex", alignItems: "center", gap: "8px",
+                                                    padding: "8px 12px", border: "none", background: "transparent",
+                                                    color: "var(--text-primary)", cursor: "pointer",
+                                                    textAlign: "left", borderRadius: "4px", fontSize: "14px",
+                                                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
+                                                }}
+                                                onClick={() => {
+                                                    setShowAddMenu(false);
+                                                    onConnectSession({
+                                                        host: session.host,
+                                                        port: session.port,
+                                                        username: session.username,
+                                                        password: session.password || "",
+                                                        privateKeyPath: session.private_key_path,
+                                                        sessionName: session.name,
+                                                        termType: session.term_type,
+                                                        remoteCommand: session.remote_command,
+                                                        backspaceMode: session.backspace_mode,
+                                                    });
+                                                }}
+                                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--bg-hover)"}
+                                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
+                                            >
+                                                <Icons.Server style={{ width: 14, height: 14, flexShrink: 0 }} />
+                                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                    {session.name}
+                                                </span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                        </div>,
+                        document.body
+                    )}
+                </div>
             </div>
 
             {/* Main Content */}
@@ -98,6 +232,9 @@ export function Workspace({
                         />
                     </div>
                 )}
+
+                {/* Global SFTP Transfer Manager overlay */}
+                <TransferManager />
 
                 {/* Session Content Area */}
                 <div className="session-content-area">
@@ -139,6 +276,8 @@ export function Workspace({
                                     useCustomColors={appSettings.useCustomColors}
                                     customForeground={appSettings.customForeground}
                                     customBackground={appSettings.customBackground}
+                                    sessionTimeout={appSettings.sessionTimeout}
+                                    onTitleChange={(title) => updateSessionTitle(session.id, title)}
                                 />
                             </div>
                             <div style={{

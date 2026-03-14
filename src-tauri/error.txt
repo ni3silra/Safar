@@ -1,0 +1,20 @@
+    Checking safar-app v0.1.0 (C:\Users\Nitin Silra\OneDrive\Documents\AntigraveityGitProject\safar\Safar\src-tauri)
+error[E0599]: no method named `channel_forward_cancel` found for struct `ssh2::Session` in the current scope
+   --> src\ssh.rs:845:43
+    |
+845 |             let _ = session_guard.session.channel_forward_cancel(remote_port);
+    |                                           ^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `channel_forward_listen` with a similar name, but with different arguments
+   --> C:\Users\Nitin Silra\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ssh2-0.9.5\src\session.rs:850:5
+    |
+850 | /     pub fn channel_forward_listen(
+851 | |         &self,
+852 | |         remote_port: u16,
+853 | |         host: Option<&str>,
+854 | |         queue_maxsize: Option<u32>,
+855 | |     ) -> Result<(Listener, u16), Error> {
+    | |_______________________________________^
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `safar-app` (lib) due to 1 previous error

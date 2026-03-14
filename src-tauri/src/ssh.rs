@@ -99,7 +99,8 @@ struct SshSession {
     config: ConnectionConfig,
     _stream: TcpStream,
     running: Arc<RwLock<bool>>,
-    tunnels: HashMap<u16, Arc<AtomicBool>>,
+    tunnels: HashMap<u16, Arc<AtomicBool>>, // Local -> Remote tunnels
+    remote_tunnels: HashMap<u16, Arc<AtomicBool>>, // Remote -> Local tunnels
 }
 
 impl SshSession {
@@ -217,6 +218,7 @@ impl SshManager {
             _stream: tcp,
             running: running.clone(),
             tunnels: HashMap::new(),
+            remote_tunnels: HashMap::new(),
         };
 
         let session_arc = Arc::new(RwLock::new(ssh_session));
@@ -330,6 +332,9 @@ impl SshManager {
             
             // Stop all tunnels
             for (_, running) in session.tunnels.iter() {
+                running.store(false, Ordering::SeqCst);
+            }
+            for (_, running) in session.remote_tunnels.iter() {
                 running.store(false, Ordering::SeqCst);
             }
             Ok(())
@@ -458,7 +463,10 @@ impl SshManager {
     }
 
     /// Read a remote file and save it locally
-    pub fn sftp_read_file(&self, session_id: &str, remote_path: &str, local_path: &str) -> Result<(), SshError> {
+    pub fn sftp_read_file<F>(&self, session_id: &str, remote_path: &str, local_path: &str, mut progress: F) -> Result<(), SshError> 
+    where
+        F: FnMut(u64, u64),
+    {
         let sessions = self.sessions.read();
         let session_arc = sessions
             .get(session_id)
@@ -483,17 +491,42 @@ impl SshManager {
             SshError::IoError(e)
         })?;
 
-        std::io::copy(&mut remote_file, &mut local_file).map_err(|e| {
+        let stat = remote_file.stat().map_err(|e| {
             session.session.set_blocking(false);
-            SshError::IoError(e)
+            SshError::Ssh2Error(e)
         })?;
+        let total_size = stat.size.unwrap_or(0);
+
+        use std::io::{Read, Write};
+        let mut buffer = [0u8; 65536];
+        let mut transferred: u64 = 0;
+
+        loop {
+            let n = remote_file.read(&mut buffer).map_err(|e| {
+                session.session.set_blocking(false);
+                SshError::IoError(e)
+            })?;
+            
+            if n == 0 { break; }
+            
+            local_file.write_all(&buffer[..n]).map_err(|e| {
+                session.session.set_blocking(false);
+                SshError::IoError(e)
+            })?;
+            
+            transferred += n as u64;
+            progress(transferred, total_size);
+        }
 
         session.session.set_blocking(false);
         Ok(())
     }
 
     /// Write a local file to a remote path
-    pub fn sftp_write_file(&self, session_id: &str, local_path: &str, remote_path: &str) -> Result<(), SshError> {
+    pub fn sftp_write_file<F>(&self, session_id: &str, local_path: &str, remote_path: &str, mut progress: F) -> Result<(), SshError> 
+    where
+        F: FnMut(u64, u64),
+    {
         let sessions = self.sessions.read();
         let session_arc = sessions
             .get(session_id)
@@ -518,10 +551,28 @@ impl SshManager {
             SshError::Ssh2Error(e)
         })?;
 
-        std::io::copy(&mut local_file, &mut remote_file).map_err(|e| {
-            session.session.set_blocking(false);
-            SshError::IoError(e)
-        })?;
+        let total_size = local_file.metadata().map(|m| m.len()).unwrap_or(0);
+
+        use std::io::{Read, Write};
+        let mut buffer = [0u8; 65536];
+        let mut transferred: u64 = 0;
+
+        loop {
+            let n = local_file.read(&mut buffer).map_err(|e| {
+                session.session.set_blocking(false);
+                SshError::IoError(e)
+            })?;
+            
+            if n == 0 { break; }
+            
+            remote_file.write_all(&buffer[..n]).map_err(|e| {
+                session.session.set_blocking(false);
+                SshError::IoError(e)
+            })?;
+            
+            transferred += n as u64;
+            progress(transferred, total_size);
+        }
 
         session.session.set_blocking(false);
         Ok(())
@@ -719,7 +770,7 @@ impl SshManager {
         }
     }
 
-    /// List active tunnels for a session
+    /// List active tunnels for a session (Local -> Remote)
     pub fn list_tunnels(&self, session_id: &str) -> Result<Vec<u16>, SshError> {
         let sessions = self.sessions.read();
         let session_arc = sessions
@@ -728,6 +779,131 @@ impl SshManager {
 
         let session = session_arc.read();
         let ports: Vec<u16> = session.tunnels.keys().cloned().collect();
+        Ok(ports)
+    }
+
+    /// Start a remote port forward (Remote -> Local)
+    pub fn start_remote_forward(
+        &self,
+        session_id: &str,
+        remote_port: u16,
+        local_host: &str,
+        local_port: u16,
+    ) -> Result<(), SshError> {
+        let sessions = self.sessions.read();
+        let session_arc = sessions
+            .get(session_id)
+            .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
+
+        let mut session_guard = session_arc.write();
+
+        if session_guard.remote_tunnels.contains_key(&remote_port) {
+            return Err(SshError::ConnectionFailed(format!("Remote port {} is already being forwarded", remote_port)));
+        }
+
+        // Inform the SSH server to listen on the remote_port, binding to localhost
+        // If the user wants to bind to 0.0.0.0, we would pass None or "0.0.0.0" instead of Some("127.0.0.1"), but let's stick to localhost for safety
+        let mut listener = session_guard.session.channel_forward_listen(remote_port, Some("127.0.0.1"), None)
+            .map_err(|e| SshError::Ssh2Error(e))?;
+
+        let running = Arc::new(AtomicBool::new(true));
+        session_guard.remote_tunnels.insert(remote_port, running.clone());
+        
+        // This is necessary because accept() is blocking, so we need a dedicated thread
+        // to listen for incoming connections on the requested remote port.
+        let local_host_owned = local_host.to_string();
+        
+        thread::spawn(move || {
+            loop {
+                if !running.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                // Accept an incoming connection on the remote port
+                match listener.0.accept() {
+                    Ok(mut channel) => {
+                        let local_host_clone = local_host_owned.clone();
+                        // Open a local TCP socket to route traffic to
+                        thread::spawn(move || {
+                            if let Ok(mut stream) = TcpStream::connect(format!("{}:{}", local_host_clone, local_port)) {
+                                let _ = stream.set_nonblocking(true);
+                                let _ = channel.handle_extended_data(ssh2::ExtendedData::Merge);
+                                
+                                let mut buf_tcp = [0u8; 8192];
+                                let mut buf_ssh = [0u8; 8192];
+
+                                loop {
+                                    let mut did_work = false;
+                                    
+                                    // Read TCP -> Write SSH
+                                    match stream.read(&mut buf_tcp) {
+                                        Ok(0) => break, // EOF
+                                        Ok(n) => {
+                                            if channel.write_all(&buf_tcp[..n]).is_err() { break; }
+                                            did_work = true;
+                                        }
+                                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {},
+                                        Err(_) => break
+                                    }
+
+                                    // Read SSH -> Write TCP
+                                    match channel.read(&mut buf_ssh) {
+                                        Ok(0) => break, // EOF
+                                        Ok(n) => {
+                                            if stream.write_all(&buf_ssh[..n]).is_err() { break; }
+                                            did_work = true;
+                                        }
+                                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {},
+                                        Err(_) => break
+                                    }
+
+                                    if !did_work {
+                                        thread::sleep(std::time::Duration::from_millis(5));
+                                    }
+                                }
+                            }
+                            let _ = channel.close();
+                        });
+                    }
+                    Err(_) => {
+                        // Error accepting connection, could be closed
+                        thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Stop a remote port forward
+    pub fn stop_remote_forward(&self, session_id: &str, remote_port: u16) -> Result<(), SshError> {
+        let sessions = self.sessions.read();
+        let session_arc = sessions
+            .get(session_id)
+            .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
+
+        let mut session_guard = session_arc.write();
+        
+        if let Some(running) = session_guard.remote_tunnels.remove(&remote_port) {
+            running.store(false, Ordering::SeqCst);
+            // The listener thread will exit on the next connection or timeout,
+            // dropping the Listener object and closing the remote port natively.
+            Ok(())
+        } else {
+            Err(SshError::ConnectionFailed(format!("Remote port {} is not being forwarded", remote_port)))
+        }
+    }
+
+    /// List active remote tunnels (Remote -> Local)
+    pub fn list_remote_tunnels(&self, session_id: &str) -> Result<Vec<u16>, SshError> {
+        let sessions = self.sessions.read();
+        let session_arc = sessions
+            .get(session_id)
+            .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
+
+        let session = session_arc.read();
+        let ports: Vec<u16> = session.remote_tunnels.keys().cloned().collect();
         Ok(ports)
     }
 }
@@ -746,6 +922,9 @@ impl Drop for SshSession {
         
         // Stop all tunnels
         for (_, running) in self.tunnels.iter() {
+            running.store(false, Ordering::SeqCst);
+        }
+        for (_, running) in self.remote_tunnels.iter() {
             running.store(false, Ordering::SeqCst);
         }
 

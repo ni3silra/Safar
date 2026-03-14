@@ -18,9 +18,11 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
         error,
         editingFile,
         setEditingFile,
+        searchQuery,
+        setSearchQuery,
         sortField,
         sortDirection,
-        sortedFiles,
+        displayedFiles,
         handleSort,
         loadFiles,
         handleNavigate,
@@ -113,6 +115,29 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                         <Icons.ChevronRight />
                     </button>
                 </div>
+                <div style={{ flex: 1 }} />
+                <div className="file-search-container" style={{ display: "flex", alignItems: "center", position: "relative", marginLeft: "8px" }}>
+                    <Icons.Search style={{ width: 14, height: 14, position: "absolute", left: "8px", color: "var(--text-muted)" }} />
+                    <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Filter (Regex or Text)"
+                        className="file-path-input"
+                        style={{ paddingLeft: "28px", width: "200px", fontSize: "12px" }}
+                        title="Supports standard text search or regular expressions (e.g. \.log$)"
+                    />
+                    {searchQuery && (
+                        <button
+                            className="icon-btn"
+                            onClick={() => setSearchQuery("")}
+                            style={{ position: "absolute", right: "4px", width: "20px", height: "20px", padding: 0 }}
+                            title="Clear search"
+                        >
+                            <Icons.X style={{ width: 12, height: 12 }} />
+                        </button>
+                    )}
+                </div>
             </div>
 
             {/* File List */}
@@ -169,7 +194,7 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                             </tr>
                         </thead>
                         <tbody>
-                            {sortedFiles.map((file) => {
+                            {displayedFiles.map((file) => {
                                 const writable = !file.is_dir && isWritable(file.permissions);
                                 return (
                                     <tr
@@ -215,10 +240,10 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                     </tr>
                                 )
                             })}
-                            {files.length === 0 && (
+                            {displayedFiles.length === 0 && (
                                 <tr>
                                     <td colSpan={4} style={{ padding: "20px", textAlign: "center", color: "var(--text-muted)" }}>
-                                        Empty directory
+                                        {files.length === 0 ? "Empty directory" : "No files match your search filter"}
                                     </td>
                                 </tr>
                             )}
@@ -229,7 +254,10 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
 
             {/* Footer */}
             <div className="file-footer">
-                <span>{files.length} items</span>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <span>{files.length} items</span>
+                    {searchQuery && <span style={{ color: "var(--col-blue)" }}>({displayedFiles.length} visible)</span>}
+                </div>
                 <span>SFTP Connected</span>
             </div>
             {/* File Editor Overlay */}

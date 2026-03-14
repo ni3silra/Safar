@@ -47,7 +47,7 @@ function App() {
   // Delete Modal State
   const [deleteModal, setDeleteModal] = useState<{ id: string, name: string } | null>(null);
 
-  const [sidebarView, setSidebarView] = useState<"sessions" | "snippets">("sessions");
+  const [sidebarView, setSidebarView] = useState<"sessions" | "snippets" | "controls">("sessions");
   const [editingSession, setEditingSession] = useState<SavedSession | null>(null);
   const [retryConfig, setRetryConfig] = useState<ConnectConfig | null>(null);
 
@@ -112,6 +112,7 @@ function App() {
     connectionStatus,
     statusMessage,
     updateSessionView,
+    updateSessionTitle,
     connect,
     disconnect
   } = useTerminalConnection({ addLog, saveSession, addToRecent });
@@ -231,9 +232,16 @@ function App() {
           setActiveSessionId={setActiveSessionId}
           disconnect={disconnect}
           updateSessionView={updateSessionView}
+          updateSessionTitle={updateSessionTitle}
           sessionLogs={sessionLogs}
           appSettings={appSettings}
           onNewConnection={() => setShowQuickConnect(true)}
+          sessions={sessions}
+          onConnectSession={(config) => handleConnect({
+            ...config,
+            password: config.password || "",
+            sessionName: config.sessionName || "",
+          }, false)}
         />
       </div>
 

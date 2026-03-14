@@ -24,6 +24,7 @@ export interface AppSettings {
 
     // App Behavior
     confirmOnClose: boolean;
+    sessionTimeout: number; // Minutes before terminal fades out due to inactivity
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -46,7 +47,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     bellSound: true,
     copyOnSelect: true,
 
-    confirmOnClose: true
+    confirmOnClose: true,
+    sessionTimeout: 120
 };
 
 export interface CustomTheme {
