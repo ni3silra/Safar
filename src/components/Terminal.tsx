@@ -97,18 +97,39 @@ export function TerminalComponent({
 
   // Inactivity State
   const [isInactive, setIsInactive] = useState(false);
-  const lastActivityRef = useRef(Date.now());
+  const lastActivityRef = useRef(Date.now());          // Tracks last USER keystroke (not server data)
+  const lastTickRef = useRef(Date.now());               // Tracks last timer tick to detect machine sleep
+  const onDisconnectRef = useRef(_onDisconnect);        // Stable ref so sleep handler doesn't stale-close
+  useEffect(() => { onDisconnectRef.current = _onDisconnect; }, [_onDisconnect]);
 
   // Inactivity Timer Effect
+  // Tracks USER-ONLY keystrokes (not server data) — so background noise doesn't reset the idle clock.
+  // Also detects machine sleep by measuring the gap between consecutive 30s ticks.
   useEffect(() => {
     if (sessionTimeout <= 0) return;
 
+    const SLEEP_THRESHOLD_MS = 60_000; // >60s between ticks = machine likely slept
+
     const interval = setInterval(() => {
+      const now = Date.now();
+      const tickGap = now - lastTickRef.current;
+      lastTickRef.current = now;
+
+      // --- Sleep Detection ---
+      // If tick gap > threshold, machine slept and SSH TCP is dead.
+      // Show the disconnect overlay. User chooses to close or try resume.
+      if (tickGap > SLEEP_THRESHOLD_MS) {
+        setIsInactive(true);
+        return;
+      }
+
+      // --- Inactivity Detection ---
       if (!isInactive) {
         const timeSinceLastActivity = Date.now() - lastActivityRef.current;
         const timeoutMs = sessionTimeout * 60 * 1000;
         if (timeSinceLastActivity > timeoutMs) {
           setIsInactive(true);
+          // Don't call onDisconnect here — let user decide via the overlay buttons
         }
       }
     }, 30000); // Check every 30 seconds
@@ -305,7 +326,8 @@ export function TerminalComponent({
 
     // User Input Handler (Block vs Line Mode Logic)
     terminal.onData((data) => {
-      lastActivityRef.current = Date.now(); // Update activity on keystrokes
+      lastActivityRef.current = Date.now(); // Only user keystrokes reset idle clock — NOT server data
+      if (isInactive) setIsInactive(false);  // Dismiss overlay if user types while it showed
 
       // Data from xterm can be multiple characters (e.g. paste) or ANSI escape sequences (arrows).
       const isEscapeSequence = data.startsWith("\x1b");
@@ -409,7 +431,9 @@ export function TerminalComponent({
 
     listen<TerminalData>("terminal-data", (event) => {
       if (event.payload.session_id === sessionId) {
-        lastActivityRef.current = Date.now(); // Update activity on server data
+        // NOTE: Do NOT update lastActivityRef here.
+        // Server keepalives and background noise would constantly reset the idle clock,
+        // preventing the inactivity timeout from ever firing correctly.
 
         const incomingData = event.payload.data;
 
@@ -690,37 +714,79 @@ export function TerminalComponent({
         )
       }
 
-      {/* Inactivity Overlay */}
       {isInactive && (
         <div style={{
           position: "absolute",
           top: 0, left: 0, right: 0, bottom: 0,
-          background: "rgba(0,0,0,0.8)",
-          backdropFilter: "blur(4px)",
+          background: "rgba(0,0,0,0.82)",
+          backdropFilter: "blur(6px)",
           zIndex: 50,
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          color: "white"
+          color: "white",
+          gap: "0",
         }}>
-          <Icons.Terminal style={{ width: 48, height: 48, marginBottom: "16px", opacity: 0.8 }} />
-          <h2 style={{ margin: "0 0 8px 0", fontSize: "20px" }}>Session Inactive</h2>
-          <p style={{ margin: "0 0 24px 0", color: "var(--text-muted)", fontSize: "14px" }}>
-            Terminal locked after {sessionTimeout} minutes of inactivity.
+          <Icons.Terminal style={{ width: 48, height: 48, marginBottom: "16px", opacity: 0.5 }} />
+          <h2 style={{ margin: "0 0 8px 0", fontSize: "20px", fontWeight: 600 }}>Session Disconnected</h2>
+          <p style={{ margin: "0 0 28px 0", color: "var(--text-muted, #94a3b8)", fontSize: "14px", textAlign: "center", maxWidth: "280px", lineHeight: 1.5 }}>
+            The session was closed due to inactivity or the system went to sleep.
           </p>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              setIsInactive(false);
-              lastActivityRef.current = Date.now();
-              terminalRef.current?.focus();
-            }}
-            style={{ padding: "8px 24px", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px" }}
-          >
-            <Icons.Zap style={{ width: 14, height: 14 }} />
-            Reconnect
-          </button>
+          <div style={{ display: "flex", gap: "12px", marginTop: "4px" }}>
+            <button
+              onClick={() => {
+                setIsInactive(false);
+                lastActivityRef.current = Date.now();
+                lastTickRef.current = Date.now();
+                terminalRef.current?.focus();
+              }}
+              style={{
+                padding: "10px 22px",
+                fontSize: "13px",
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: "7px",
+                borderRadius: "8px",
+                border: "1px solid rgba(34, 197, 94, 0.5)",
+                background: "rgba(34, 197, 94, 0.12)",
+                color: "#22c55e",
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(34, 197, 94, 0.22)"; e.currentTarget.style.borderColor = "#22c55e"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(34, 197, 94, 0.12)"; e.currentTarget.style.borderColor = "rgba(34, 197, 94, 0.5)"; }}
+            >
+              <Icons.Zap style={{ width: 14, height: 14 }} />
+              Try Reconnect
+            </button>
+            <button
+              onClick={() => {
+                setIsInactive(false);
+                _onDisconnect?.();
+              }}
+              style={{
+                padding: "10px 22px",
+                fontSize: "13px",
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: "7px",
+                borderRadius: "8px",
+                border: "1px solid rgba(239, 68, 68, 0.5)",
+                background: "rgba(239, 68, 68, 0.12)",
+                color: "#ef4444",
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(239, 68, 68, 0.22)"; e.currentTarget.style.borderColor = "#ef4444"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(239, 68, 68, 0.12)"; e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.5)"; }}
+            >
+              <Icons.X style={{ width: 14, height: 14 }} />
+              Close Session
+            </button>
+          </div>
         </div>
       )}
     </div >
