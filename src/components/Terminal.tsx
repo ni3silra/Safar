@@ -85,6 +85,134 @@ const FKEY_MAP: Record<string, { normal: string; shift: string }> = {
   "F15": { normal: "F15", shift: "S-F15" }, "F16": { normal: "F16", shift: "S-F16" },
 };
 
+// ─── HP 6530 → ANSI/VT Escape Sequence Translator ───
+// Converts 6530-specific sequences to ANSI equivalents that xterm.js can render.
+// This enables block-mode form applications (DBU, Pathway, TEDIT) to display correctly.
+function translate6530ToAnsi(data: string): string {
+  let result = '';
+  let i = 0;
+
+  while (i < data.length) {
+    // Check for ESC (0x1b)
+    if (data[i] === '\x1b' && i + 1 < data.length) {
+      const next = data[i + 1];
+
+      // ── ANSI CSI pass-through: ESC [ ... ──
+      // These are already valid ANSI sequences — pass through completely
+      if (next === '[') {
+        let j = i + 2;
+        // Skip parameter bytes (0x20-0x3f: digits, semicolons, ?, etc.)
+        while (j < data.length && data.charCodeAt(j) >= 0x20 && data.charCodeAt(j) <= 0x3f) j++;
+        // Include the final byte (0x40-0x7e: letter)
+        if (j < data.length) j++;
+        result += data.substring(i, j);
+        i = j;
+        continue;
+      }
+
+      // ── ANSI SS3 pass-through: ESC O ... ──
+      if (next === 'O' && i + 2 < data.length) {
+        result += data.substring(i, i + 3);
+        i += 3;
+        continue;
+      }
+
+      // ── 6530 Cursor Addressing: ESC = row col ──
+      // Row and col are single bytes, space-offset (actual = byte - 0x20)
+      // ANSI uses 1-based indexing, so: row = byte - 0x20 + 1
+      if (next === '=' && i + 3 < data.length) {
+        const row = data.charCodeAt(i + 2) - 0x20 + 1;
+        const col = data.charCodeAt(i + 3) - 0x20 + 1;
+        result += `\x1b[${Math.max(1, row)};${Math.max(1, col)}H`;
+        i += 4;
+        continue;
+      }
+
+      // ── 6530 Display Enhancement: ESC 6 attr ──
+      // Sets field attribute (underline, blink, reverse, dim)
+      if (next === '6') {
+        if (i + 2 < data.length) {
+          const attr = data.charCodeAt(i + 2);
+          let ansiAttr = '0'; // default reset
+          if (attr & 0x01) ansiAttr = '4';       // underline
+          else if (attr & 0x02) ansiAttr = '5';  // blink
+          else if (attr & 0x04) ansiAttr = '7';  // reverse
+          else if (attr & 0x08) ansiAttr = '2';  // dim/half-bright
+          result += `\x1b[${ansiAttr}m`;
+          i += 3;
+        } else {
+          result += '\x1b[4m'; // default to underline
+          i += 2;
+        }
+        continue;
+      }
+
+      // ── 6530 single-character escape sequences ──
+      switch (next) {
+        // Cursor movement
+        case 'A': result += '\x1b[A'; i += 2; continue; // cursor up
+        case 'B': result += '\x1b[B'; i += 2; continue; // cursor down
+        case 'C': result += '\x1b[C'; i += 2; continue; // cursor right
+        case 'D': result += '\x1b[D'; i += 2; continue; // cursor left
+        case 'H': result += '\x1b[H'; i += 2; continue; // cursor home
+
+        // Erase operations
+        case 'I': result += '\x1b[0J'; i += 2; continue;       // erase to end of display
+        case 'J': result += '\x1b[0K'; i += 2; continue;       // erase to end of line
+        case 'K': result += '\x1b[2J\x1b[H'; i += 2; continue; // clear entire screen + home
+        case 'L': result += '\x1b[1L'; i += 2; continue;       // insert line
+        case 'M': result += '\x1b[1M'; i += 2; continue;       // delete line
+
+        // Field protection markers
+        case ')': result += '\x1b[2m'; i += 2; continue; // start protected field (dim)
+        case '(': result += '\x1b[0m'; i += 2; continue; // end protected / start unprotected
+
+        // Display enhancement end
+        case '7': result += '\x1b[0m'; i += 2; continue; // reset all attributes
+
+        // Block/conversational mode signals — silently consume
+        case 'b': i += 2; continue; // set block mode
+        case 'c': i += 2; continue; // set conversational mode
+
+        // Tab operations
+        case 'i': result += '\t'; i += 2; continue;     // forward tab
+        case '1': result += '\x1b[Z'; i += 2; continue; // back tab
+
+        // Line operations
+        case 'T': result += '\x1b[1S'; i += 2; continue; // scroll up
+        case 'S': result += '\x1b[1T'; i += 2; continue; // scroll down
+
+        default: {
+          // Unknown single-char 6530 sequence — silently drop it
+          // This prevents garbage from unrecognized 6530 control codes
+          if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
+              next === ')' || next === '(' || next === '#' || next === '&') {
+            i += 2;
+            continue;
+          }
+          // Non-letter ESC sequence — pass through as-is
+          result += data[i];
+          i++;
+          continue;
+        }
+      }
+    }
+
+    // ── 6530 Control Characters ──
+    // DC1 (0x11) / DC3 (0x13) — start/end of message in WRITEREAD — silently consume
+    if (data[i] === '\x11' || data[i] === '\x13') {
+      i++;
+      continue;
+    }
+
+    // Regular character — pass through
+    result += data[i];
+    i++;
+  }
+
+  return result;
+}
+
 import { Icons } from "./Icons";
 
 export function TerminalComponent({
@@ -513,16 +641,10 @@ export function TerminalComponent({
             blockBufferRef.current = "";
           }
 
-          // Strip 6530-specific escape sequences that xterm.js cannot render:
-          // ESC followed by a single lowercase letter (a-z) — 6530 control functions
-          // ESC followed by a single uppercase letter (A-Z) — 6530 shift functions
-          // These are NOT ANSI/VT sequences and would cause xterm to render garbage.
-          // Only filter single-char ESC sequences that are 6530-specific, not ANSI CSI (ESC[...).
-          let filteredData = incomingData;
-          // Match ESC + single letter that's NOT followed by '[' (which would be ANSI CSI)
-          filteredData = filteredData.replace(/\x1b([a-hA-Hp-wP-W])(?![\[O])/g, '');
+          // Translate 6530-specific escape sequences to ANSI equivalents for xterm.js
+          const translatedData = translate6530ToAnsi(incomingData);
 
-          terminal.write(filteredData);
+          terminal.write(translatedData);
         } else {
           // Non-6530 sessions: standard handling
 
