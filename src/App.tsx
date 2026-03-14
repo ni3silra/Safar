@@ -196,6 +196,7 @@ function App() {
         setShowCredentialsModal(true);
       } else {
         // Show Error Modal
+        addLog("_system", `Connection to ${config.host} failed: ${error.message || String(error)}`, "error", "SSH");
         setErrorModal({
           title: "Connection Failed",
           message: error.message || String(error)

@@ -25,6 +25,7 @@ interface TerminalProps {
   bellSound?: boolean;
   copyOnSelect?: boolean;
   backspaceMode?: string;
+  termType?: string;
   isVisible?: boolean;
   useCustomColors?: boolean;
   customForeground?: string;
@@ -38,8 +39,8 @@ interface TerminalData {
   data: string;
 }
 
-// Map for common control sequences
-const CONTROL_SEQUENCES: Record<string, string> = {
+// VT/xterm control sequences (default)
+const VT_SEQUENCES: Record<string, string> = {
   "Ctrl+C": "\x03",
   "Up": "\x1b[A",
   "Down": "\x1b[B",
@@ -52,6 +53,36 @@ const CONTROL_SEQUENCES: Record<string, string> = {
   "S-F5": "\x1b[15;2~", "S-F6": "\x1b[17;2~", "S-F7": "\x1b[18;2~", "S-F8": "\x1b[19;2~",
   "S-F9": "\x1b[20;2~", "S-F10": "\x1b[21;2~", "S-F11": "\x1b[23;2~", "S-F12": "\x1b[24;2~",
   "S-F13": "\x1b[25;2~", "S-F14": "\x1b[26;2~", "S-F15": "\x1b[28;2~", "S-F16": "\x1b[29;2~",
+};
+
+// HP NonStop 6530 function key sequences
+// F1-F8 → ESC p through ESC w  |  F9-F16 → ESC a through ESC h
+// Shift+F1-F8 → ESC P through ESC W  |  Shift+F9-F16 → ESC A through ESC H
+const HP_6530_SEQUENCES: Record<string, string> = {
+  "Ctrl+C": "\x03",
+  "Up": "\x1b[A",
+  "Down": "\x1b[B",
+  "F1": "\x1bp", "F2": "\x1bq", "F3": "\x1br", "F4": "\x1bs",
+  "F5": "\x1bt", "F6": "\x1bu", "F7": "\x1bv", "F8": "\x1bw",
+  "F9": "\x1ba", "F10": "\x1bb", "F11": "\x1bc", "F12": "\x1bd",
+  "F13": "\x1be", "F14": "\x1bf", "F15": "\x1bg", "F16": "\x1bh",
+
+  "S-F1": "\x1bP", "S-F2": "\x1bQ", "S-F3": "\x1bR", "S-F4": "\x1bS",
+  "S-F5": "\x1bT", "S-F6": "\x1bU", "S-F7": "\x1bV", "S-F8": "\x1bW",
+  "S-F9": "\x1bA", "S-F10": "\x1bB", "S-F11": "\x1bC", "S-F12": "\x1bD",
+  "S-F13": "\x1bE", "S-F14": "\x1bF", "S-F15": "\x1bG", "S-F16": "\x1bH",
+};
+
+// Map keyboard F-key names (from KeyboardEvent.key) to our sequence key names
+const FKEY_MAP: Record<string, { normal: string; shift: string }> = {
+  "F1": { normal: "F1", shift: "S-F1" }, "F2": { normal: "F2", shift: "S-F2" },
+  "F3": { normal: "F3", shift: "S-F3" }, "F4": { normal: "F4", shift: "S-F4" },
+  "F5": { normal: "F5", shift: "S-F5" }, "F6": { normal: "F6", shift: "S-F6" },
+  "F7": { normal: "F7", shift: "S-F7" }, "F8": { normal: "F8", shift: "S-F8" },
+  "F9": { normal: "F9", shift: "S-F9" }, "F10": { normal: "F10", shift: "S-F10" },
+  "F11": { normal: "F11", shift: "S-F11" }, "F12": { normal: "F12", shift: "S-F12" },
+  "F13": { normal: "F13", shift: "S-F13" }, "F14": { normal: "F14", shift: "S-F14" },
+  "F15": { normal: "F15", shift: "S-F15" }, "F16": { normal: "F16", shift: "S-F16" },
 };
 
 import { Icons } from "./Icons";
@@ -70,6 +101,7 @@ export function TerminalComponent({
   bellSound = true,
   copyOnSelect = true,
   backspaceMode,
+  termType,
   isVisible = true,
   useCustomColors = false,
   customForeground = "#e6edf3",
@@ -77,6 +109,12 @@ export function TerminalComponent({
   sessionTimeout = 120,
   onTitleChange
 }: TerminalProps) {
+  // HP NonStop 6530 detection
+  const is6530 = termType === "TN6530" || termType === "653X";
+  const is6530Ref = useRef(is6530);
+  useEffect(() => { is6530Ref.current = is6530; }, [is6530]);
+  // Choose the right sequence map based on terminal type
+  const CONTROL_SEQUENCES = is6530 ? HP_6530_SEQUENCES : VT_SEQUENCES;
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -90,8 +128,8 @@ export function TerminalComponent({
   const [searchTerm, setSearchTerm] = useState("");
   const [showToolbar, setShowToolbar] = useState(false); // Collapsible toolbar state
   const [showHistoryModal, setShowHistoryModal] = useState(false); // History Modal State
-  const [isBlockMode, setIsBlockMode] = useState(false); // Auto-detected HP NS state
-  const isBlockModeRef = useRef(false); // Ref for closure sync
+  const [isBlockMode, setIsBlockMode] = useState(is6530); // Enabled for 6530 sessions
+  const isBlockModeRef = useRef(is6530); // Ref for closure sync
   const historyBufferRef = useRef(""); // Generic command buffer for history
   const hpNsUserRef = useRef(""); // Tracks potential HP NS dynamic username
 
@@ -291,6 +329,20 @@ export function TerminalComponent({
         }
       }
 
+      // HP 6530 function key interception — send 6530-specific sequences
+      if (is6530Ref.current && e.type === "keydown") {
+        const fkeyEntry = FKEY_MAP[e.key];
+        if (fkeyEntry) {
+          const seqKey = e.shiftKey ? fkeyEntry.shift : fkeyEntry.normal;
+          const seq = HP_6530_SEQUENCES[seqKey];
+          if (seq) {
+            e.preventDefault();
+            sendData(seq);
+            return false;
+          }
+        }
+      }
+
       // Ctrl+F for Search
       if (e.ctrlKey && e.key === "f" && e.type === "keydown") {
         setShowSearch((prev) => !prev);
@@ -332,8 +384,8 @@ export function TerminalComponent({
       // Data from xterm can be multiple characters (e.g. paste) or ANSI escape sequences (arrows).
       const isEscapeSequence = data.startsWith("\x1b");
 
-      // Check current auto-detected mode (Temporarily Disabled - Forced to Line Mode)
-      const isBlock = false; // isBlockModeRef.current;
+      // Block mode: enabled for HP 6530 sessions (line-at-a-time buffering)
+      const isBlock = isBlockModeRef.current;
 
       // --- History Tracking (Both Modes) ---
       if (!isEscapeSequence) {
@@ -537,18 +589,19 @@ export function TerminalComponent({
       {/* Toolbar Trigger Area */}
       <div style={{ position: "absolute", top: 4, right: 12, zIndex: 10, display: "flex", alignItems: "center", gap: "8px" }}>
 
-        {/* Auto-Detection Pill Indicator */}
+        {/* Terminal Mode Pill Indicator */}
         <div style={{
           background: "var(--bg-secondary)", border: "1px solid var(--border-color)",
           padding: "2px 8px", borderRadius: "12px", fontSize: "11px",
-          color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "6px"
+          color: is6530 ? "#60a5fa" : "var(--text-muted)",
+          display: "flex", alignItems: "center", gap: "6px"
         }}>
           <span style={{
             width: "6px", height: "6px", borderRadius: "50%",
-            background: isBlockMode ? "var(--accent-secondary)" : "var(--text-muted)",
-            boxShadow: isBlockMode ? "0 0 6px var(--accent-secondary)" : "none"
+            background: isBlockMode ? "#60a5fa" : "var(--text-muted)",
+            boxShadow: isBlockMode ? "0 0 6px rgba(96,165,250,0.5)" : "none"
           }} />
-          {isBlockMode ? "Block Mode" : "Line Mode"}
+          {is6530 ? (isBlockMode ? "6530 Block" : "6530 Conv.") : (isBlockMode ? "Block Mode" : "Line Mode")}
         </div>
 
         {/* Clear Button */}

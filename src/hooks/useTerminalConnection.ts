@@ -108,6 +108,7 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
                     connected: true,
                     activeView: "terminal",
                     backspaceMode: config.backspaceMode,
+                    termType: config.termType,
                 };
                 setActiveSessions((prev) => [...prev, newSession]);
                 setActiveSessionId(newSession.id);
@@ -126,6 +127,7 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
                 setConnectionStatus("disconnected");
                 const errStr = response.error || "Unknown connection error";
                 setStatusMessage(`Failed: ${errStr}`);
+                addLog("_system", `Connection to ${config.host} failed: ${errStr}`, "error", "SSH");
 
                 // Always re-prompt for credentials on any auth failure
                 // (wrong password, bad key, or no credentials provided)
@@ -153,8 +155,10 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
             setConnectionStatus("disconnected");
             if (error instanceof Error) {
                 setStatusMessage(`Error: ${error.message}`);
+                addLog("_system", `Connection error: ${error.message}`, "error", "SSH");
             } else {
                 setStatusMessage(`Error: ${errStr}`);
+                addLog("_system", `Connection error: ${errStr}`, "error", "SSH");
             }
 
             // Catch auth errors surfaced as JS exceptions too

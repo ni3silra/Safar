@@ -279,6 +279,7 @@ export function Workspace({
                                     bellSound={appSettings.bellSound}
                                     copyOnSelect={appSettings.copyOnSelect}
                                     backspaceMode={session.backspaceMode}
+                                    termType={session.termType}
                                     isVisible={activeSessionId === session.id && session.activeView === "terminal"}
                                     useCustomColors={appSettings.useCustomColors}
                                     customForeground={appSettings.customForeground}
@@ -303,7 +304,7 @@ export function Workspace({
                                 display: session.activeView === "logs" ? "block" : "none",
                                 height: "100%"
                             }}>
-                                <SessionLogs logs={sessionLogs[session.id] || []} />
+                                <SessionLogs logs={[...(sessionLogs["_system"] || []), ...(sessionLogs[session.id] || [])].sort((a, b) => a.timestamp - b.timestamp)} />
                             </div>
                             <div style={{
                                 display: session.activeView === "stats" ? "block" : "none",
