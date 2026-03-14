@@ -320,6 +320,14 @@ export function TerminalComponent({
       // Handle Custom Backspace (use ref for current value)
       const currentBackspaceMode = backspaceModeRef.current;
       if (e.key === "Backspace" && e.type === "keydown") {
+        // In 6530 block mode, handle backspace locally (modify buffer, erase from display)
+        if (is6530Ref.current && isBlockModeRef.current) {
+          if (blockBufferRef.current.length > 0) {
+            blockBufferRef.current = blockBufferRef.current.slice(0, -1);
+            terminal.write("\b \b");
+          }
+          return false; // Prevent xterm from processing it further
+        }
         if (currentBackspaceMode === "ctrl-h") {
           sendData("\x08"); // ^H
           return false;
@@ -441,11 +449,13 @@ export function TerminalComponent({
       // Check for Submit (Enter / \r)
       if (data === "\r" || data === "\n") {
         const bufferedCommand = blockBufferRef.current;
+        // Erase locally-echoed text so it doesn't show after submit
         let erasure = "";
         for (let i = 0; i < bufferedCommand.length; i++) {
           erasure += "\b \b";
         }
         terminal.write(erasure);
+        // Send the buffered input to the server
         sendData(bufferedCommand + "\r");
 
         blockBufferRef.current = "";
@@ -489,30 +499,51 @@ export function TerminalComponent({
 
         const incomingData = event.payload.data;
 
-        // --- Packet Sniffing for Block Mode Heuristic ---
-        // (TEMPORARILY DISABLED: Causing adverse effects on HP NS Guardian)
-        // If the server clears the screen or enters alt buffer, toggle Block Mode ON
-        if (incomingData.includes("\x1b[?1049h") || incomingData.includes("\x1b[?47h") || incomingData.includes("\x1b[2J")) {
-          // setIsBlockMode(true);
-        }
-        // If the server disables alt buffer, toggle Block Mode OFF
-        else if (incomingData.includes("\x1b[?1049l") || incomingData.includes("\x1b[?47l")) {
-          setIsBlockMode(false);
-          blockBufferRef.current = ""; // Clear active buffer just in case
-        }
-
-        // --- Execute HP NS Heuristic Sync on Prompts ---
-        // Basic detection for standard HP NS prompts (like `1> ` or `$ `)
-        // If we have a pending user switch from history and hit a clean prompt, update it
-        if (hpNsUserRef.current && onTitleChange) {
-          // Very simple check: if line contains > or # or $, assume prompt returned
-          if (incomingData.includes(">") || incomingData.includes("$") || incomingData.includes("#")) {
-            onTitleChange(hpNsUserRef.current);
-            // We keep it set so it persists, until they switch again.
+        // --- 6530 Block Mode Detection & Sequence Filtering ---
+        if (is6530Ref.current) {
+          // Detect block-mode form entry (screen clear, alt buffer)
+          if (incomingData.includes("\x1b[?1049h") || incomingData.includes("\x1b[?47h") || incomingData.includes("\x1b[2J")) {
+            setIsBlockMode(true);
+            isBlockModeRef.current = true;
           }
-        }
+          // Detect block-mode form exit
+          else if (incomingData.includes("\x1b[?1049l") || incomingData.includes("\x1b[?47l")) {
+            setIsBlockMode(true); // Stay in block mode for 6530 (conversational is still buffered)
+            isBlockModeRef.current = true;
+            blockBufferRef.current = "";
+          }
 
-        terminal.write(incomingData);
+          // Strip 6530-specific escape sequences that xterm.js cannot render:
+          // ESC followed by a single lowercase letter (a-z) — 6530 control functions
+          // ESC followed by a single uppercase letter (A-Z) — 6530 shift functions
+          // These are NOT ANSI/VT sequences and would cause xterm to render garbage.
+          // Only filter single-char ESC sequences that are 6530-specific, not ANSI CSI (ESC[...).
+          let filteredData = incomingData;
+          // Match ESC + single letter that's NOT followed by '[' (which would be ANSI CSI)
+          filteredData = filteredData.replace(/\x1b([a-hA-Hp-wP-W])(?![\[O])/g, '');
+
+          terminal.write(filteredData);
+        } else {
+          // Non-6530 sessions: standard handling
+
+          // --- Packet Sniffing for Block Mode Heuristic ---
+          if (incomingData.includes("\x1b[?1049h") || incomingData.includes("\x1b[?47h") || incomingData.includes("\x1b[2J")) {
+            // setIsBlockMode(true); // Disabled for non-6530
+          }
+          else if (incomingData.includes("\x1b[?1049l") || incomingData.includes("\x1b[?47l")) {
+            setIsBlockMode(false);
+            blockBufferRef.current = "";
+          }
+
+          // --- Execute HP NS Heuristic Sync on Prompts ---
+          if (hpNsUserRef.current && onTitleChange) {
+            if (incomingData.includes(">") || incomingData.includes("$") || incomingData.includes("#")) {
+              onTitleChange(hpNsUserRef.current);
+            }
+          }
+
+          terminal.write(incomingData);
+        }
       }
     }).then((fn) => {
       if (!isMounted) {
