@@ -290,7 +290,7 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
 
                 {/* Form */}
                 <form onSubmit={handleSubmit} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                    <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: "16px", minHeight: "340px" }}>
 
                         {/* ─── CONNECTION TAB ─── */}
                         {activeTab === "basic" && (
