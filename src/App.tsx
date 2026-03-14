@@ -38,6 +38,7 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showQuickConnect, setShowQuickConnect] = useState(false);
   const [showCredentialsModal, setShowCredentialsModal] = useState(false);
+  const [credentialsAuthFailed, setCredentialsAuthFailed] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -50,6 +51,7 @@ function App() {
   const [sidebarView, setSidebarView] = useState<"sessions" | "snippets" | "controls">("sessions");
   const [editingSession, setEditingSession] = useState<SavedSession | null>(null);
   const [retryConfig, setRetryConfig] = useState<ConnectConfig | null>(null);
+  const [retryForSessionId, setRetryForSessionId] = useState<string | null>(null);
 
   // Security State (Removed)
   // const [isLocked, setIsLocked] = useState(true); 
@@ -170,7 +172,12 @@ function App() {
 
     // Preemptive credential check: If no password/key provided, prompt immediately
     if (!editingSession && !config.password && !config.privateKeyPath) {
+      const existingSession = sessions.find(
+        (s) => s.host === config.host && s.username === config.username
+      );
       setRetryConfig(config);
+      setRetryForSessionId(existingSession?.id || null);
+      setCredentialsAuthFailed(false);
       setShowCredentialsModal(true);
       return;
     }
@@ -180,7 +187,12 @@ function App() {
     } catch (error: any) {
       // Handle specific auth error
       if (error.message === "AUTH_REQUIRED") {
+        const existingSession = sessions.find(
+          (s) => s.host === config.host && s.username === config.username
+        );
         setRetryConfig(config);
+        setRetryForSessionId(existingSession?.id || null);
+        setCredentialsAuthFailed(true);
         setShowCredentialsModal(true);
       } else {
         // Show Error Modal
@@ -281,23 +293,28 @@ function App() {
         <CredentialsModal
           onClose={() => {
             setShowCredentialsModal(false);
+            setCredentialsAuthFailed(false);
+            setRetryForSessionId(null);
             setRetryConfig(null);
           }}
           onSubmit={(password, keyPath) => {
-            // Retry with new credentials
             const newConfig = {
-              ...retryConfig,
+              ...retryConfig!,
               password: password,
-              privateKeyPath: keyPath || retryConfig.privateKeyPath
+              privateKeyPath: keyPath || retryConfig!.privateKeyPath,
+              // Carry the saved session id so the backend updates it instead of creating a new one
+              ...(retryForSessionId ? { savedSessionId: retryForSessionId } : {}),
             };
-            // Close modal first
             setShowCredentialsModal(false);
-            // Retry connection
-            handleConnect(newConfig, false);
+            setCredentialsAuthFailed(false);
+            // Save credentials back if this was a known saved session
+            handleConnect(newConfig, !!retryForSessionId);
+            setRetryForSessionId(null);
           }}
           username={retryConfig.username}
           host={retryConfig.host}
           initialKeyPath={retryConfig.privateKeyPath}
+          authFailed={credentialsAuthFailed}
         />
       )}
 

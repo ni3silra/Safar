@@ -32,197 +32,307 @@ interface QuickConnectModalProps {
     mode?: "connect" | "edit";
 }
 
+// Reusable styled label
+function FieldLabel({ children }: { children: React.ReactNode }) {
+    return (
+        <div style={{
+            fontSize: "11px", fontWeight: 600, letterSpacing: "0.06em",
+            textTransform: "uppercase", color: "var(--text-muted, #64748b)",
+            marginBottom: "6px",
+        }}>{children}</div>
+    );
+}
+
+// Reusable styled input
+function StyledInput({ style, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+    return (
+        <input
+            {...props}
+            style={{
+                width: "100%",
+                padding: "10px 14px",
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: "8px",
+                color: "var(--text-primary, #e2e8f0)",
+                fontSize: "13px",
+                outline: "none",
+                boxSizing: "border-box",
+                transition: "border-color 0.15s",
+                ...style,
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(59,130,246,0.5)"; props.onFocus?.(e); }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; props.onBlur?.(e); }}
+        />
+    );
+}
+
+// Reusable styled select
+function StyledSelect({ children, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
+    return (
+        <select
+            {...props}
+            style={{
+                width: "100%",
+                padding: "10px 14px",
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: "8px",
+                color: "var(--text-primary, #e2e8f0)",
+                fontSize: "13px",
+                outline: "none",
+                cursor: "pointer",
+                transition: "border-color 0.15s",
+                appearance: "none",
+            }}
+        >
+            {children}
+        </select>
+    );
+}
+
+const TABS = [
+    { id: "basic", label: "Connection", icon: <Icons.Server style={{ width: 13, height: 13 }} /> },
+    { id: "security", label: "Security", icon: <Icons.Shield style={{ width: 13, height: 13 }} /> },
+    { id: "advanced", label: "Advanced", icon: <Icons.Settings style={{ width: 13, height: 13 }} /> },
+] as const;
+
 export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "connect" }: QuickConnectModalProps) {
     const [host, setHost] = useState(initialConfig?.host || "");
     const [port, setPort] = useState(initialConfig?.port || 22);
     const [username, setUsername] = useState(initialConfig?.username || "");
     const [password, setPassword] = useState(initialConfig?.password || "");
+    const [showPassword, setShowPassword] = useState(false);
     const [privateKeyPath, setPrivateKeyPath] = useState<string | null>(initialConfig?.privateKeyPath || null);
     const [sessionName, setSessionName] = useState(initialConfig?.sessionName || "");
     const [saveForLater, setSaveForLater] = useState(mode === "edit");
-    const [addToFavorites, setAddToFavorites] = useState(false); // Can be passed if needed
-
-    // Tab state
+    const [addToFavorites, setAddToFavorites] = useState(false);
     const [activeTab, setActiveTab] = useState<"basic" | "security" | "advanced">("basic");
-
-    // Security Logic
-    const [keyMode, setKeyMode] = useState<"file" | "paste">("file");
+    const [keyMode, setKeyMode] = useState<"password" | "file" | "paste">(
+        initialConfig?.privateKeyPath ? "file" : "password"
+    );
     const [pastedKey, setPastedKey] = useState("");
-
-    // Advanced Options
     const [remoteCommand, setRemoteCommand] = useState(initialConfig?.remoteCommand || "");
     const [backspaceMode, setBackspaceMode] = useState(initialConfig?.backspaceMode as "auto" | "ctrl-h" | "ctrl-?" || "auto");
     const [terminalType, setTerminalType] = useState(initialConfig?.termType || "xterm-256color");
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-
+        setIsSubmitting(true);
         let finalKeyPath = privateKeyPath;
 
-        // Handle Pasted Key
         if (keyMode === "paste" && pastedKey.trim()) {
             try {
-                // Ensure keys directory exists
                 const appData = await appLocalDataDir();
                 const keysDir = await join(appData, "keys");
                 const dirExists = await exists("keys", { baseDir: BaseDirectory.AppLocalData });
+                if (!dirExists) await mkdir("keys", { baseDir: BaseDirectory.AppLocalData, recursive: true });
 
-                if (!dirExists) {
-                    await mkdir("keys", { baseDir: BaseDirectory.AppLocalData, recursive: true });
-                }
-
-                // Create filename
                 const safeName = sessionName.replace(/[^a-z0-9]/gi, '_').toLowerCase() || "unnamed";
                 const filename = `key_${safeName}_${Date.now()}.pem`;
                 const filePath = await join(keysDir, filename);
-
-                // Write file
                 await writeTextFile(`keys/${filename}`, pastedKey, { baseDir: BaseDirectory.AppLocalData });
                 finalKeyPath = filePath;
-
             } catch (err) {
                 toast.error("Failed to save pasted key: " + String(err));
+                setIsSubmitting(false);
                 return;
             }
         }
 
-        onConnect({
-            host,
-            port,
-            username,
-            password,
-            privateKeyPath: finalKeyPath,
-            sessionName,
-            termType: terminalType,
-            remoteCommand: remoteCommand || undefined,
-            backspaceMode: backspaceMode,
-        }, saveForLater, addToFavorites);
+        try {
+            onConnect({
+                host,
+                port,
+                username,
+                password: keyMode === "password" ? password : "",
+                privateKeyPath: keyMode !== "password" ? finalKeyPath : null,
+                sessionName: sessionName || `${username}@${host}`,
+                termType: terminalType,
+                remoteCommand: remoteCommand || undefined,
+                backspaceMode,
+            }, saveForLater, addToFavorites);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     const handleSelectKey = async () => {
         try {
             const file = await openDialog({
                 multiple: false,
-                filters: [{ name: 'Key Files', extensions: ['pem', 'ppk', 'key', 'txt', 'pub', '*'] }]
+                filters: [{ name: 'Key Files', extensions: ['pem', 'ppk', 'key', 'txt', 'openssh', 'id_rsa'] }]
             });
             if (file) {
                 setPrivateKeyPath(file as string);
-                setPastedKey("");
                 setKeyMode("file");
-                setPassword(""); // Clear password if selecting key
+                setPassword("");
             }
-        } catch (e) {
+        } catch {
             toast.error("Failed to select key file");
         }
     };
 
+    const keyFilename = privateKeyPath ? privateKeyPath.split(/[/\\]/).pop() : null;
+    const isEdit = mode === "edit";
+    const canSubmit = host.trim() && username.trim() &&
+        (keyMode === "password" ? true : keyMode === "paste" ? pastedKey.trim().length > 0 : !!privateKeyPath);
+
     return (
-        <div className="modal-backdrop" onClick={onClose}>
-            <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "550px", display: "flex", flexDirection: "column", height: "auto", maxHeight: "85vh" }}>
-                <div className="modal-header">
-                    <h2 className="modal-title">{mode === "edit" ? "Edit Session" : "New SSH Connection"}</h2>
-                    <button className="icon-btn" onClick={onClose}>
-                        <Icons.X />
+        <div
+            onClick={onClose}
+            style={{
+                position: "fixed", inset: 0, zIndex: 9999,
+                background: "rgba(0,0,0,0.65)",
+                backdropFilter: "blur(6px)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontFamily: "var(--font-primary, system-ui)",
+            }}
+        >
+            <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                    width: "520px",
+                    maxHeight: "88vh",
+                    background: "var(--bg-panel, #1a1d23)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    borderRadius: "16px",
+                    boxShadow: "0 24px 64px rgba(0,0,0,0.6), 0 4px 16px rgba(0,0,0,0.3)",
+                    overflow: "hidden",
+                    display: "flex",
+                    flexDirection: "column",
+                    animation: "slideUp 0.2s ease-out",
+                }}
+            >
+                {/* Header */}
+                <div style={{
+                    padding: "22px 24px 0",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    flexShrink: 0,
+                }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "13px" }}>
+                        <div style={{
+                            width: 42, height: 42, borderRadius: "11px",
+                            background: "rgba(59,130,246,0.12)",
+                            border: "1px solid rgba(59,130,246,0.25)",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                            {isEdit
+                                ? <Icons.Edit style={{ width: 18, height: 18, color: "#3b82f6" }} />
+                                : <Icons.Terminal style={{ width: 18, height: 18, color: "#3b82f6" }} />
+                            }
+                        </div>
+                        <div>
+                            <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--text-primary, #e2e8f0)" }}>
+                                {isEdit ? "Edit Connection" : "New SSH Connection"}
+                            </div>
+                            <div style={{ fontSize: "12px", color: "var(--text-muted, #64748b)", marginTop: "2px" }}>
+                                {isEdit ? "Update your saved session settings" : "Connect to a remote SSH server"}
+                            </div>
+                        </div>
+                    </div>
+                    <button
+                        onClick={onClose}
+                        style={{
+                            background: "transparent", border: "none", cursor: "pointer",
+                            color: "var(--text-muted, #64748b)", padding: "6px",
+                            borderRadius: "8px", display: "flex",
+                            transition: "background 0.15s",
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.07)"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                    >
+                        <Icons.X style={{ width: 16, height: 16 }} />
                     </button>
                 </div>
 
-                {/* Tabs */}
-                <div style={{ display: "flex", borderBottom: "1px solid var(--border-color)", padding: "0 16px" }}>
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab("basic")}
-                        style={{
-                            padding: "10px 16px",
-                            background: "none",
-                            border: "none",
-                            borderBottom: activeTab === "basic" ? "2px solid var(--col-blue)" : "2px solid transparent",
-                            color: activeTab === "basic" ? "var(--text-primary)" : "var(--text-muted)",
-                            cursor: "pointer",
-                            fontSize: "13px",
-                            fontWeight: 500
-                        }}
-                    >
-                        Basic
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab("security")}
-                        style={{
-                            padding: "10px 16px",
-                            background: "none",
-                            border: "none",
-                            borderBottom: activeTab === "security" ? "2px solid var(--col-blue)" : "2px solid transparent",
-                            color: activeTab === "security" ? "var(--text-primary)" : "var(--text-muted)",
-                            cursor: "pointer",
-                            fontSize: "13px",
-                            fontWeight: 500
-                        }}
-                    >
-                        Security
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab("advanced")}
-                        style={{
-                            padding: "10px 16px",
-                            background: "none",
-                            border: "none",
-                            borderBottom: activeTab === "advanced" ? "2px solid var(--col-blue)" : "2px solid transparent",
-                            color: activeTab === "advanced" ? "var(--text-primary)" : "var(--text-muted)",
-                            cursor: "pointer",
-                            fontSize: "13px",
-                            fontWeight: 500
-                        }}
-                    >
-                        Advanced
-                    </button>
+                {/* Tab Bar */}
+                <div style={{
+                    display: "flex", gap: "4px",
+                    padding: "16px 24px 0",
+                    flexShrink: 0,
+                }}>
+                    {TABS.map((tab) => (
+                        <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setActiveTab(tab.id)}
+                            style={{
+                                flex: 1,
+                                padding: "9px 8px",
+                                borderRadius: "8px",
+                                border: activeTab === tab.id
+                                    ? "1px solid rgba(59,130,246,0.4)"
+                                    : "1px solid rgba(255,255,255,0.06)",
+                                background: activeTab === tab.id
+                                    ? "rgba(59,130,246,0.12)"
+                                    : "rgba(255,255,255,0.025)",
+                                color: activeTab === tab.id ? "#60a5fa" : "var(--text-muted, #64748b)",
+                                fontSize: "12px",
+                                fontWeight: activeTab === tab.id ? 600 : 400,
+                                cursor: "pointer",
+                                transition: "all 0.15s",
+                                display: "flex", alignItems: "center",
+                                justifyContent: "center", gap: "6px",
+                            }}
+                        >
+                            {tab.icon}
+                            {tab.label}
+                        </button>
+                    ))}
                 </div>
 
-                <form onSubmit={handleSubmit} style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                    <div className="modal-body" style={{ flex: 1, overflowY: "auto" }}>
+                {/* Thin divider */}
+                <div style={{ height: "1px", background: "rgba(255,255,255,0.06)", margin: "14px 0 0 0", flexShrink: 0 }} />
 
+                {/* Form */}
+                <form onSubmit={handleSubmit} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                    <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: "16px" }}>
+
+                        {/* ─── CONNECTION TAB ─── */}
                         {activeTab === "basic" && (
                             <>
-                                <div className="form-group">
-                                    <label className="form-label">Session Name</label>
-                                    <input
+                                <div>
+                                    <FieldLabel>Session Name</FieldLabel>
+                                    <StyledInput
                                         type="text"
-                                        className="input"
-                                        placeholder="My Server"
+                                        placeholder={`${username || "user"}@${host || "server"}`}
                                         value={sessionName}
                                         onChange={(e) => setSessionName(e.target.value)}
                                     />
                                 </div>
 
-                                <div className="form-row">
-                                    <div className="form-group">
-                                        <label className="form-label">Hostname / IP</label>
-                                        <input
+                                <div style={{ display: "flex", gap: "12px" }}>
+                                    <div style={{ flex: 1 }}>
+                                        <FieldLabel>Hostname / IP Address</FieldLabel>
+                                        <StyledInput
                                             type="text"
-                                            className="input"
-                                            placeholder="192.168.1.1"
+                                            placeholder="192.168.1.100 or server.example.com"
                                             value={host}
                                             onChange={(e) => setHost(e.target.value)}
                                             required
+                                            autoFocus
                                         />
                                     </div>
-                                    <div className="form-group" style={{ maxWidth: "100px" }}>
-                                        <label className="form-label">Port</label>
-                                        <input
+                                    <div style={{ width: "90px" }}>
+                                        <FieldLabel>Port</FieldLabel>
+                                        <StyledInput
                                             type="number"
-                                            className="input"
                                             placeholder="22"
                                             value={port}
                                             onChange={(e) => setPort(parseInt(e.target.value) || 22)}
+                                            min={1} max={65535}
                                         />
                                     </div>
                                 </div>
 
-                                <div className="form-group">
-                                    <label className="form-label">Username</label>
-                                    <input
+                                <div>
+                                    <FieldLabel>Username</FieldLabel>
+                                    <StyledInput
                                         type="text"
-                                        className="input"
                                         placeholder="root"
                                         value={username}
                                         onChange={(e) => setUsername(e.target.value)}
@@ -230,224 +340,323 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
                                     />
                                 </div>
 
-
-                                {/* Save Session Options - Always visible in Basic tab for ease */}
-                                {mode === "connect" && (
+                                {/* Save / Favorite row */}
+                                {!isEdit && (
                                     <div style={{
-                                        marginTop: "var(--space-4)",
-                                        padding: "var(--space-4)",
-                                        background: "var(--bg-secondary)",
-                                        borderRadius: "8px",
-                                        border: "1px solid var(--border-subtle)",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "space-between"
+                                        padding: "12px 16px",
+                                        background: "rgba(255,255,255,0.025)",
+                                        border: "1px solid rgba(255,255,255,0.07)",
+                                        borderRadius: "10px",
+                                        display: "flex", alignItems: "center",
+                                        justifyContent: "space-between",
                                     }}>
-                                        {/* Main Toggle */}
-                                        <label className="toggle-switch">
-                                            <input
-                                                type="checkbox"
-                                                className="toggle-input"
-                                                checked={saveForLater}
-                                                onChange={(e) => setSaveForLater(e.target.checked)}
-                                            />
-                                            <div className="toggle-slider"></div>
-                                            <span style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>Save Connection</span>
+                                        <label style={{
+                                            display: "flex", alignItems: "center", gap: "10px",
+                                            cursor: "pointer", userSelect: "none",
+                                        }}>
+                                            <div
+                                                onClick={() => setSaveForLater(!saveForLater)}
+                                                style={{
+                                                    width: 36, height: 20, borderRadius: "10px",
+                                                    background: saveForLater ? "#3b82f6" : "rgba(255,255,255,0.1)",
+                                                    border: "1px solid rgba(255,255,255,0.12)",
+                                                    position: "relative", cursor: "pointer",
+                                                    transition: "background 0.2s",
+                                                    flexShrink: 0,
+                                                }}
+                                            >
+                                                <div style={{
+                                                    position: "absolute", top: 2,
+                                                    left: saveForLater ? "calc(100% - 18px)" : "2px",
+                                                    width: 14, height: 14, borderRadius: "50%",
+                                                    background: "white",
+                                                    transition: "left 0.2s",
+                                                }} />
+                                            </div>
+                                            <span style={{ fontSize: "13px", color: "var(--text-primary, #e2e8f0)" }}>
+                                                Save connection
+                                            </span>
                                         </label>
 
-                                        {/* Favorite Checkbox (Only visible if Save is checked) */}
                                         {saveForLater && (
-                                            <div className="animate-fade-in">
-                                                <label className="custom-checkbox">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={addToFavorites}
-                                                        onChange={(e) => setAddToFavorites(e.target.checked)}
-                                                    />
-                                                    <div className="checkbox-box"></div>
-                                                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                                                        <Icons.Star style={{ width: 14, height: 14, color: addToFavorites ? "var(--accent-warning)" : "currentColor" }} />
-                                                        <span>Favorite</span>
-                                                    </div>
-                                                </label>
-                                            </div>
+                                            <label style={{
+                                                display: "flex", alignItems: "center", gap: "7px",
+                                                cursor: "pointer", userSelect: "none",
+                                                fontSize: "13px", color: addToFavorites ? "#fbbf24" : "var(--text-muted, #64748b)",
+                                            }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={addToFavorites}
+                                                    onChange={(e) => setAddToFavorites(e.target.checked)}
+                                                    style={{ display: "none" }}
+                                                />
+                                                <Icons.Star style={{ width: 14, height: 14, color: addToFavorites ? "#fbbf24" : "currentColor" }} />
+                                                Add to Favorites
+                                            </label>
                                         )}
                                     </div>
                                 )}
                             </>
                         )}
 
-
+                        {/* ─── SECURITY TAB ─── */}
                         {activeTab === "security" && (
                             <>
-                                <div className="form-group">
-                                    <label className="form-label">Password</label>
-                                    <input
-                                        type="password"
-                                        className="input"
-                                        placeholder="••••••••"
-                                        value={password}
-                                        onChange={(e) => setPassword(e.target.value)}
-                                        disabled={!!privateKeyPath || (keyMode === "paste" && pastedKey.length > 0)}
-                                    />
-                                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Disabled if using Private Key</span>
+                                {/* Auth mode picker */}
+                                <div style={{ display: "flex", gap: "8px" }}>
+                                    {(["password", "file", "paste"] as const).map((m) => {
+                                        const labels: Record<string, string> = { password: "Password", file: "Key File", paste: "Paste Key" };
+                                        const icons: Record<string, React.ReactNode> = {
+                                            password: <Icons.Lock style={{ width: 13, height: 13 }} />,
+                                            file: <Icons.Key style={{ width: 13, height: 13 }} />,
+                                            paste: <Icons.Copy style={{ width: 13, height: 13 }} />,
+                                        };
+                                        return (
+                                            <button key={m} type="button" onClick={() => setKeyMode(m)}
+                                                style={{
+                                                    flex: 1, padding: "9px 6px",
+                                                    borderRadius: "8px",
+                                                    border: keyMode === m ? "1px solid rgba(59,130,246,0.4)" : "1px solid rgba(255,255,255,0.07)",
+                                                    background: keyMode === m ? "rgba(59,130,246,0.12)" : "rgba(255,255,255,0.025)",
+                                                    color: keyMode === m ? "#60a5fa" : "var(--text-muted, #64748b)",
+                                                    fontSize: "12px", fontWeight: keyMode === m ? 600 : 400,
+                                                    cursor: "pointer", transition: "all 0.15s",
+                                                    display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+                                                }}
+                                            >
+                                                {icons[m]}{labels[m]}
+                                            </button>
+                                        );
+                                    })}
                                 </div>
 
-                                <div style={{ height: "1px", background: "var(--border-color)", margin: "20px 0" }} />
-
-                                <div className="form-group">
-                                    <label className="form-label" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                        Private Key
-                                        <div style={{ display: "flex", background: "var(--bg-secondary)", borderRadius: "6px", border: "1px solid var(--border-color)", overflow: "hidden" }}>
-                                            <button
-                                                type="button"
-                                                onClick={() => setKeyMode("file")}
+                                {/* Password */}
+                                {keyMode === "password" && (
+                                    <div>
+                                        <FieldLabel>Password</FieldLabel>
+                                        <div style={{ position: "relative" }}>
+                                            <StyledInput
+                                                type={showPassword ? "text" : "password"}
+                                                placeholder="Leave blank to be prompted on connect"
+                                                value={password}
+                                                onChange={(e) => setPassword(e.target.value)}
+                                                style={{ paddingRight: "42px" }}
+                                                autoFocus
+                                            />
+                                            <button type="button" onClick={() => setShowPassword(!showPassword)}
                                                 style={{
-                                                    padding: "4px 12px",
-                                                    fontSize: "11px",
-                                                    border: "none",
-                                                    background: keyMode === "file" ? "var(--col-blue)" : "transparent",
-                                                    color: keyMode === "file" ? "white" : "var(--text-secondary)",
-                                                    cursor: "pointer"
+                                                    position: "absolute", right: "12px", top: "50%",
+                                                    transform: "translateY(-50%)",
+                                                    background: "transparent", border: "none", cursor: "pointer",
+                                                    color: "var(--text-muted, #64748b)", display: "flex",
                                                 }}
+                                                title={showPassword ? "Hide" : "Show"}
                                             >
-                                                File
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setKeyMode("paste")}
-                                                style={{
-                                                    padding: "4px 12px",
-                                                    fontSize: "11px",
-                                                    border: "none",
-                                                    background: keyMode === "paste" ? "var(--col-blue)" : "transparent",
-                                                    color: keyMode === "paste" ? "white" : "var(--text-secondary)",
-                                                    cursor: "pointer"
-                                                }}
-                                            >
-                                                Paste
+                                                <Icons.Eye style={{ width: 15, height: 15 }} />
                                             </button>
                                         </div>
-                                    </label>
+                                        <p style={{ margin: "6px 0 0", fontSize: "11px", color: "var(--text-muted, #64748b)" }}>
+                                            Leave blank to be prompted when connecting.
+                                        </p>
+                                    </div>
+                                )}
 
-                                    {keyMode === "file" && (
-                                        <>
-                                            <div style={{ display: "flex", gap: "8px" }}>
-                                                <input
-                                                    type="text"
-                                                    className="input"
-                                                    placeholder="Browse for Private Key..."
-                                                    value={privateKeyPath || ""}
-                                                    onChange={(e) => setPrivateKeyPath(e.target.value || null)}
-                                                    style={{ flex: 1 }}
-                                                />
-                                                <button
-                                                    type="button"
-                                                    className="btn btn-secondary"
-                                                    onClick={handleSelectKey}
-                                                    style={{ padding: "0 12px" }}
-                                                    title="Browse for key file"
-                                                >
-                                                    <Icons.Folder />
-                                                </button>
+                                {/* Key File picker */}
+                                {keyMode === "file" && (
+                                    <div>
+                                        <FieldLabel>Private Key File</FieldLabel>
+                                        <div
+                                            onClick={handleSelectKey}
+                                            style={{
+                                                padding: "14px 16px",
+                                                background: "rgba(255,255,255,0.03)",
+                                                border: `1px dashed ${privateKeyPath ? "rgba(34,197,94,0.45)" : "rgba(255,255,255,0.13)"}`,
+                                                borderRadius: "10px", cursor: "pointer",
+                                                display: "flex", alignItems: "center", gap: "12px",
+                                                transition: "all 0.15s",
+                                            }}
+                                            onMouseEnter={(e) => e.currentTarget.style.borderColor = "rgba(59,130,246,0.5)"}
+                                            onMouseLeave={(e) => e.currentTarget.style.borderColor = privateKeyPath ? "rgba(34,197,94,0.45)" : "rgba(255,255,255,0.13)"}
+                                        >
+                                            <div style={{
+                                                width: 34, height: 34, borderRadius: "8px",
+                                                background: privateKeyPath ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.05)",
+                                                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                                            }}>
+                                                {privateKeyPath
+                                                    ? <Icons.Check style={{ width: 15, height: 15, color: "#22c55e" }} />
+                                                    : <Icons.Key style={{ width: 15, height: 15, color: "var(--text-muted, #64748b)" }} />
+                                                }
+                                            </div>
+                                            <div style={{ flex: 1, overflow: "hidden" }}>
+                                                <div style={{
+                                                    fontSize: "13px",
+                                                    color: privateKeyPath ? "#22c55e" : "var(--text-muted, #64748b)",
+                                                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                                                }}>
+                                                    {keyFilename || "Click to select a key file…"}
+                                                </div>
+                                                {privateKeyPath && (
+                                                    <div style={{ fontSize: "11px", color: "var(--text-muted, #64748b)", marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                        {privateKeyPath}
+                                                    </div>
+                                                )}
                                             </div>
                                             {privateKeyPath && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setPrivateKeyPath(null)}
-                                                    style={{ background: "none", border: "none", color: "var(--accent-error)", cursor: "pointer", fontSize: "11px", marginTop: "4px" }}
+                                                <button type="button" onClick={(e) => { e.stopPropagation(); setPrivateKeyPath(null); }}
+                                                    style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted, #64748b)", padding: "2px", display: "flex" }}
+                                                    title="Remove"
                                                 >
-                                                    Clear Key
+                                                    <Icons.X style={{ width: 13, height: 13 }} />
                                                 </button>
                                             )}
-                                        </>
-                                    )}
-
-                                    {keyMode === "paste" && (
-                                        <div style={{ display: "flex", flexDirection: "column" }}>
-                                            <textarea
-                                                className="input"
-                                                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..."
-                                                value={pastedKey}
-                                                onChange={(e) => setPastedKey(e.target.value)}
-                                                style={{ height: "150px", fontFamily: "monospace", fontSize: "12px", resize: "vertical" }}
-                                            />
-                                            <span style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
-                                                Key will be saved securely to app data.
-                                            </span>
                                         </div>
-                                    )}
-                                </div>
+                                        <p style={{ margin: "6px 0 0", fontSize: "11px", color: "var(--text-muted, #64748b)" }}>
+                                            Supported: .pem, .key, .ppk, .openssh, id_rsa
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Paste key */}
+                                {keyMode === "paste" && (
+                                    <div>
+                                        <FieldLabel>Paste Private Key</FieldLabel>
+                                        <textarea
+                                            placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"}
+                                            value={pastedKey}
+                                            onChange={(e) => setPastedKey(e.target.value)}
+                                            autoFocus
+                                            style={{
+                                                width: "100%",
+                                                height: "160px",
+                                                padding: "12px 14px",
+                                                background: "rgba(255,255,255,0.04)",
+                                                border: "1px solid rgba(255,255,255,0.1)",
+                                                borderRadius: "8px",
+                                                color: "var(--text-primary, #e2e8f0)",
+                                                fontFamily: "var(--font-mono, monospace)",
+                                                fontSize: "12px",
+                                                resize: "vertical",
+                                                outline: "none",
+                                                boxSizing: "border-box",
+                                            }}
+                                            onFocus={(e) => e.currentTarget.style.borderColor = "rgba(59,130,246,0.5)"}
+                                            onBlur={(e) => e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"}
+                                        />
+                                        <p style={{ margin: "6px 0 0", fontSize: "11px", color: "var(--text-muted, #64748b)" }}>
+                                            Key will be saved securely to app data on connect.
+                                        </p>
+                                    </div>
+                                )}
                             </>
                         )}
 
-
+                        {/* ─── ADVANCED TAB ─── */}
                         {activeTab === "advanced" && (
-                            <div style={{ padding: "4px 0" }}>
-                                {/* Remote Command */}
-                                <div className="form-group">
-                                    <label className="form-label">Remote Command (optional)</label>
-                                    <input
+                            <>
+                                <div>
+                                    <FieldLabel>Remote Command (optional)</FieldLabel>
+                                    <StyledInput
                                         type="text"
-                                        className="input"
-                                        placeholder="e.g. sudo su - or /bin/bash"
+                                        placeholder="e.g. sudo su -  or  /bin/bash"
                                         value={remoteCommand}
                                         onChange={(e) => setRemoteCommand(e.target.value)}
                                     />
-                                    <span style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", display: "block" }}>Run command instead of shell after login</span>
+                                    <p style={{ margin: "6px 0 0", fontSize: "11px", color: "var(--text-muted, #64748b)" }}>
+                                        Executes instead of the default shell after login.
+                                    </p>
                                 </div>
 
-                                {/* Terminal Type */}
-                                <div className="form-group" style={{ marginTop: "var(--space-3)" }}>
-                                    <label className="form-label">Terminal Type</label>
-                                    <select
-                                        className="input"
-                                        value={terminalType}
-                                        onChange={(e) => setTerminalType(e.target.value)}
-                                        style={{ width: "100%" }}
-                                    >
+                                <div>
+                                    <FieldLabel>Terminal Type</FieldLabel>
+                                    <StyledSelect value={terminalType} onChange={(e) => setTerminalType(e.target.value)}>
                                         <option value="xterm-256color">xterm-256color (Default)</option>
                                         <option value="xterm">xterm</option>
                                         <option value="vt100">vt100</option>
-                                        <option value="TN6530">TN6530 (HP NonStop)</option>
-                                        <option value="653X">653X (HP NonStop DBU Required)</option>
-                                        <option value="TANDEM">TANDEM</option>
                                         <option value="vt220">vt220</option>
+                                        <option value="TN6530">TN6530 (HP NonStop)</option>
+                                        <option value="653X">653X (HP NonStop DBU)</option>
+                                        <option value="TANDEM">TANDEM</option>
                                         <option value="linux">linux</option>
                                         <option value="dumb">dumb</option>
-                                    </select>
+                                    </StyledSelect>
                                 </div>
 
-                                {/* Backspace Mode */}
-                                <div className="form-group" style={{ marginTop: "var(--space-3)" }}>
-                                    <label className="form-label">Backspace Sends</label>
-                                    <select
-                                        className="input"
-                                        value={backspaceMode}
-                                        onChange={(e) => setBackspaceMode(e.target.value as "auto" | "ctrl-h" | "ctrl-?")}
-                                        style={{ width: "100%" }}
-                                    >
+                                <div>
+                                    <FieldLabel>Backspace Sends</FieldLabel>
+                                    <StyledSelect value={backspaceMode} onChange={(e) => setBackspaceMode(e.target.value as any)}>
                                         <option value="auto">Auto (Server decides)</option>
                                         <option value="ctrl-h">Control-H (^H, ASCII 8)</option>
                                         <option value="ctrl-?">Control-? (^?, ASCII 127)</option>
-                                    </select>
-                                    <span style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px", display: "block" }}>Fix backspace issues with some servers</span>
+                                    </StyledSelect>
+                                    <p style={{ margin: "6px 0 0", fontSize: "11px", color: "var(--text-muted, #64748b)" }}>
+                                        Fixes backspace issues with certain servers.
+                                    </p>
                                 </div>
-                            </div>
+                            </>
                         )}
-
                     </div>
 
-                    <div className="modal-footer">
-                        <button type="button" className="btn btn-secondary" onClick={onClose}>
+                    {/* Footer */}
+                    <div style={{
+                        padding: "16px 24px",
+                        borderTop: "1px solid rgba(255,255,255,0.06)",
+                        display: "flex",
+                        gap: "10px",
+                        flexShrink: 0,
+                        background: "rgba(0,0,0,0.15)",
+                    }}>
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            style={{
+                                flex: 1, padding: "10px",
+                                borderRadius: "8px",
+                                border: "1px solid rgba(255,255,255,0.08)",
+                                background: "rgba(255,255,255,0.04)",
+                                color: "var(--text-muted, #94a3b8)",
+                                fontSize: "13px", fontWeight: 500, cursor: "pointer",
+                                transition: "all 0.15s",
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.08)"}
+                            onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+                        >
                             Cancel
                         </button>
-                        <button type="submit" className="btn btn-primary">
-                            {mode === "edit" ? "Save Changes" : "Connect"}
+                        <button
+                            type="submit"
+                            disabled={isSubmitting || !canSubmit}
+                            style={{
+                                flex: 2, padding: "10px",
+                                borderRadius: "8px",
+                                border: "1px solid rgba(59,130,246,0.4)",
+                                background: "rgba(59,130,246,0.18)",
+                                color: "#60a5fa",
+                                fontSize: "13px", fontWeight: 600, cursor: "pointer",
+                                transition: "all 0.15s",
+                                display: "flex", alignItems: "center", justifyContent: "center", gap: "7px",
+                                opacity: (isSubmitting || !canSubmit) ? 0.5 : 1,
+                            }}
+                            onMouseEnter={(e) => { if (!e.currentTarget.disabled) e.currentTarget.style.background = "rgba(59,130,246,0.28)"; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(59,130,246,0.18)"; }}
+                        >
+                            {isSubmitting
+                                ? <><Icons.Loader style={{ width: 14, height: 14 }} /> Connecting…</>
+                                : isEdit
+                                    ? <><Icons.Check style={{ width: 14, height: 14 }} /> Save Changes</>
+                                    : <><Icons.Zap style={{ width: 14, height: 14 }} /> Connect</>
+                            }
                         </button>
                     </div>
                 </form>
             </div>
+
+            <style>{`
+                @keyframes slideUp {
+                    from { opacity: 0; transform: translateY(18px) scale(0.97); }
+                    to   { opacity: 1; transform: translateY(0) scale(1); }
+                }
+            `}</style>
         </div>
     );
 }
