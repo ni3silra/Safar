@@ -574,11 +574,7 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
                                         <option value="xterm">xterm</option>
                                         <option value="vt100">vt100</option>
                                         <option value="vt220">vt220</option>
-                                        <option value="TN6530">TN6530 (HP NonStop)</option>
-                                        <option value="TN6530-8">TN6530-8 (HP NonStop 8-bit)</option>
-                                        <option value="6530">6530 (HP NonStop DBU/Pathway)</option>
-                                        <option value="653X">653X (HP NonStop Legacy)</option>
-                                        <option value="TANDEM">TANDEM</option>
+                                        <option value="6530">6530 (HP NonStop)</option>
                                         <option value="linux">linux</option>
                                         <option value="dumb">dumb</option>
                                     </StyledSelect>
