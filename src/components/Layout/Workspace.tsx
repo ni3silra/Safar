@@ -8,6 +8,7 @@ import { FileBrowser } from "../FileBrowser";
 import { TunnelManager } from "../TunnelManager";
 import { SessionLogs } from "../SessionLogs";
 import { SessionStats } from "../SessionStats";
+import { ServerPerformance } from "../ServerPerformance";
 import { WelcomeScreen } from "../WelcomeScreen";
 import { TransferManager } from "../TransferManager";
 
@@ -230,6 +231,12 @@ export function Workspace({
                             icon={<Icons.Shield style={{ width: 12, height: 12 }} />}
                             label="Info"
                         />
+                        <WorkspaceTabButton
+                            active={derivedActiveSession.activeView === "performance"}
+                            onClick={() => updateSessionView(derivedActiveSession.id, "performance")}
+                            icon={<Icons.BarChart style={{ width: 12, height: 12 }} />}
+                            label="Activity"
+                        />
                     </div>
                 )}
 
@@ -272,6 +279,7 @@ export function Workspace({
                                     bellSound={appSettings.bellSound}
                                     copyOnSelect={appSettings.copyOnSelect}
                                     backspaceMode={session.backspaceMode}
+                                    termType={session.termType}
                                     isVisible={activeSessionId === session.id && session.activeView === "terminal"}
                                     useCustomColors={appSettings.useCustomColors}
                                     customForeground={appSettings.customForeground}
@@ -296,13 +304,21 @@ export function Workspace({
                                 display: session.activeView === "logs" ? "block" : "none",
                                 height: "100%"
                             }}>
-                                <SessionLogs logs={sessionLogs[session.id] || []} />
+                                <SessionLogs logs={[...(sessionLogs["_system"] || []), ...(sessionLogs[session.id] || [])].sort((a, b) => a.timestamp - b.timestamp)} />
                             </div>
                             <div style={{
                                 display: session.activeView === "stats" ? "block" : "none",
                                 height: "100%"
                             }}>
                                 <SessionStats session={session} />
+                            </div>
+
+                            {/* Performance Dashboard */}
+                            <div style={{
+                                display: session.activeView === "performance" ? "block" : "none",
+                                height: "100%"
+                            }}>
+                                <ServerPerformance session={session} />
                             </div>
                         </div>
                     ))}

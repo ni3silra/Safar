@@ -25,6 +25,7 @@ interface TerminalProps {
   bellSound?: boolean;
   copyOnSelect?: boolean;
   backspaceMode?: string;
+  termType?: string;
   isVisible?: boolean;
   useCustomColors?: boolean;
   customForeground?: string;
@@ -38,8 +39,8 @@ interface TerminalData {
   data: string;
 }
 
-// Map for common control sequences
-const CONTROL_SEQUENCES: Record<string, string> = {
+// VT/xterm control sequences (default)
+const VT_SEQUENCES: Record<string, string> = {
   "Ctrl+C": "\x03",
   "Up": "\x1b[A",
   "Down": "\x1b[B",
@@ -53,6 +54,164 @@ const CONTROL_SEQUENCES: Record<string, string> = {
   "S-F9": "\x1b[20;2~", "S-F10": "\x1b[21;2~", "S-F11": "\x1b[23;2~", "S-F12": "\x1b[24;2~",
   "S-F13": "\x1b[25;2~", "S-F14": "\x1b[26;2~", "S-F15": "\x1b[28;2~", "S-F16": "\x1b[29;2~",
 };
+
+// HP NonStop 6530 function key sequences
+// F1-F8 → ESC p through ESC w  |  F9-F16 → ESC a through ESC h
+// Shift+F1-F8 → ESC P through ESC W  |  Shift+F9-F16 → ESC A through ESC H
+const HP_6530_SEQUENCES: Record<string, string> = {
+  "Ctrl+C": "\x03",
+  "Up": "\x1b[A",
+  "Down": "\x1b[B",
+  "F1": "\x1bp", "F2": "\x1bq", "F3": "\x1br", "F4": "\x1bs",
+  "F5": "\x1bt", "F6": "\x1bu", "F7": "\x1bv", "F8": "\x1bw",
+  "F9": "\x1ba", "F10": "\x1bb", "F11": "\x1bc", "F12": "\x1bd",
+  "F13": "\x1be", "F14": "\x1bf", "F15": "\x1bg", "F16": "\x1bh",
+
+  "S-F1": "\x1bP", "S-F2": "\x1bQ", "S-F3": "\x1bR", "S-F4": "\x1bS",
+  "S-F5": "\x1bT", "S-F6": "\x1bU", "S-F7": "\x1bV", "S-F8": "\x1bW",
+  "S-F9": "\x1bA", "S-F10": "\x1bB", "S-F11": "\x1bC", "S-F12": "\x1bD",
+  "S-F13": "\x1bE", "S-F14": "\x1bF", "S-F15": "\x1bG", "S-F16": "\x1bH",
+};
+
+// Map keyboard F-key names (from KeyboardEvent.key) to our sequence key names
+const FKEY_MAP: Record<string, { normal: string; shift: string }> = {
+  "F1": { normal: "F1", shift: "S-F1" }, "F2": { normal: "F2", shift: "S-F2" },
+  "F3": { normal: "F3", shift: "S-F3" }, "F4": { normal: "F4", shift: "S-F4" },
+  "F5": { normal: "F5", shift: "S-F5" }, "F6": { normal: "F6", shift: "S-F6" },
+  "F7": { normal: "F7", shift: "S-F7" }, "F8": { normal: "F8", shift: "S-F8" },
+  "F9": { normal: "F9", shift: "S-F9" }, "F10": { normal: "F10", shift: "S-F10" },
+  "F11": { normal: "F11", shift: "S-F11" }, "F12": { normal: "F12", shift: "S-F12" },
+  "F13": { normal: "F13", shift: "S-F13" }, "F14": { normal: "F14", shift: "S-F14" },
+  "F15": { normal: "F15", shift: "S-F15" }, "F16": { normal: "F16", shift: "S-F16" },
+};
+
+// ─── HP 6530 → ANSI/VT Escape Sequence Translator ───
+// Converts 6530-specific sequences to ANSI equivalents that xterm.js can render.
+// This enables block-mode form applications (DBU, Pathway, TEDIT) to display correctly.
+function translate6530ToAnsi(data: string): string {
+  let result = '';
+  let i = 0;
+
+  while (i < data.length) {
+    // Check for ESC (0x1b)
+    if (data[i] === '\x1b' && i + 1 < data.length) {
+      const next = data[i + 1];
+
+      // ── ANSI CSI pass-through: ESC [ ... ──
+      // These are already valid ANSI sequences — pass through completely
+      if (next === '[') {
+        let j = i + 2;
+        // Skip parameter bytes (0x20-0x3f: digits, semicolons, ?, etc.)
+        while (j < data.length && data.charCodeAt(j) >= 0x20 && data.charCodeAt(j) <= 0x3f) j++;
+        // Include the final byte (0x40-0x7e: letter)
+        if (j < data.length) j++;
+        result += data.substring(i, j);
+        i = j;
+        continue;
+      }
+
+      // ── ANSI SS3 pass-through: ESC O ... ──
+      if (next === 'O' && i + 2 < data.length) {
+        result += data.substring(i, i + 3);
+        i += 3;
+        continue;
+      }
+
+      // ── 6530 Cursor Addressing: ESC = row col ──
+      // Row and col are single bytes, space-offset (actual = byte - 0x20)
+      // ANSI uses 1-based indexing, so: row = byte - 0x20 + 1
+      if (next === '=' && i + 3 < data.length) {
+        const row = data.charCodeAt(i + 2) - 0x20 + 1;
+        const col = data.charCodeAt(i + 3) - 0x20 + 1;
+        result += `\x1b[${Math.max(1, row)};${Math.max(1, col)}H`;
+        i += 4;
+        continue;
+      }
+
+      // ── 6530 Display Enhancement: ESC 6 attr ──
+      // Sets field attribute (underline, blink, reverse, dim)
+      if (next === '6') {
+        if (i + 2 < data.length) {
+          const attr = data.charCodeAt(i + 2);
+          let ansiAttr = '0'; // default reset
+          if (attr & 0x01) ansiAttr = '4';       // underline
+          else if (attr & 0x02) ansiAttr = '5';  // blink
+          else if (attr & 0x04) ansiAttr = '7';  // reverse
+          else if (attr & 0x08) ansiAttr = '2';  // dim/half-bright
+          result += `\x1b[${ansiAttr}m`;
+          i += 3;
+        } else {
+          result += '\x1b[4m'; // default to underline
+          i += 2;
+        }
+        continue;
+      }
+
+      // ── 6530 single-character escape sequences ──
+      switch (next) {
+        // Cursor movement
+        case 'A': result += '\x1b[A'; i += 2; continue; // cursor up
+        case 'B': result += '\x1b[B'; i += 2; continue; // cursor down
+        case 'C': result += '\x1b[C'; i += 2; continue; // cursor right
+        case 'D': result += '\x1b[D'; i += 2; continue; // cursor left
+        case 'H': result += '\x1b[H'; i += 2; continue; // cursor home
+
+        // Erase operations
+        case 'I': result += '\x1b[0J'; i += 2; continue;       // erase to end of display
+        case 'J': result += '\x1b[0K'; i += 2; continue;       // erase to end of line
+        case 'K': result += '\x1b[2J\x1b[H'; i += 2; continue; // clear entire screen + home
+        case 'L': result += '\x1b[1L'; i += 2; continue;       // insert line
+        case 'M': result += '\x1b[1M'; i += 2; continue;       // delete line
+
+        // Field protection markers
+        case ')': result += '\x1b[2m'; i += 2; continue; // start protected field (dim)
+        case '(': result += '\x1b[0m'; i += 2; continue; // end protected / start unprotected
+
+        // Display enhancement end
+        case '7': result += '\x1b[0m'; i += 2; continue; // reset all attributes
+
+        // Block/conversational mode signals — silently consume
+        case 'b': i += 2; continue; // set block mode
+        case 'c': i += 2; continue; // set conversational mode
+
+        // Tab operations
+        case 'i': result += '\t'; i += 2; continue;     // forward tab
+        case '1': result += '\x1b[Z'; i += 2; continue; // back tab
+
+        // Line operations
+        case 'T': result += '\x1b[1S'; i += 2; continue; // scroll up
+        case 'S': result += '\x1b[1T'; i += 2; continue; // scroll down
+
+        default: {
+          // Unknown single-char 6530 sequence — silently drop it
+          // This prevents garbage from unrecognized 6530 control codes
+          if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
+              next === ')' || next === '(' || next === '#' || next === '&') {
+            i += 2;
+            continue;
+          }
+          // Non-letter ESC sequence — pass through as-is
+          result += data[i];
+          i++;
+          continue;
+        }
+      }
+    }
+
+    // ── 6530 Control Characters ──
+    // DC1 (0x11) / DC3 (0x13) — start/end of message in WRITEREAD — silently consume
+    if (data[i] === '\x11' || data[i] === '\x13') {
+      i++;
+      continue;
+    }
+
+    // Regular character — pass through
+    result += data[i];
+    i++;
+  }
+
+  return result;
+}
 
 import { Icons } from "./Icons";
 
@@ -70,6 +229,7 @@ export function TerminalComponent({
   bellSound = true,
   copyOnSelect = true,
   backspaceMode,
+  termType,
   isVisible = true,
   useCustomColors = false,
   customForeground = "#e6edf3",
@@ -77,6 +237,12 @@ export function TerminalComponent({
   sessionTimeout = 120,
   onTitleChange
 }: TerminalProps) {
+  // HP NonStop 6530 detection
+  const is6530 = termType === "TN6530" || termType === "653X";
+  const is6530Ref = useRef(is6530);
+  useEffect(() => { is6530Ref.current = is6530; }, [is6530]);
+  // Choose the right sequence map based on terminal type
+  const CONTROL_SEQUENCES = is6530 ? HP_6530_SEQUENCES : VT_SEQUENCES;
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -90,25 +256,46 @@ export function TerminalComponent({
   const [searchTerm, setSearchTerm] = useState("");
   const [showToolbar, setShowToolbar] = useState(false); // Collapsible toolbar state
   const [showHistoryModal, setShowHistoryModal] = useState(false); // History Modal State
-  const [isBlockMode, setIsBlockMode] = useState(false); // Auto-detected HP NS state
-  const isBlockModeRef = useRef(false); // Ref for closure sync
+  const [isBlockMode, setIsBlockMode] = useState(is6530); // Enabled for 6530 sessions
+  const isBlockModeRef = useRef(is6530); // Ref for closure sync
   const historyBufferRef = useRef(""); // Generic command buffer for history
   const hpNsUserRef = useRef(""); // Tracks potential HP NS dynamic username
 
   // Inactivity State
   const [isInactive, setIsInactive] = useState(false);
-  const lastActivityRef = useRef(Date.now());
+  const lastActivityRef = useRef(Date.now());          // Tracks last USER keystroke (not server data)
+  const lastTickRef = useRef(Date.now());               // Tracks last timer tick to detect machine sleep
+  const onDisconnectRef = useRef(_onDisconnect);        // Stable ref so sleep handler doesn't stale-close
+  useEffect(() => { onDisconnectRef.current = _onDisconnect; }, [_onDisconnect]);
 
   // Inactivity Timer Effect
+  // Tracks USER-ONLY keystrokes (not server data) — so background noise doesn't reset the idle clock.
+  // Also detects machine sleep by measuring the gap between consecutive 30s ticks.
   useEffect(() => {
     if (sessionTimeout <= 0) return;
 
+    const SLEEP_THRESHOLD_MS = 60_000; // >60s between ticks = machine likely slept
+
     const interval = setInterval(() => {
+      const now = Date.now();
+      const tickGap = now - lastTickRef.current;
+      lastTickRef.current = now;
+
+      // --- Sleep Detection ---
+      // If tick gap > threshold, machine slept and SSH TCP is dead.
+      // Show the disconnect overlay. User chooses to close or try resume.
+      if (tickGap > SLEEP_THRESHOLD_MS) {
+        setIsInactive(true);
+        return;
+      }
+
+      // --- Inactivity Detection ---
       if (!isInactive) {
         const timeSinceLastActivity = Date.now() - lastActivityRef.current;
         const timeoutMs = sessionTimeout * 60 * 1000;
         if (timeSinceLastActivity > timeoutMs) {
           setIsInactive(true);
+          // Don't call onDisconnect here — let user decide via the overlay buttons
         }
       }
     }, 30000); // Check every 30 seconds
@@ -261,12 +448,34 @@ export function TerminalComponent({
       // Handle Custom Backspace (use ref for current value)
       const currentBackspaceMode = backspaceModeRef.current;
       if (e.key === "Backspace" && e.type === "keydown") {
+        // In 6530 block mode, handle backspace locally (modify buffer, erase from display)
+        if (is6530Ref.current && isBlockModeRef.current) {
+          if (blockBufferRef.current.length > 0) {
+            blockBufferRef.current = blockBufferRef.current.slice(0, -1);
+            terminal.write("\b \b");
+          }
+          return false; // Prevent xterm from processing it further
+        }
         if (currentBackspaceMode === "ctrl-h") {
           sendData("\x08"); // ^H
           return false;
         } else if (currentBackspaceMode === "ctrl-?") {
           sendData("\x7f"); // ^?
           return false;
+        }
+      }
+
+      // HP 6530 function key interception — send 6530-specific sequences
+      if (is6530Ref.current && e.type === "keydown") {
+        const fkeyEntry = FKEY_MAP[e.key];
+        if (fkeyEntry) {
+          const seqKey = e.shiftKey ? fkeyEntry.shift : fkeyEntry.normal;
+          const seq = HP_6530_SEQUENCES[seqKey];
+          if (seq) {
+            e.preventDefault();
+            sendData(seq);
+            return false;
+          }
         }
       }
 
@@ -305,13 +514,14 @@ export function TerminalComponent({
 
     // User Input Handler (Block vs Line Mode Logic)
     terminal.onData((data) => {
-      lastActivityRef.current = Date.now(); // Update activity on keystrokes
+      lastActivityRef.current = Date.now(); // Only user keystrokes reset idle clock — NOT server data
+      if (isInactive) setIsInactive(false);  // Dismiss overlay if user types while it showed
 
       // Data from xterm can be multiple characters (e.g. paste) or ANSI escape sequences (arrows).
       const isEscapeSequence = data.startsWith("\x1b");
 
-      // Check current auto-detected mode (Temporarily Disabled - Forced to Line Mode)
-      const isBlock = false; // isBlockModeRef.current;
+      // Block mode: enabled for HP 6530 sessions (line-at-a-time buffering)
+      const isBlock = isBlockModeRef.current;
 
       // --- History Tracking (Both Modes) ---
       if (!isEscapeSequence) {
@@ -325,8 +535,8 @@ export function TerminalComponent({
             // --- HP NS Heuristic Tracking ---
             // Track when user executes SECOM, SECOM / SE, or OSH to switch accounts
             const upperCmd = trimmedCmd.toUpperCase();
-            if (upperCmd.startsWith("SECOM / SE ")) {
-              const user = trimmedCmd.substring(11).trim();
+            if (upperCmd.startsWith("SE ")) {
+              const user = trimmedCmd.substring(3).trim();
               hpNsUserRef.current = user.split(' ')[0]; // Take first token as user
             } else if (upperCmd.startsWith("SECOM ")) {
               const user = trimmedCmd.substring(6).trim();
@@ -367,11 +577,13 @@ export function TerminalComponent({
       // Check for Submit (Enter / \r)
       if (data === "\r" || data === "\n") {
         const bufferedCommand = blockBufferRef.current;
+        // Erase locally-echoed text so it doesn't show after submit
         let erasure = "";
         for (let i = 0; i < bufferedCommand.length; i++) {
           erasure += "\b \b";
         }
         terminal.write(erasure);
+        // Send the buffered input to the server
         sendData(bufferedCommand + "\r");
 
         blockBufferRef.current = "";
@@ -409,34 +621,51 @@ export function TerminalComponent({
 
     listen<TerminalData>("terminal-data", (event) => {
       if (event.payload.session_id === sessionId) {
-        lastActivityRef.current = Date.now(); // Update activity on server data
+        // NOTE: Do NOT update lastActivityRef here.
+        // Server keepalives and background noise would constantly reset the idle clock,
+        // preventing the inactivity timeout from ever firing correctly.
 
         const incomingData = event.payload.data;
 
-        // --- Packet Sniffing for Block Mode Heuristic ---
-        // (TEMPORARILY DISABLED: Causing adverse effects on HP NS Guardian)
-        // If the server clears the screen or enters alt buffer, toggle Block Mode ON
-        if (incomingData.includes("\x1b[?1049h") || incomingData.includes("\x1b[?47h") || incomingData.includes("\x1b[2J")) {
-          // setIsBlockMode(true);
-        }
-        // If the server disables alt buffer, toggle Block Mode OFF
-        else if (incomingData.includes("\x1b[?1049l") || incomingData.includes("\x1b[?47l")) {
-          setIsBlockMode(false);
-          blockBufferRef.current = ""; // Clear active buffer just in case
-        }
-
-        // --- Execute HP NS Heuristic Sync on Prompts ---
-        // Basic detection for standard HP NS prompts (like `1> ` or `$ `)
-        // If we have a pending user switch from history and hit a clean prompt, update it
-        if (hpNsUserRef.current && onTitleChange) {
-          // Very simple check: if line contains > or # or $, assume prompt returned
-          if (incomingData.includes(">") || incomingData.includes("$") || incomingData.includes("#")) {
-            onTitleChange(hpNsUserRef.current);
-            // We keep it set so it persists, until they switch again.
+        // --- 6530 Block Mode Detection & Sequence Filtering ---
+        if (is6530Ref.current) {
+          // Detect block-mode form entry (screen clear, alt buffer)
+          if (incomingData.includes("\x1b[?1049h") || incomingData.includes("\x1b[?47h") || incomingData.includes("\x1b[2J")) {
+            setIsBlockMode(true);
+            isBlockModeRef.current = true;
           }
-        }
+          // Detect block-mode form exit
+          else if (incomingData.includes("\x1b[?1049l") || incomingData.includes("\x1b[?47l")) {
+            setIsBlockMode(true); // Stay in block mode for 6530 (conversational is still buffered)
+            isBlockModeRef.current = true;
+            blockBufferRef.current = "";
+          }
 
-        terminal.write(incomingData);
+          // Translate 6530-specific escape sequences to ANSI equivalents for xterm.js
+          const translatedData = translate6530ToAnsi(incomingData);
+
+          terminal.write(translatedData);
+        } else {
+          // Non-6530 sessions: standard handling
+
+          // --- Packet Sniffing for Block Mode Heuristic ---
+          if (incomingData.includes("\x1b[?1049h") || incomingData.includes("\x1b[?47h") || incomingData.includes("\x1b[2J")) {
+            // setIsBlockMode(true); // Disabled for non-6530
+          }
+          else if (incomingData.includes("\x1b[?1049l") || incomingData.includes("\x1b[?47l")) {
+            setIsBlockMode(false);
+            blockBufferRef.current = "";
+          }
+
+          // --- Execute HP NS Heuristic Sync on Prompts ---
+          if (hpNsUserRef.current && onTitleChange) {
+            if (incomingData.includes(">") || incomingData.includes("$") || incomingData.includes("#")) {
+              onTitleChange(hpNsUserRef.current);
+            }
+          }
+
+          terminal.write(incomingData);
+        }
       }
     }).then((fn) => {
       if (!isMounted) {
@@ -513,18 +742,19 @@ export function TerminalComponent({
       {/* Toolbar Trigger Area */}
       <div style={{ position: "absolute", top: 4, right: 12, zIndex: 10, display: "flex", alignItems: "center", gap: "8px" }}>
 
-        {/* Auto-Detection Pill Indicator */}
+        {/* Terminal Mode Pill Indicator */}
         <div style={{
           background: "var(--bg-secondary)", border: "1px solid var(--border-color)",
           padding: "2px 8px", borderRadius: "12px", fontSize: "11px",
-          color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "6px"
+          color: is6530 ? "#60a5fa" : "var(--text-muted)",
+          display: "flex", alignItems: "center", gap: "6px"
         }}>
           <span style={{
             width: "6px", height: "6px", borderRadius: "50%",
-            background: isBlockMode ? "var(--accent-secondary)" : "var(--text-muted)",
-            boxShadow: isBlockMode ? "0 0 6px var(--accent-secondary)" : "none"
+            background: isBlockMode ? "#60a5fa" : "var(--text-muted)",
+            boxShadow: isBlockMode ? "0 0 6px rgba(96,165,250,0.5)" : "none"
           }} />
-          {isBlockMode ? "Block Mode" : "Line Mode"}
+          {is6530 ? (isBlockMode ? "6530 Block" : "6530 Conv.") : (isBlockMode ? "Block Mode" : "Line Mode")}
         </div>
 
         {/* Clear Button */}
@@ -681,41 +911,88 @@ export function TerminalComponent({
               }
               setShowHistoryModal(false);
             }}
+            theme={
+              useCustomColors
+                ? { ...TERMINAL_THEMES[themeName].colors, foreground: customForeground, background: customBackground }
+                : TERMINAL_THEMES[themeName].colors
+            }
           />
         )
       }
 
-      {/* Inactivity Overlay */}
       {isInactive && (
         <div style={{
           position: "absolute",
           top: 0, left: 0, right: 0, bottom: 0,
-          background: "rgba(0,0,0,0.8)",
-          backdropFilter: "blur(4px)",
+          background: "rgba(0,0,0,0.82)",
+          backdropFilter: "blur(6px)",
           zIndex: 50,
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          color: "white"
+          color: "white",
+          gap: "0",
         }}>
-          <Icons.Terminal style={{ width: 48, height: 48, marginBottom: "16px", opacity: 0.8 }} />
-          <h2 style={{ margin: "0 0 8px 0", fontSize: "20px" }}>Session Inactive</h2>
-          <p style={{ margin: "0 0 24px 0", color: "var(--text-muted)", fontSize: "14px" }}>
-            Terminal locked after {sessionTimeout} minutes of inactivity.
+          <Icons.Terminal style={{ width: 48, height: 48, marginBottom: "16px", opacity: 0.5 }} />
+          <h2 style={{ margin: "0 0 8px 0", fontSize: "20px", fontWeight: 600 }}>Session Disconnected</h2>
+          <p style={{ margin: "0 0 28px 0", color: "var(--text-muted, #94a3b8)", fontSize: "14px", textAlign: "center", maxWidth: "280px", lineHeight: 1.5 }}>
+            The session was closed due to inactivity or the system went to sleep.
           </p>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              setIsInactive(false);
-              lastActivityRef.current = Date.now();
-              terminalRef.current?.focus();
-            }}
-            style={{ padding: "8px 24px", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px" }}
-          >
-            <Icons.Zap style={{ width: 14, height: 14 }} />
-            Reconnect
-          </button>
+          <div style={{ display: "flex", gap: "12px", marginTop: "4px" }}>
+            <button
+              onClick={() => {
+                setIsInactive(false);
+                lastActivityRef.current = Date.now();
+                lastTickRef.current = Date.now();
+                terminalRef.current?.focus();
+              }}
+              style={{
+                padding: "10px 22px",
+                fontSize: "13px",
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: "7px",
+                borderRadius: "8px",
+                border: "1px solid rgba(34, 197, 94, 0.5)",
+                background: "rgba(34, 197, 94, 0.12)",
+                color: "#22c55e",
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(34, 197, 94, 0.22)"; e.currentTarget.style.borderColor = "#22c55e"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(34, 197, 94, 0.12)"; e.currentTarget.style.borderColor = "rgba(34, 197, 94, 0.5)"; }}
+            >
+              <Icons.Zap style={{ width: 14, height: 14 }} />
+              Try Reconnect
+            </button>
+            <button
+              onClick={() => {
+                setIsInactive(false);
+                _onDisconnect?.();
+              }}
+              style={{
+                padding: "10px 22px",
+                fontSize: "13px",
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: "7px",
+                borderRadius: "8px",
+                border: "1px solid rgba(239, 68, 68, 0.5)",
+                background: "rgba(239, 68, 68, 0.12)",
+                color: "#ef4444",
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(239, 68, 68, 0.22)"; e.currentTarget.style.borderColor = "#ef4444"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(239, 68, 68, 0.12)"; e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.5)"; }}
+            >
+              <Icons.X style={{ width: 14, height: 14 }} />
+              Close Session
+            </button>
+          </div>
         </div>
       )}
     </div >

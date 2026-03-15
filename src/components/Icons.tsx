@@ -176,4 +176,33 @@ export const Icons = {
             <path d="M2.5 2.5h11v11h-11v-11zM1 1v14h14V1H1zm4 1.5h6v1H5v-1zm0 2h6v1H5v-1zm0 2h6v1H5v-1zm0 2h6v1H5v-1zm0 2h6v1H5v-1z" />
         </svg>
     ),
+    Activity: ({ style, className }: IconProps = {}) => (
+        <svg fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" width="16" height="16" style={style} className={className}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
+        </svg>
+    ),
+    RefreshCw: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style} className={className}>
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+        </svg>
+    ),
+    BarChart: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style} className={className}>
+            <line x1="18" y1="20" x2="18" y2="10"></line>
+            <line x1="12" y1="20" x2="12" y2="4"></line>
+            <line x1="6" y1="20" x2="6" y2="14"></line>
+        </svg>
+    ),
+    Check: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style} className={className}>
+            <path d="M2 8l4 4 8-8" />
+        </svg>
+    ),
+    AlertCircle: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M8 0a8 8 0 100 16A8 8 0 008 0zm0 14.5a6.5 6.5 0 110-13 6.5 6.5 0 010 13zm-.75-9.5h1.5v5h-1.5V5zm0 6h1.5v1.5h-1.5V11z" />
+        </svg>
+    ),
 };

@@ -343,18 +343,18 @@ impl SshManager {
         }
     }
 
-    /// Execute a command on a session (one-shot)
+    /// Execute a command and read entire output (blocking)
     pub fn execute_command(&self, session_id: &str, command: &str) -> Result<String, SshError> {
-        let sessions = self.sessions.read();
-        let session_arc = sessions
+        let guard = self.sessions.read();
+        let session_arc = guard
             .get(session_id)
             .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
 
-        let session = session_arc.read();
+        let session_guard = session_arc.write();
 
-        // Create a new channel for the command
-        let mut channel = session.session.channel_session().map_err(|e| {
-            SshError::ChannelError(format!("Failed to open channel: {}", e))
+        // Create new channel for the explicit command
+        let mut channel = session_guard.session.channel_session().map_err(|e| {
+            SshError::ChannelError(format!("Failed to open channel for command: {}", e))
         })?;
 
         channel.exec(command).map_err(|e| {
@@ -362,11 +362,95 @@ impl SshManager {
         })?;
 
         let mut output = String::new();
-        channel.read_to_string(&mut output)?;
+        channel.read_to_string(&mut output).map_err(|e| {
+            SshError::ChannelError(format!("Failed to read command output: {}", e))
+        })?;
 
-        channel.wait_close()?;
+        let mut stderr = String::new();
+        channel.stderr().read_to_string(&mut stderr).unwrap_or_default();
+
+        channel.wait_close().map_err(|e| {
+            SshError::ChannelError(format!("Failed to close channel: {}", e))
+        })?;
+
+        let exit_status = channel.exit_status().unwrap_or(0);
+        if exit_status != 0 {
+            return Err(SshError::ChannelError(format!(
+                "Command failed with status {}. Stderr: {}", 
+                exit_status, stderr.trim()
+            )));
+        }
 
         Ok(output)
+    }
+
+    /// Retrieve Server Performance Metrics (Top 50 CPU/Mem Processes)
+    pub fn get_performance(&self, session_id: &str) -> Result<String, SshError> {
+        // Attempt to determine OS via `uname -s` first. 
+        // If it's NONSTOP_KERNEL, use STATUS. Else assume Linux and use top.
+        let os_type_res = self.execute_command(session_id, "uname -s");
+        let os = match &os_type_res {
+            Ok(val) => val.trim().to_uppercase(),
+            Err(_) => "UNKNOWN".to_string(), // uname might fail on HP NS
+        };
+
+        let metrics_json = if os.contains("NONSTOP") || os_type_res.is_err() {
+            // HP NonStop Guardian/OSH
+            let mut captured_error = String::new();
+            
+            match self.execute_command(session_id, "status *, prog") {
+                Ok(out) => serde_json::json!({ "os": "NONSTOP_KERNEL", "raw_output": out }).to_string(),
+                Err(e1) => {
+                    captured_error.push_str(&format!("'status *, prog' failed: {}. ", e1));
+                    match self.execute_command(session_id, "gtacl -c \"status *, prog\"") {
+                        Ok(out2) => serde_json::json!({ "os": "NONSTOP_KERNEL", "raw_output": out2 }).to_string(),
+                        Err(e2) => {
+                            captured_error.push_str(&format!("'gtacl' failed: {}. ", e2));
+                            match self.execute_command(session_id, "ps -ef") {
+                                Ok(out3) => serde_json::json!({ "os": "UNIX_PS_EF", "raw_output": out3 }).to_string(),
+                                Err(e3) => {
+                                    captured_error.push_str(&format!("'ps -ef' failed: {}", e3));
+                                    serde_json::json!({
+                                        "os": "NONSTOP_KERNEL",
+                                        "raw_output": "HP_NS_METRICS_UNAVAILABLE",
+                                        "error_detail": captured_error
+                                    }).to_string()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Assume Standard Linux
+            let mut captured_error = String::new();
+            match self.execute_command(session_id, "top -b -n 1 | head -n 57") {
+                Ok(out) => serde_json::json!({ "os": "LINUX", "raw_output": out }).to_string(),
+                Err(e) => {
+                    captured_error.push_str(&format!("'top' command failed: {}. ", e));
+                    // Unix ps fallback
+                    match self.execute_command(session_id, "ps -eo pid,user,pcpu,pmem,args --sort=-pcpu | head -n 51") {
+                        Ok(out2) => serde_json::json!({ "os": "UNIX_PS", "raw_output": out2 }).to_string(),
+                        Err(e2) => {
+                            captured_error.push_str(&format!("'ps -eo' fallback failed: {}. ", e2));
+                            match self.execute_command(session_id, "ps aux | head -n 51") {
+                                Ok(out3) => serde_json::json!({ "os": "UNIX_PS_AUX", "raw_output": out3 }).to_string(),
+                                Err(e3) => {
+                                    captured_error.push_str(&format!("'ps aux' fallback failed: {}", e3));
+                                    serde_json::json!({
+                                        "os": "LINUX",
+                                        "raw_output": "LINUX_METRICS_UNAVAILABLE",
+                                        "error_detail": captured_error
+                                    }).to_string()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        Ok(metrics_json)
     }
 
     /// List all sessions
@@ -462,63 +546,81 @@ impl SshManager {
         Ok(file_entries)
     }
 
+    /// Open a DEDICATED, secondary SSH session used exclusively for SFTP transfers.
+    /// This avoids lock contention with the main terminal reader thread which continuously
+    /// acquires write() locks on the shared session_arc. Running SFTP within the shared
+    /// session causes IO errors after ~2 chunks (libssh2 internal buffer fills while
+    /// the terminal thread holds the write lock).
+    fn open_sftp_session(&self, session_id: &str) -> Result<ssh2::Session, SshError> {
+        let config = {
+            let sessions = self.sessions.read();
+            let session_arc = sessions
+                .get(session_id)
+                .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
+            let session = session_arc.read();
+            session.config.clone()
+        };
+
+        let addr = format!("{}:{}", config.host, config.port);
+        let tcp = TcpStream::connect(&addr).map_err(|e| {
+            SshError::ConnectionFailed(format!("SFTP sub-connection failed to {}: {}", addr, e))
+        })?;
+
+        let mut sftp_session = Session::new().map_err(|e| {
+            SshError::ConnectionFailed(format!("SFTP session create failed: {}", e))
+        })?;
+        sftp_session.set_tcp_stream(tcp);
+        sftp_session.handshake().map_err(|e| {
+            SshError::ConnectionFailed(format!("SFTP SSH handshake failed: {}", e))
+        })?;
+
+        if let Some(ref password) = config.password {
+            sftp_session
+                .userauth_password(&config.username, password)
+                .map_err(|e| SshError::AuthenticationFailed(format!("SFTP auth failed: {}", e)))?;
+        } else if let Some(ref key_path) = config.private_key_path {
+            let path = std::path::Path::new(key_path);
+            sftp_session
+                .userauth_pubkey_file(&config.username, None, path, None)
+                .map_err(|e| SshError::AuthenticationFailed(format!("SFTP key auth failed: {}", e)))?;
+        } else {
+            return Err(SshError::AuthenticationFailed(
+                "No auth method available for SFTP sub-session".to_string(),
+            ));
+        }
+
+        // Keep blocking mode ON – this session is only for SFTP, never for terminal
+        sftp_session.set_blocking(true);
+        Ok(sftp_session)
+    }
+
     /// Read a remote file and save it locally
     pub fn sftp_read_file<F>(&self, session_id: &str, remote_path: &str, local_path: &str, mut progress: F) -> Result<(), SshError> 
     where
         F: FnMut(u64, u64),
     {
-        let sessions = self.sessions.read();
-        let session_arc = sessions
-            .get(session_id)
-            .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
+        // Use a dedicated SFTP-only SSH session to avoid lock contention with terminal thread
+        let sftp_session = self.open_sftp_session(session_id)?;
+        let sftp = sftp_session.sftp().map_err(SshError::Ssh2Error)?;
 
-        let session = session_arc.read();
-        
-        // Temporarily set blocking mode for SFTP
-        session.session.set_blocking(true);
-        
-        let sftp = session.session.sftp().map_err(|e| {
-            session.session.set_blocking(false);
-            SshError::Ssh2Error(e)
-        })?;
+        let mut remote_file = sftp.open(std::path::Path::new(remote_path)).map_err(SshError::Ssh2Error)?;
+        let mut local_file = std::fs::File::create(local_path).map_err(SshError::IoError)?;
 
-        let mut remote_file = sftp.open(std::path::Path::new(remote_path)).map_err(|e| {
-            session.session.set_blocking(false);
-            SshError::Ssh2Error(e)
-        })?;
-        let mut local_file = std::fs::File::create(local_path).map_err(|e| {
-            session.session.set_blocking(false);
-            SshError::IoError(e)
-        })?;
-
-        let stat = remote_file.stat().map_err(|e| {
-            session.session.set_blocking(false);
-            SshError::Ssh2Error(e)
-        })?;
+        let stat = remote_file.stat().map_err(SshError::Ssh2Error)?;
         let total_size = stat.size.unwrap_or(0);
 
         use std::io::{Read, Write};
-        let mut buffer = [0u8; 65536];
+        let mut buffer = [0u8; 32768]; // 32 KB chunks – safe across server SFTP window sizes
         let mut transferred: u64 = 0;
 
         loop {
-            let n = remote_file.read(&mut buffer).map_err(|e| {
-                session.session.set_blocking(false);
-                SshError::IoError(e)
-            })?;
-            
+            let n = remote_file.read(&mut buffer).map_err(SshError::IoError)?;
             if n == 0 { break; }
-            
-            local_file.write_all(&buffer[..n]).map_err(|e| {
-                session.session.set_blocking(false);
-                SshError::IoError(e)
-            })?;
-            
+            local_file.write_all(&buffer[..n]).map_err(SshError::IoError)?;
             transferred += n as u64;
             progress(transferred, total_size);
         }
 
-        session.session.set_blocking(false);
         Ok(())
     }
 
@@ -527,54 +629,27 @@ impl SshManager {
     where
         F: FnMut(u64, u64),
     {
-        let sessions = self.sessions.read();
-        let session_arc = sessions
-            .get(session_id)
-            .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
+        // Use a dedicated SFTP-only SSH session to avoid lock contention with terminal thread
+        let sftp_session = self.open_sftp_session(session_id)?;
+        let sftp = sftp_session.sftp().map_err(SshError::Ssh2Error)?;
 
-        let session = session_arc.read();
-        
-        // Temporarily set blocking mode for SFTP
-        session.session.set_blocking(true);
-        
-        let sftp = session.session.sftp().map_err(|e| {
-            session.session.set_blocking(false);
-            SshError::Ssh2Error(e)
-        })?;
-
-        let mut local_file = std::fs::File::open(local_path).map_err(|e| {
-            session.session.set_blocking(false);
-            SshError::IoError(e)
-        })?;
-        let mut remote_file = sftp.create(std::path::Path::new(remote_path)).map_err(|e| {
-            session.session.set_blocking(false);
-            SshError::Ssh2Error(e)
-        })?;
+        let mut local_file = std::fs::File::open(local_path).map_err(SshError::IoError)?;
+        let mut remote_file = sftp.create(std::path::Path::new(remote_path)).map_err(SshError::Ssh2Error)?;
 
         let total_size = local_file.metadata().map(|m| m.len()).unwrap_or(0);
 
         use std::io::{Read, Write};
-        let mut buffer = [0u8; 65536];
+        let mut buffer = [0u8; 32768]; // 32 KB chunks
         let mut transferred: u64 = 0;
 
         loop {
-            let n = local_file.read(&mut buffer).map_err(|e| {
-                session.session.set_blocking(false);
-                SshError::IoError(e)
-            })?;
-            
+            let n = local_file.read(&mut buffer).map_err(SshError::IoError)?;
             if n == 0 { break; }
-            
-            remote_file.write_all(&buffer[..n]).map_err(|e| {
-                session.session.set_blocking(false);
-                SshError::IoError(e)
-            })?;
-            
+            remote_file.write_all(&buffer[..n]).map_err(SshError::IoError)?;
             transferred += n as u64;
             progress(transferred, total_size);
         }
 
-        session.session.set_blocking(false);
         Ok(())
     }
 
