@@ -166,6 +166,16 @@ export const Icons = {
             <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
         </svg>
     ),
+    ChevronLeft: ({ style, className }: IconProps = {}) => (
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        </svg>
+    ),
+    Home: ({ style, className }: IconProps = {}) => (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
+            <path d="M8.354 1.146a.5.5 0 00-.708 0l-6 6A.5.5 0 002 8v7a1 1 0 001 1h3v-3.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5V16h3a1 1 0 001-1V8a.5.5 0 00-.146-.354l-6-6z" />
+        </svg>
+    ),
     Eye: ({ style, className }: IconProps = {}) => (
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={style} className={className}>
             <path d="M8 3c-4 0-7 2.5-7 5s3 5 7 5 7-2.5 7-5-3-5-7-5zm0 8a3 3 0 110-6 3 3 0 010 6zm0-5a2 2 0 100 4 2 2 0 000-4z" />

@@ -1,4 +1,5 @@
 // File Browser Component (SFTP)
+import { useState, useRef, useEffect } from "react";
 import { useFileBrowser } from "../hooks/useFileBrowser";
 import { FileEditor } from "./FileEditor";
 import { Icons } from "./Icons";
@@ -23,13 +24,70 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
         sortField,
         sortDirection,
         displayedFiles,
+        canGoBack,
+        canGoForward,
+        goBack,
+        goForward,
+        goHome,
         handleSort,
         loadFiles,
         handleNavigate,
         handleUp,
         handleDownload,
-        handleUpload
+        handleUpload,
+        visitedPaths,
+        removeVisitedPath
     } = useFileBrowser(sessionId);
+
+    const [showSuggestions, setShowSuggestions] = useState(false);
+    const [suggestionIndex, setSuggestionIndex] = useState(-1);
+    const addressContainerRef = useRef<HTMLDivElement>(null);
+
+    const suggestions = visitedPaths.filter(p => 
+        p.toLowerCase().includes(tempPath.toLowerCase()) && p !== tempPath
+    );
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (addressContainerRef.current && !addressContainerRef.current.contains(event.target as Node)) {
+                setShowSuggestions(false);
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (!showSuggestions || suggestions.length === 0) {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                loadFiles(tempPath.trim());
+                setShowSuggestions(false);
+            }
+            return;
+        }
+
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setSuggestionIndex(prev => (prev < suggestions.length - 1 ? prev + 1 : prev));
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setSuggestionIndex(prev => (prev > 0 ? prev - 1 : prev));
+        } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (suggestionIndex >= 0) {
+                const selected = suggestions[suggestionIndex];
+                setTempPath(selected);
+                loadFiles(selected);
+                setShowSuggestions(false);
+            } else {
+                loadFiles(tempPath.trim());
+                setShowSuggestions(false);
+            }
+        } else if (e.key === "Escape") {
+            setShowSuggestions(false);
+        }
+    };
 
     const formatSize = (bytes: number) => {
         if (bytes === 0) return "0 B";
@@ -78,65 +136,132 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
         <div className="file-browser">
             {/* Toolbar */}
             <div className="file-toolbar">
-                <button
-                    className="icon-btn"
-                    onClick={handleUp}
-                    disabled={currentPath === "." || currentPath === "/"}
-                    title="Go Up"
-                >
-                    <Icons.ArrowUp />
-                </button>
-                <button className="icon-btn" onClick={() => loadFiles(currentPath)} title="Refresh">
-                    <Icons.Refresh />
-                </button>
-                <div style={{ width: "1px", height: "16px", background: "var(--border-default)", margin: "0 4px" }} />
-                <button className="icon-btn" onClick={handleUpload} title="Upload File">
-                    <Icons.Upload />
-                </button>
-                <div className="file-path-container">
-                    <input
-                        type="text"
-                        value={tempPath}
-                        onChange={(e) => setTempPath(e.target.value)}
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                                e.preventDefault();
-                                loadFiles(tempPath.trim());
-                            }
-                        }}
-                        className="file-path-input"
-                    />
+                <div className="file-nav-group">
                     <button
-                        className="icon-btn"
-                        onClick={() => loadFiles(tempPath.trim())}
-                        title="Go to path"
-                        style={{ padding: "4px" }}
+                        className="icon-btn nav-btn"
+                        onClick={goBack}
+                        disabled={!canGoBack}
+                        title="Back"
+                    >
+                        <Icons.ChevronLeft />
+                    </button>
+                    <button
+                        className="icon-btn nav-btn"
+                        onClick={goForward}
+                        disabled={!canGoForward}
+                        title="Forward"
                     >
                         <Icons.ChevronRight />
                     </button>
+                    <button
+                        className="icon-btn nav-btn"
+                        onClick={goHome}
+                        title="Home"
+                    >
+                        <Icons.Home />
+                    </button>
+                    <button
+                        className="icon-btn nav-btn"
+                        onClick={handleUp}
+                        disabled={currentPath === "." || currentPath === "/"}
+                        title="Up one level"
+                    >
+                        <Icons.ArrowUp />
+                    </button>
+                    <button 
+                        className="icon-btn nav-btn" 
+                        onClick={() => loadFiles(currentPath)} 
+                        title="Refresh"
+                        style={{ marginLeft: "4px" }}
+                    >
+                        <Icons.Refresh />
+                    </button>
                 </div>
-                <div style={{ flex: 1 }} />
-                <div className="file-search-container" style={{ display: "flex", alignItems: "center", position: "relative", marginLeft: "8px" }}>
-                    <Icons.Search style={{ width: 14, height: 14, position: "absolute", left: "8px", color: "var(--text-muted)" }} />
-                    <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Filter (Regex or Text)"
-                        className="file-path-input"
-                        style={{ paddingLeft: "28px", width: "200px", fontSize: "12px" }}
-                        title="Supports standard text search or regular expressions (e.g. \.log$)"
-                    />
-                    {searchQuery && (
+
+                <div className="file-address-group">
+                    <div className="file-path-container" ref={addressContainerRef}>
+                        <input
+                            type="text"
+                            value={tempPath}
+                            onChange={(e) => {
+                                setTempPath(e.target.value);
+                                setShowSuggestions(true);
+                                setSuggestionIndex(-1);
+                            }}
+                            onFocus={() => setShowSuggestions(true)}
+                            onKeyDown={handleKeyDown}
+                            className="file-path-input"
+                            placeholder="Enter remote path..."
+                        />
+                        {showSuggestions && suggestions.length > 0 && (
+                            <div className="address-suggestions">
+                                {suggestions.map((p, i) => (
+                                    <div
+                                        key={p}
+                                        className={`suggestion-item ${i === suggestionIndex ? 'active' : ''}`}
+                                        onClick={() => {
+                                            setTempPath(p);
+                                            loadFiles(p);
+                                            setShowSuggestions(false);
+                                        }}
+                                        onMouseEnter={() => setSuggestionIndex(i)}
+                                    >
+                                        <Icons.Clock style={{ width: 12, height: 12, marginRight: 8, opacity: 0.6 }} />
+                                        <span style={{ flex: 1 }}>{p}</span>
+                                        <button
+                                            className="suggestion-delete-btn"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                removeVisitedPath(p);
+                                            }}
+                                            title="Remove from history"
+                                        >
+                                            <Icons.X style={{ width: 10, height: 10 }} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                         <button
-                            className="icon-btn"
-                            onClick={() => setSearchQuery("")}
-                            style={{ position: "absolute", right: "4px", width: "20px", height: "20px", padding: 0 }}
-                            title="Clear search"
+                            className="icon-btn go-btn"
+                            onClick={() => {
+                                loadFiles(tempPath.trim());
+                                setShowSuggestions(false);
+                            }}
+                            title="Go to path"
                         >
-                            <Icons.X style={{ width: 12, height: 12 }} />
+                            <Icons.ChevronRight />
                         </button>
-                    )}
+                    </div>
+
+                    <div className="file-filter-container">
+                        <Icons.Search className="filter-icon" />
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder="Filter (Regex or Text)"
+                            className="file-filter-input"
+                            title="Supports standard text search or regular expressions (e.g. \.log$)"
+                        />
+                        {searchQuery && (
+                            <button
+                                className="icon-btn clear-btn"
+                                onClick={() => setSearchQuery("")}
+                                title="Clear filter"
+                            >
+                                <Icons.X />
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                <div style={{ flex: 1 }} />
+                
+                <div className="file-actions-toolbar">
+                    <button className="icon-btn" onClick={handleUpload} title="Upload File">
+                        <Icons.Upload />
+                    </button>
                 </div>
             </div>
 
