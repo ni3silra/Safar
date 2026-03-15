@@ -238,7 +238,7 @@ export function TerminalComponent({
   onTitleChange
 }: TerminalProps) {
   // HP NonStop 6530 detection
-  const is6530 = termType === "6530";
+  const is6530 = termType === "653X";
   const is6530Ref = useRef(is6530);
   useEffect(() => { is6530Ref.current = is6530; }, [is6530]);
   // Choose the right sequence map based on terminal type
