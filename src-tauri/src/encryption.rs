@@ -89,3 +89,75 @@ impl EncryptionManager {
         String::from_utf8(plaintext).map_err(|_| CryptoError::DecryptionFailed)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encrypt_decrypt() {
+        let password = "strong-password";
+        let data = "secret message hello world";
+
+        let encrypted = EncryptionManager::encrypt(password, data).expect("Encryption failed");
+        let decrypted = EncryptionManager::decrypt(password, &encrypted).expect("Decryption failed");
+
+        assert_eq!(data, decrypted);
+    }
+
+    #[test]
+    fn test_decrypt_wrong_password() {
+        let password = "correct-password";
+        let wrong_password = "wrong-password";
+        let data = "secret message";
+
+        let encrypted = EncryptionManager::encrypt(password, data).expect("Encryption failed");
+        let result = EncryptionManager::decrypt(wrong_password, &encrypted);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_data() {
+        let password = "password";
+        let invalid_encrypted = EncryptedData {
+            salt: "aW52YWxpZA==".to_string(), // "invalid" in base64
+            nonce: "bm9uY2U=".to_string(), // "nonce" in base64
+            ciphertext: "Y2lwaGVydGV4dA==".to_string(), // "ciphertext" in base64
+        };
+
+        let result = EncryptionManager::decrypt(password, &invalid_encrypted);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ciphertext_tampering() {
+        let password = "password";
+        let data = "original data";
+        let mut encrypted = EncryptionManager::encrypt(password, data).unwrap();
+        
+        // Corrupt the ciphertext (change one character in base64)
+        let mut bytes = BASE64.decode(&encrypted.ciphertext).unwrap();
+        bytes[0] ^= 0xFF; 
+        encrypted.ciphertext = BASE64.encode(bytes);
+
+        let result = EncryptionManager::decrypt(password, &encrypted);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_salt_tampering() {
+        let password = "password";
+        let data = "original data";
+        let mut encrypted = EncryptionManager::encrypt(password, data).unwrap();
+        
+        // Corrupt the salt
+        let mut bytes = BASE64.decode(&encrypted.salt).unwrap();
+        bytes[0] ^= 0xFF;
+        encrypted.salt = BASE64.encode(bytes);
+
+        // Should fail because key derivation will yield wrong key
+        let result = EncryptionManager::decrypt(password, &encrypted);
+        assert!(result.is_err());
+    }
+}

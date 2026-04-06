@@ -1027,3 +1027,36 @@ impl Drop for SshManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ssh_manager_init() {
+        let manager = SshManager::new();
+        assert_eq!(manager.list_sessions().len(), 0);
+        assert!(!manager.is_connected("non-existent-id"));
+    }
+
+    #[test]
+    fn test_connection_config_serialization() {
+        let config = ConnectionConfig {
+            host: "localhost".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            password: Some("secret".to_string()),
+            private_key_path: Some("/path/to/key".to_string()),
+            session_name: Some("My Session".to_string()),
+            term_type: None,
+            remote_command: None,
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        // Password and private_key_path should NOT be in the JSON
+        assert!(!json.contains("secret"));
+        assert!(!json.contains("/path/to/key"));
+        assert!(json.contains("localhost"));
+        assert!(json.contains("My Session"));
+    }
+}

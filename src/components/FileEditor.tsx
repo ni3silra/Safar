@@ -192,6 +192,7 @@ export function FileEditor({ sessionId, filePath, onClose, readOnly }: FileEdito
                             <button
                                 onClick={handleSave}
                                 disabled={saving || loading}
+                                data-testid="save-button"
                                 style={{
                                     display: "flex",
                                     alignItems: "center",
