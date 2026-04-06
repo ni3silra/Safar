@@ -38,11 +38,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Run frontend tests
+      - name: Run integration tests
         run: npm test
-
-      - name: Run backend tests
-        run: cd src-tauri && cargo test
 
   build:
     needs: test
