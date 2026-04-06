@@ -119,9 +119,17 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && github.event_name == 'push')
     
     steps:
+      - name: Set Release Tag
+        id: release_tag
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "TAG_NAME=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG_NAME=$(date +'%Y.%m.%d')" >> $GITHUB_OUTPUT
+          fi
       - name: Download all artifacts
         uses: actions/download-artifact@v6
         with:
@@ -131,6 +139,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.release_tag.outputs.TAG_NAME }}
           files: artifacts/**/*
           draft: true
           generate_release_notes: true
