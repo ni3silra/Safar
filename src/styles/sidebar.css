@@ -5,6 +5,7 @@
     display: flex;
     flex-direction: column;
     width: var(--sidebar-width);
+    height: 100%;
     background: var(--bg-secondary);
     border-right: 1px solid var(--border-default);
     transition: width var(--transition-base);
@@ -53,10 +54,14 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--text-muted);
+    transition: all var(--transition-fast);
+    cursor: pointer;
+    user-select: none;
 }
 
 .sidebar-section-title:hover {
-    color: var(--text-secondary);
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
 }
 
 /* Session Item */

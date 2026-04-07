@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Icons } from "./Icons";
 import { CommandPalette } from "./CommandPalette";
 import { SidebarControls } from "./SidebarControls";
@@ -36,6 +37,11 @@ export function Sidebar({
     onEditSession,
     onDeleteSession,
 }: SidebarProps) {
+    const [activeExpanded, setActiveExpanded] = useState(true);
+    const [recentExpanded, setRecentExpanded] = useState(true);
+    const [favoritesExpanded, setFavoritesExpanded] = useState(true);
+    const [allExpanded, setAllExpanded] = useState(true);
+
     // Filter sessions that are NOT favorites (to avoid duplicates)
     const nonFavoriteSessions = sessions.filter(s => !s.is_favorite);
     return (
@@ -139,13 +145,22 @@ export function Sidebar({
                     {/* Active Sessions */}
                     {activeSessions.length > 0 && (
                         <div className="sidebar-section">
-                            <div className="sidebar-section-title">
+                            <div
+                                className="sidebar-section-title"
+                                onClick={() => setActiveExpanded(!activeExpanded)}
+                                style={{ cursor: "pointer", userSelect: "none" }}
+                            >
                                 <span>
                                     <Icons.Terminal /> Active ({activeSessions.length})
                                 </span>
+                                <Icons.ChevronDown style={{
+                                    width: 12, height: 12,
+                                    transform: activeExpanded ? "rotate(0deg)" : "rotate(-90deg)",
+                                    transition: "transform 0.2s ease"
+                                }} />
                             </div>
 
-                            {activeSessions.map((session) => (
+                            {activeExpanded && activeSessions.map((session) => (
                                 <div
                                     key={session.id}
                                     className={`session-item ${activeSessionId === session.id ? "active" : ""}`}
@@ -170,12 +185,21 @@ export function Sidebar({
                     {/* Recent */}
                     {recent.length > 0 && (
                         <div className="sidebar-section">
-                            <div className="sidebar-section-title">
+                            <div
+                                className="sidebar-section-title"
+                                onClick={() => setRecentExpanded(!recentExpanded)}
+                                style={{ cursor: "pointer", userSelect: "none" }}
+                            >
                                 <span>
                                     <Icons.Clock /> Recent
                                 </span>
+                                <Icons.ChevronDown style={{
+                                    width: 12, height: 12,
+                                    transform: recentExpanded ? "rotate(0deg)" : "rotate(-90deg)",
+                                    transition: "transform 0.2s ease"
+                                }} />
                             </div>
-                            {recent.slice(0, 5).map((saved) => (
+                            {recentExpanded && recent.slice(0, 5).map((saved) => (
                                 <div
                                     key={saved.id}
                                     className="session-item"
@@ -216,12 +240,21 @@ export function Sidebar({
                     {/* Favorites */}
                     {favorites.length > 0 && (
                         <div className="sidebar-section">
-                            <div className="sidebar-section-title">
+                            <div
+                                className="sidebar-section-title"
+                                onClick={() => setFavoritesExpanded(!favoritesExpanded)}
+                                style={{ cursor: "pointer", userSelect: "none" }}
+                            >
                                 <span>
                                     <Icons.Star /> Favorites
                                 </span>
+                                <Icons.ChevronDown style={{
+                                    width: 12, height: 12,
+                                    transform: favoritesExpanded ? "rotate(0deg)" : "rotate(-90deg)",
+                                    transition: "transform 0.2s ease"
+                                }} />
                             </div>
-                            {favorites.map((saved) => (
+                            {favoritesExpanded && favorites.map((saved) => (
                                 <div
                                     key={saved.id}
                                     className="session-item"
@@ -262,12 +295,21 @@ export function Sidebar({
                     {/* All Sessions (non-favorites) */}
                     {nonFavoriteSessions.length > 0 && (
                         <div className="sidebar-section">
-                            <div className="sidebar-section-title">
+                            <div
+                                className="sidebar-section-title"
+                                onClick={() => setAllExpanded(!allExpanded)}
+                                style={{ cursor: "pointer", userSelect: "none" }}
+                            >
                                 <span>
                                     <Icons.Folder /> All Sessions
                                 </span>
+                                <Icons.ChevronDown style={{
+                                    width: 12, height: 12,
+                                    transform: allExpanded ? "rotate(0deg)" : "rotate(-90deg)",
+                                    transition: "transform 0.2s ease"
+                                }} />
                             </div>
-                            {nonFavoriteSessions.map((saved) => (
+                            {allExpanded && nonFavoriteSessions.map((saved) => (
                                 <div
                                     key={saved.id}
                                     className="session-item"

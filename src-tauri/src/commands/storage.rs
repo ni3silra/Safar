@@ -255,3 +255,39 @@ pub fn storage_remove_password(state: State<AppState>) -> CommandResponse<()> {
         None => CommandResponse::err("Storage not initialized".to_string()),
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AppState;
+    use crate::ssh::SshManager;
+    use parking_lot::RwLock;
+    use std::sync::Arc;
+    
+    #[test]
+    fn test_app_state_init() {
+        let state = AppState {
+            ssh_manager: Arc::new(SshManager::new()),
+            session_storage: RwLock::new(None),
+        };
+        assert!(state.session_storage.read().is_none());
+    }
+
+    #[test]
+    fn test_fs_read_text_error() {
+        // This command doesn't need State
+        let response = fs_read_text("/non/existent/safar/test/path".to_string());
+        assert!(!response.success);
+        assert!(response.error.is_some());
+    }
+
+    #[test]
+    fn test_command_response_formats() {
+        let ok_res = CommandResponse::ok("data".to_string());
+        assert!(ok_res.success);
+        assert_eq!(ok_res.data.unwrap(), "data");
+
+        let err_res: CommandResponse<String> = CommandResponse::err("error".to_string());
+        assert!(!err_res.success);
+        assert_eq!(err_res.error.unwrap(), "error");
+    }
+}

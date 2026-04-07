@@ -186,7 +186,7 @@ function translate6530ToAnsi(data: string): string {
           // Unknown single-char 6530 sequence — silently drop it
           // This prevents garbage from unrecognized 6530 control codes
           if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
-              next === ')' || next === '(' || next === '#' || next === '&') {
+            next === ')' || next === '(' || next === '#' || next === '&') {
             i += 2;
             continue;
           }
@@ -238,7 +238,7 @@ export function TerminalComponent({
   onTitleChange
 }: TerminalProps) {
   // HP NonStop 6530 detection
-  const is6530 = termType === "TN6530" || termType === "653X";
+  const is6530 = termType === "6530";
   const is6530Ref = useRef(is6530);
   useEffect(() => { is6530Ref.current = is6530; }, [is6530]);
   // Choose the right sequence map based on terminal type

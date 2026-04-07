@@ -435,3 +435,142 @@ impl SessionStorage {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_session_storage_new() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let storage = SessionStorage::new(dir.path().to_path_buf()).expect("Failed to create storage");
+
+        assert!(!storage.is_locked());
+        assert!(!storage.has_password());
+        assert_eq!(storage.get_all().len(), 0);
+    }
+
+    #[test]
+    fn test_save_and_load_session() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let mut storage = SessionStorage::new(dir.path().to_path_buf()).expect("Failed to create storage");
+
+        let session = SavedSession::new(
+            "Test Session".to_string(),
+            "localhost".to_string(),
+            22,
+            "user".to_string()
+        );
+
+        let saved = storage.save_session(session.clone()).expect("Failed to save session");
+        assert_eq!(saved.name, "Test Session");
+
+        // Re-load storage
+        let storage2 = SessionStorage::new(dir.path().to_path_buf()).expect("Failed to reload storage");
+        let loaded = storage2.get_all();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "Test Session");
+    }
+
+    #[test]
+    fn test_encryption_workflow() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let mut storage = SessionStorage::new(dir.path().to_path_buf()).expect("Failed to create storage");
+
+        let session = SavedSession::new("Encrypted".to_string(), "host".to_string(), 22, "user".to_string());
+        storage.save_session(session).expect("Failed to save");
+
+        // Set password
+        storage.set_master_password("password").expect("Failed to set password");
+        assert!(storage.has_password());
+
+        // Re-load - should be locked
+        let mut storage2 = SessionStorage::new(dir.path().to_path_buf()).expect("Failed to reload storage");
+        assert!(storage2.is_locked());
+
+        // Unlock
+        let success = storage2.unlock("password").expect("Unlock failed");
+        assert!(success);
+        assert!(!storage2.is_locked());
+        assert_eq!(storage2.get_all()[0].name, "Encrypted");
+    }
+
+    #[test]
+    fn test_import_sessions() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let mut storage = SessionStorage::new(dir.path().to_path_buf()).expect("Failed to create storage");
+
+        let json = r#"[
+            {"name": "Imported 1", "host": "host1", "port": 22, "username": "user1", "id": ""},
+            {"name": "Imported 2", "host": "host2", "port": 22, "username": "user2", "id": ""}
+        ]"#;
+
+        let count = storage.import_sessions(json).expect("Import failed");
+        assert_eq!(count, 2);
+        assert_eq!(storage.get_all().len(), 2);
+    }
+
+    #[test]
+    fn test_snippet_management() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let mut storage = SessionStorage::new(dir.path().to_path_buf()).expect("Failed to create storage");
+
+        let snippet = CommandSnippet {
+            id: "".to_string(),
+            name: "Test Snippet".to_string(),
+            command: "ls -la".to_string(),
+            category: Some("General".to_string()),
+            hide_command: false,
+            newline_type: "lf".to_string(),
+        };
+
+        let saved = storage.save_snippet(snippet).expect("Failed to save snippet");
+        assert!(!saved.id.is_empty());
+        assert_eq!(storage.get_snippets().len(), 1);
+
+        // Update
+        let mut updated = saved.clone();
+        updated.name = "Updated Snippet".to_string();
+        storage.save_snippet(updated).expect("Failed to update");
+        assert_eq!(storage.get_snippets()[0].name, "Updated Snippet");
+
+        // Delete
+        storage.delete_snippet(&saved.id).expect("Delete failed");
+        assert_eq!(storage.get_snippets().len(), 0);
+    }
+
+    #[test]
+    fn test_recent_sessions_ordering() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let mut storage = SessionStorage::new(dir.path().to_path_buf()).expect("Failed to create storage");
+
+        let s1 = storage.save_session(SavedSession::new("S1".into(), "h1".into(), 22, "u".into())).unwrap();
+        let s2 = storage.save_session(SavedSession::new("S2".into(), "h2".into(), 22, "u".into())).unwrap();
+
+        storage.add_to_recent(&s1.id).unwrap();
+        storage.add_to_recent(&s2.id).unwrap();
+
+        let recent = storage.get_recent();
+        assert_eq!(recent[0].id, s2.id); // S2 should be first (most recent)
+        assert_eq!(recent[1].id, s1.id);
+    }
+
+    #[test]
+    fn test_import_deduplication() {
+        let dir = tempdir().expect("Failed to create temp dir");
+        let mut storage = SessionStorage::new(dir.path().to_path_buf()).expect("Failed to create storage");
+
+        // Add one manually
+        storage.save_session(SavedSession::new("Dup".into(), "dup-host".into(), 22, "u".into())).unwrap();
+
+        let json = r#"[
+            {"name": "Dup", "host": "dup-host", "port": 22, "username": "u", "id": ""},
+            {"name": "New", "host": "new-host", "port": 22, "username": "u", "id": ""}
+        ]"#;
+
+        let count = storage.import_sessions(json).expect("Import failed");
+        assert_eq!(count, 1); // Only 1 should be imported, 1 skipped as duplicate
+        assert_eq!(storage.get_all().len(), 2);
+    }
+}
