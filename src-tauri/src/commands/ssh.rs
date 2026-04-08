@@ -112,6 +112,15 @@ pub fn ssh_get_performance(state: State<AppState>, session_id: String) -> Comman
     }
 }
 
+/// Get process info by PID or name (for Guardian Monitor)
+#[tauri::command]
+pub fn ssh_get_process_info(state: State<AppState>, session_id: String, pid_or_name: String) -> CommandResponse<String> {
+    match state.ssh_manager.get_process_info(&session_id, &pid_or_name) {
+        Ok(info) => CommandResponse::ok(info),
+        Err(e) => CommandResponse::err(e.to_string()),
+    }
+}
+
 /// Check if a session is connected
 #[tauri::command]
 pub fn ssh_is_connected(state: State<AppState>, session_id: String) -> CommandResponse<bool> {

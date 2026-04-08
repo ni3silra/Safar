@@ -422,13 +422,13 @@ impl SshManager {
                 }
             }
         } else {
-            // Assume Standard Linux
+            // Assume Standard Linux / Unix
             let mut captured_error = String::new();
             match self.execute_command(session_id, "top -b -n 1 | head -n 57") {
                 Ok(out) => serde_json::json!({ "os": "LINUX", "raw_output": out }).to_string(),
                 Err(e) => {
                     captured_error.push_str(&format!("'top' command failed: {}. ", e));
-                    // Unix ps fallback
+                    // Unix ps -eo fallback
                     match self.execute_command(session_id, "ps -eo pid,user,pcpu,pmem,args --sort=-pcpu | head -n 51") {
                         Ok(out2) => serde_json::json!({ "os": "UNIX_PS", "raw_output": out2 }).to_string(),
                         Err(e2) => {
@@ -436,12 +436,19 @@ impl SshManager {
                             match self.execute_command(session_id, "ps aux | head -n 51") {
                                 Ok(out3) => serde_json::json!({ "os": "UNIX_PS_AUX", "raw_output": out3 }).to_string(),
                                 Err(e3) => {
-                                    captured_error.push_str(&format!("'ps aux' fallback failed: {}", e3));
-                                    serde_json::json!({
-                                        "os": "LINUX",
-                                        "raw_output": "LINUX_METRICS_UNAVAILABLE",
-                                        "error_detail": captured_error
-                                    }).to_string()
+                                    captured_error.push_str(&format!("'ps aux' fallback failed: {}. ", e3));
+                                    // Final fallback: simple ps -ef (works on ALL Unix including HP NonStop OSS)
+                                    match self.execute_command(session_id, "ps -ef | head -n 51") {
+                                        Ok(out4) => serde_json::json!({ "os": "UNIX_PS_EF", "raw_output": out4 }).to_string(),
+                                        Err(e4) => {
+                                            captured_error.push_str(&format!("'ps -ef' fallback failed: {}", e4));
+                                            serde_json::json!({
+                                                "os": "LINUX",
+                                                "raw_output": "LINUX_METRICS_UNAVAILABLE",
+                                                "error_detail": captured_error
+                                            }).to_string()
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -451,6 +458,112 @@ impl SshManager {
         };
 
         Ok(metrics_json)
+    }
+
+    /// Get process info by PID or process name (for Guardian Monitor)
+    /// Uses only simple POSIX commands (ps -ef + grep) for maximum compatibility
+    /// including HP NonStop OSS L25.2 where many ps flags are unavailable.
+    pub fn get_process_info(&self, session_id: &str, pid_or_name: &str) -> Result<String, SshError> {
+        // Determine OS type
+        let os_type_res = self.execute_command(session_id, "uname -s");
+        let os = match &os_type_res {
+            Ok(val) => val.trim().to_uppercase(),
+            Err(_) => "UNKNOWN".to_string(),
+        };
+
+        if os.contains("NONSTOP") || os_type_res.is_err() {
+            // HP NonStop / Guardian — try native status first, then OSS ps -ef
+            let cmd = format!("status {}, detail", pid_or_name);
+            match self.execute_command(session_id, &cmd) {
+                Ok(out) => Ok(serde_json::json!({
+                    "os": "NONSTOP_KERNEL",
+                    "format": "guardian_status",
+                    "target": pid_or_name,
+                    "raw_output": out,
+                    "children_output": ""
+                }).to_string()),
+                Err(_) => {
+                    // Fallback to gtacl
+                    let cmd2 = format!("gtacl -c \"status {}, detail\"", pid_or_name);
+                    match self.execute_command(session_id, &cmd2) {
+                        Ok(out2) => Ok(serde_json::json!({
+                            "os": "NONSTOP_KERNEL",
+                            "format": "guardian_status",
+                            "target": pid_or_name,
+                            "raw_output": out2,
+                            "children_output": ""
+                        }).to_string()),
+                        Err(_) => {
+                            // Final fallback: simple ps -ef on OSS
+                            let is_pid = pid_or_name.chars().all(|c| c.is_ascii_digit());
+                            let ps_cmd = if is_pid {
+                                format!("ps -ef | grep {} | grep -v grep", pid_or_name)
+                            } else {
+                                format!("ps -ef | grep -i {} | grep -v grep", pid_or_name)
+                            };
+                            let main_out = self.execute_command(session_id, &ps_cmd).unwrap_or_default();
+
+                            // Children: grep for PPID column match
+                            let children_out = if is_pid {
+                                let child_cmd = format!(
+                                    "ps -ef | awk '$3 == {}' | grep -v grep",
+                                    pid_or_name
+                                );
+                                self.execute_command(session_id, &child_cmd).unwrap_or_default()
+                            } else {
+                                String::new()
+                            };
+
+                            Ok(serde_json::json!({
+                                "os": "NONSTOP_KERNEL",
+                                "format": "ps_ef",
+                                "target": pid_or_name,
+                                "raw_output": main_out,
+                                "children_output": children_out
+                            }).to_string())
+                        }
+                    }
+                }
+            }
+        } else {
+            // Linux / Unix — use simple ps -ef + grep (works EVERYWHERE)
+            let is_pid = pid_or_name.chars().all(|c| c.is_ascii_digit());
+
+            let main_cmd = if is_pid {
+                // Match on PID column (column 2 in ps -ef)
+                format!(
+                    "ps -ef | awk '$2 == {}' | grep -v grep",
+                    pid_or_name
+                )
+            } else {
+                // Match by name anywhere in the line
+                format!(
+                    "ps -ef | grep -i {} | grep -v grep",
+                    pid_or_name
+                )
+            };
+
+            let main_output = self.execute_command(session_id, &main_cmd).unwrap_or_default();
+
+            // Get child processes: match PPID column (column 3 in ps -ef)
+            let children_output = if is_pid {
+                let child_cmd = format!(
+                    "ps -ef | awk '$3 == {}' | grep -v grep",
+                    pid_or_name
+                );
+                self.execute_command(session_id, &child_cmd).unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            Ok(serde_json::json!({
+                "os": "LINUX",
+                "format": "ps_ef",
+                "target": pid_or_name,
+                "raw_output": main_output,
+                "children_output": children_output
+            }).to_string())
+        }
     }
 
     /// List all sessions

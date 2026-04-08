@@ -16,7 +16,7 @@ export interface Session {
     port: number;
     username: string;
     connected: boolean;
-    activeView: "terminal" | "files" | "tunnels" | "logs" | "stats" | "performance";
+    activeView: "terminal" | "files" | "tunnels" | "logs" | "stats" | "performance" | "guardian";
     backspaceMode?: string;
     termType?: string;
     dynamicTitle?: string;

@@ -111,6 +111,7 @@ pub fn run() {
             ssh_list_sessions,
             ssh_is_connected,
             ssh_get_performance, // New Manual HP NS/Linux Performance tab
+            ssh_get_process_info, // Guardian Process Monitor
             ssh_sftp_ls,
             ssh_sftp_read,
             ssh_sftp_write,
