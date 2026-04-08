@@ -9,6 +9,7 @@ import { TunnelManager } from "../TunnelManager";
 import { SessionLogs } from "../SessionLogs";
 import { SessionStats } from "../SessionStats";
 import { ServerPerformance } from "../ServerPerformance";
+import { GuardianMonitor } from "../GuardianMonitor";
 import { WelcomeScreen } from "../WelcomeScreen";
 import { TransferManager } from "../TransferManager";
 
@@ -237,6 +238,12 @@ export function Workspace({
                             icon={<Icons.BarChart style={{ width: 12, height: 12 }} />}
                             label="Activity"
                         />
+                        <WorkspaceTabButton
+                            active={derivedActiveSession.activeView === "guardian"}
+                            onClick={() => updateSessionView(derivedActiveSession.id, "guardian")}
+                            icon={<Icons.Crosshair style={{ width: 12, height: 12 }} />}
+                            label="Monitor"
+                        />
                     </div>
                 )}
 
@@ -319,6 +326,14 @@ export function Workspace({
                                 height: "100%"
                             }}>
                                 <ServerPerformance session={session} />
+                            </div>
+
+                            {/* Guardian Process Monitor */}
+                            <div style={{
+                                display: session.activeView === "guardian" ? "block" : "none",
+                                height: "100%"
+                            }}>
+                                <GuardianMonitor session={session} />
                             </div>
                         </div>
                     ))}

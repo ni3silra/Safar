@@ -12,6 +12,8 @@ const mockInvoke = vi.fn(async (command) => {
   if (command === 'ssh_is_connected') return { success: true, data: false, error: null };
   if (command === 'snippets_get_all') return { success: true, data: [], error: null };
   if (command === 'custom_themes_get_all') return { success: true, data: [], error: null };
+  if (command === 'ssh_get_performance') return { success: true, data: '{"os":"LINUX","raw_output":""}', error: null };
+  if (command === 'ssh_get_process_info') return { success: true, data: '{"os":"LINUX","format":"ps_ef","target":"","raw_output":"","children_output":""}', error: null };
   return { success: true, data: null, error: null };
 });
 
@@ -66,6 +68,36 @@ global.ResizeObserver = class ResizeObserver {
   unobserve() { }
   disconnect() { }
 };
+
+// Mock Canvas getContext (jsdom doesn't support canvas)
+HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+  clearRect: vi.fn(),
+  fillRect: vi.fn(),
+  strokeRect: vi.fn(),
+  beginPath: vi.fn(),
+  closePath: vi.fn(),
+  moveTo: vi.fn(),
+  lineTo: vi.fn(),
+  arc: vi.fn(),
+  stroke: vi.fn(),
+  fill: vi.fn(),
+  fillText: vi.fn(),
+  measureText: vi.fn(() => ({ width: 0 })),
+  setLineDash: vi.fn(),
+  createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+  save: vi.fn(),
+  restore: vi.fn(),
+  scale: vi.fn(),
+  translate: vi.fn(),
+  canvas: { width: 800, height: 400 },
+  lineWidth: 1,
+  strokeStyle: '',
+  fillStyle: '',
+  font: '',
+  textAlign: '',
+  textBaseline: '',
+  globalAlpha: 1,
+})) as any;
 
 // Mock ScrollTo
 Element.prototype.scrollTo = vi.fn();
