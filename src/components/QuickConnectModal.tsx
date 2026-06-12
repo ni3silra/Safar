@@ -578,6 +578,11 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
                                         <option value="linux">linux</option>
                                         <option value="dumb">dumb</option>
                                     </StyledSelect>
+                                    {terminalType === "6530" && (
+                                        <p style={{ margin: "6px 0 0", fontSize: "11px", color: "#60a5fa" }}>
+                                            HP NonStop 6530 emulation: block mode, F-key mapping (F1-F16), and native 6530 escape sequence translation. Server receives TERM=6530 for full protocol support.
+                                        </p>
+                                    )}
                                 </div>
 
                                 <div>
