@@ -189,7 +189,11 @@ impl SshManager {
         })?;
 
         // Request PTY
-        // Request PTY
+        // Send the terminal type as-is to the server.
+        // When user selects "6530", HP NonStop systems natively understand this TERM value
+        // and will send proper 6530 escape sequences (ESC b/c block mode, DC1/DC3 WRITEREAD,
+        // ESC = cursor addressing, ESC 6 display enhancement, etc.)
+        // Our client-side translate6530ToAnsi() converts these to ANSI for xterm.js rendering.
         let term = config.term_type.as_deref().unwrap_or("xterm-256color");
         channel
             .request_pty(term, None, Some((80, 24, 0, 0)))
