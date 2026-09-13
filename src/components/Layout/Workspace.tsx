@@ -7,9 +7,7 @@ import TerminalComponent from "../Terminal";
 import { FileBrowser } from "../FileBrowser";
 import { TunnelManager } from "../TunnelManager";
 import { SessionLogs } from "../SessionLogs";
-import { SessionStats } from "../SessionStats";
-import { ServerPerformance } from "../ServerPerformance";
-import { GuardianMonitor } from "../GuardianMonitor";
+
 import { WelcomeScreen } from "../WelcomeScreen";
 import { TransferManager } from "../TransferManager";
 
@@ -226,24 +224,7 @@ export function Workspace({
                             icon={<Icons.Clock style={{ width: 12, height: 12 }} />}
                             label="Logs"
                         />
-                        <WorkspaceTabButton
-                            active={derivedActiveSession.activeView === "stats"}
-                            onClick={() => updateSessionView(derivedActiveSession.id, "stats")}
-                            icon={<Icons.Shield style={{ width: 12, height: 12 }} />}
-                            label="Info"
-                        />
-                        <WorkspaceTabButton
-                            active={derivedActiveSession.activeView === "performance"}
-                            onClick={() => updateSessionView(derivedActiveSession.id, "performance")}
-                            icon={<Icons.BarChart style={{ width: 12, height: 12 }} />}
-                            label="Activity"
-                        />
-                        <WorkspaceTabButton
-                            active={derivedActiveSession.activeView === "guardian"}
-                            onClick={() => updateSessionView(derivedActiveSession.id, "guardian")}
-                            icon={<Icons.Crosshair style={{ width: 12, height: 12 }} />}
-                            label="Monitor"
-                        />
+
                     </div>
                 )}
 
@@ -313,28 +294,7 @@ export function Workspace({
                             }}>
                                 <SessionLogs logs={[...(sessionLogs["_system"] || []), ...(sessionLogs[session.id] || [])].sort((a, b) => a.timestamp - b.timestamp)} />
                             </div>
-                            <div style={{
-                                display: session.activeView === "stats" ? "block" : "none",
-                                height: "100%"
-                            }}>
-                                <SessionStats session={session} />
-                            </div>
 
-                            {/* Performance Dashboard */}
-                            <div style={{
-                                display: session.activeView === "performance" ? "block" : "none",
-                                height: "100%"
-                            }}>
-                                <ServerPerformance session={session} />
-                            </div>
-
-                            {/* Guardian Process Monitor */}
-                            <div style={{
-                                display: session.activeView === "guardian" ? "block" : "none",
-                                height: "100%"
-                            }}>
-                                <GuardianMonitor session={session} />
-                            </div>
                         </div>
                     ))}
                 </div>
