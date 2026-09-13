@@ -147,13 +147,15 @@ export class Screen6530 {
     if (this.currentFieldId >= 0) {
       const field = this.fields.find(f => f.id === this.currentFieldId);
       if (field) {
-        // End position is one BEFORE the current cursor (last cell of the field)
-        if (this.cursorCol > 0) {
-          field.endRow = this.cursorRow;
-          field.endCol = this.cursorCol - 1;
-        } else if (this.cursorRow > 0) {
-          field.endRow = this.cursorRow - 1;
-          field.endCol = SCREEN_COLS - 1;
+        // If cursor moved past start position, end position is one BEFORE current cursor
+        if (this.cursorRow > field.startRow || (this.cursorRow === field.startRow && this.cursorCol > field.startCol)) {
+          if (this.cursorCol > 0) {
+            field.endRow = this.cursorRow;
+            field.endCol = this.cursorCol - 1;
+          } else if (this.cursorRow > 0) {
+            field.endRow = this.cursorRow - 1;
+            field.endCol = SCREEN_COLS - 1;
+          }
         }
         field.length = this._calculateFieldLength(field);
       }

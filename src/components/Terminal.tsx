@@ -147,6 +147,25 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
         continue;
       }
 
+      // ── ANSI OSC pass-through: ESC ] ... (BEL \x07 or ST \x1b\) ──
+      // Operating System Commands used by shells for window title setting, etc.
+      if (next === ']') {
+        let j = i + 2;
+        while (j < data.length && data[j] !== '\x07' && !(data[j] === '\x1b' && j + 1 < data.length && data[j + 1] === '\\')) {
+          j++;
+        }
+        if (j >= data.length) {
+          // Truncated OSC sequence at end of chunk — buffer for next packet
+          pendingRemainder = data.substring(i);
+          break;
+        }
+        if (data[j] === '\x07') j++;
+        else if (data[j] === '\x1b') j += 2;
+        result += data.substring(i, j);
+        i = j;
+        continue;
+      }
+
       // ── ANSI SS3 pass-through: ESC O (uppercase O, not zero) ──
       if (next === 'O') {
         if (i + 2 >= data.length) {
@@ -282,6 +301,12 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
         }
       }
       if (pendingRemainder) break;
+    }
+
+    // Ignore NUL padding bytes
+    if (data[i] === '\x00') {
+      i++;
+      continue;
     }
 
     // ── 6530 Control Characters ──
@@ -642,6 +667,8 @@ export function TerminalComponent({
             const screen = screen6530Ref.current;
             if (isBlockModeRef.current && screen.hasFields) {
               // Block mode: generate WRITEREAD response with F-key trigger
+              const fieldData = screen.collectFieldData();
+              if (fieldData.trim()) addHistory(fieldData.trim());
               const response = screen.generateWriteReadResponse(seq);
               sendData(response);
             } else {
@@ -654,21 +681,21 @@ export function TerminalComponent({
         }
       }
 
-      // Ctrl+F for Search
-      if (e.ctrlKey && e.key === "f" && e.type === "keydown") {
+      // Ctrl+F or Cmd+F for Search
+      if ((e.ctrlKey || e.metaKey) && e.key === "f" && e.type === "keydown") {
         setShowSearch((prev) => !prev);
         return false; // Prevent default
       }
-      // Ctrl+Shift+C for Copy
-      if (e.ctrlKey && e.shiftKey && e.code === "KeyC" && e.type === "keydown") {
+      // Ctrl+Shift+C or Cmd+C for Copy
+      if (((e.ctrlKey && e.shiftKey) || e.metaKey) && e.code === "KeyC" && e.type === "keydown") {
         const selection = terminal.getSelection();
         if (selection) {
           navigator.clipboard.writeText(selection);
           return false;
         }
       }
-      // Ctrl+Shift+V for Paste
-      if (e.ctrlKey && e.shiftKey && e.code === "KeyV" && e.type === "keydown") {
+      // Ctrl+Shift+V or Cmd+V for Paste
+      if (((e.ctrlKey && e.shiftKey) || e.metaKey) && e.code === "KeyV" && e.type === "keydown") {
         navigator.clipboard.readText().then((text) => {
           sendData(text);
         });
@@ -934,6 +961,13 @@ export function TerminalComponent({
     const handleResize = () => safeFit();
     window.addEventListener("resize", handleResize);
 
+    // ResizeObserver watches the container element for layout shifts (sidebar toggle, split panes)
+    let resizeObserver: ResizeObserver | null = null;
+    if (terminalRef.current && typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => safeFit());
+      resizeObserver.observe(terminalRef.current);
+    }
+
     requestAnimationFrame(() => {
       setTimeout(() => {
         safeFit();
@@ -952,6 +986,7 @@ export function TerminalComponent({
     return () => {
       isMounted = false;
       window.removeEventListener("resize", handleResize);
+      if (resizeObserver) resizeObserver.disconnect();
       if (unlisten) unlisten();
       if (unlistenDisconnect) unlistenDisconnect();
       if (unlistenRef.current) unlistenRef.current();
@@ -997,13 +1032,25 @@ export function TerminalComponent({
       {/* Toolbar Trigger Area */}
       <div style={{ position: "absolute", top: 4, right: 12, zIndex: 10, display: "flex", alignItems: "center", gap: "8px" }}>
 
-        {/* Terminal Mode Pill Indicator */}
-        <div style={{
-          background: "var(--bg-secondary)", border: "1px solid var(--border-color)",
-          padding: "2px 8px", borderRadius: "12px", fontSize: "11px",
-          color: is6530Session ? "#60a5fa" : "var(--text-muted)",
-          display: "flex", alignItems: "center", gap: "6px"
-        }}>
+        {/* Terminal Mode Pill Indicator (Clickable toggle) */}
+        <div
+          role="button"
+          tabIndex={0}
+          title={isBlockMode ? "Click to switch to Conversational Mode" : "Click to switch to Block Mode"}
+          onClick={() => {
+            const nextMode = !isBlockMode;
+            setIsBlockMode(nextMode);
+            isBlockModeRef.current = nextMode;
+            blockBufferRef.current = "";
+          }}
+          style={{
+            background: "var(--bg-secondary)", border: "1px solid var(--border-color)",
+            padding: "2px 8px", borderRadius: "12px", fontSize: "11px",
+            color: is6530Session ? "#60a5fa" : "var(--text-muted)",
+            display: "flex", alignItems: "center", gap: "6px",
+            cursor: "pointer", userSelect: "none"
+          }}
+        >
           <span style={{
             width: "6px", height: "6px", borderRadius: "50%",
             background: isBlockMode ? "#60a5fa" : "var(--text-muted)",
@@ -1018,6 +1065,7 @@ export function TerminalComponent({
           style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px", color: "var(--col-red)", borderColor: "rgba(239, 68, 68, 0.3)" }}
           onClick={() => {
             blockBufferRef.current = "";
+            screen6530Ref.current.reset();
             xtermRef.current?.clear();
             terminalRef.current?.focus();
           }}
@@ -1120,8 +1168,9 @@ export function TerminalComponent({
       {/* Terminal View */}
       <div
         ref={terminalRef}
-        style={{ flex: 1, overflow: "hidden", padding: "8px" }}
+        style={{ flex: 1, overflow: "hidden", padding: "8px", cursor: "text" }}
         className="xterm-wrapper"
+        onClick={() => xtermRef.current?.focus()}
       />
 
       {/* Search Bar */}

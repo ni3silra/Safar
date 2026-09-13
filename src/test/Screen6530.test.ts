@@ -138,6 +138,19 @@ describe('Screen6530 Engine', () => {
     expect(response.startsWith('\x01p  DATA')).toBe(true);
     expect(response.endsWith('\r')).toBe(true);
   });
+
+  it('correctly handles field closure when startProtected immediately follows startUnprotected', () => {
+    screen.enterProtectSubmode();
+    screen.setCursor(3, 10);
+    screen.startUnprotected();
+    // Immediate protect switch without cursor movement
+    screen.startProtected();
+
+    expect(screen.fields.length).toBe(1);
+    expect(screen.fields[0].startCol).toBe(10);
+    expect(screen.fields[0].endCol).toBe(10);
+    expect(screen.fields[0].length).toBe(1);
+  });
 });
 
 describe('translate6530ToAnsi Protocol Parser', () => {
@@ -182,5 +195,29 @@ describe('translate6530ToAnsi Protocol Parser', () => {
 
     expect(res2.data).toBe('\x1b[1;1HWorld');
     expect(res2.pendingRemainder).toBe('');
+  });
+
+  it('passes through ANSI OSC sequences (window title) and handles split OSC packets', () => {
+    const titleSeq = '\x1b]0;TACL - Super.User\x07';
+    const result = translate6530ToAnsi(titleSeq);
+    expect(result.data).toBe(titleSeq);
+    expect(result.pendingRemainder).toBe('');
+
+    // Split OSC across chunks
+    const chunk1 = 'Prompt> \x1b]0;Window';
+    const res1 = translate6530ToAnsi(chunk1);
+    expect(res1.data).toBe('Prompt> ');
+    expect(res1.pendingRemainder).toBe('\x1b]0;Window');
+
+    const chunk2 = res1.pendingRemainder + ' Title\x07Hello';
+    const res2 = translate6530ToAnsi(chunk2);
+    expect(res2.data).toBe('\x1b]0;Window Title\x07Hello');
+    expect(res2.pendingRemainder).toBe('');
+  });
+
+  it('filters out null padding bytes without breaking translation', () => {
+    const inputWithNuls = 'A\x00B\x00\x1b=  C\x00';
+    const res = translate6530ToAnsi(inputWithNuls);
+    expect(res.data).toBe('AB\x1b[1;1HC');
   });
 });
