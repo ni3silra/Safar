@@ -100,23 +100,33 @@ interface ScreenCommand {
   char?: string;
 }
 
-interface Translate6530Result {
+export interface Translate6530Result {
   data: string;
   modeSignal: 'block' | 'conv' | null; // server-sent block/conv mode switches
   writeReadActive: boolean; // true if DC1 framing detected (server is doing a WRITEREAD)
+  readCursorRequested: boolean; // true if host requested cursor address (ESC a or ESC ^)
   screenCommands: ScreenCommand[]; // commands for the Screen6530 buffer engine
+  pendingRemainder: string; // partial escape sequence carried over to next packet
 }
 
-function translate6530ToAnsi(data: string): Translate6530Result {
+export function translate6530ToAnsi(data: string): Translate6530Result {
   let result = '';
   let i = 0;
   let modeSignal: 'block' | 'conv' | null = null;
   let writeReadActive = false;
+  let readCursorRequested = false;
+  let pendingRemainder = '';
   const screenCommands: ScreenCommand[] = [];
 
   while (i < data.length) {
     // Check for ESC (0x1b)
-    if (data[i] === '\x1b' && i + 1 < data.length) {
+    if (data[i] === '\x1b') {
+      if (i + 1 >= data.length) {
+        // Lone ESC at end of chunk — buffer for next packet
+        pendingRemainder = data.substring(i);
+        break;
+      }
+
       const next = data[i + 1];
 
       // ── ANSI CSI pass-through: ESC [ ... ──
@@ -125,17 +135,24 @@ function translate6530ToAnsi(data: string): Translate6530Result {
         let j = i + 2;
         // Skip parameter bytes (0x20-0x3f: digits, semicolons, ?, etc.)
         while (j < data.length && data.charCodeAt(j) >= 0x20 && data.charCodeAt(j) <= 0x3f) j++;
+        if (j >= data.length) {
+          // Truncated CSI sequence at end of chunk — buffer for next packet
+          pendingRemainder = data.substring(i);
+          break;
+        }
         // Include the final byte (0x40-0x7e: letter)
-        if (j < data.length) j++;
+        j++;
         result += data.substring(i, j);
         i = j;
         continue;
       }
 
       // ── ANSI SS3 pass-through: ESC O (uppercase O, not zero) ──
-      // IMPORTANT: Check uppercase 'O' BEFORE the 6530 switch block,
-      // because lowercase 'o' is not SS3 on 6530.
-      if (next === 'O' && i + 2 < data.length) {
+      if (next === 'O') {
+        if (i + 2 >= data.length) {
+          pendingRemainder = data.substring(i);
+          break;
+        }
         result += data.substring(i, i + 3);
         i += 3;
         continue;
@@ -143,8 +160,11 @@ function translate6530ToAnsi(data: string): Translate6530Result {
 
       // ── 6530 Cursor Addressing: ESC = row col ──
       // Row and col are single bytes, space-offset (actual = byte - 0x20)
-      // ANSI uses 1-based indexing, so: row = byte - 0x20 + 1
-      if (next === '=' && i + 3 < data.length) {
+      if (next === '=') {
+        if (i + 3 >= data.length) {
+          pendingRemainder = data.substring(i);
+          break;
+        }
         const row0 = data.charCodeAt(i + 2) - 0x20; // 0-based for screen buffer
         const col0 = data.charCodeAt(i + 3) - 0x20;
         screenCommands.push({ type: 'cursor', row: row0, col: col0 });
@@ -154,34 +174,31 @@ function translate6530ToAnsi(data: string): Translate6530Result {
       }
 
       // ── 6530 Display Enhancement: ESC 6 attr ──
-      // Now supports COMBINED attributes via bitwise check (not else-if)
-      // e.g. attr=0x05 → underline(0x01) + reverse(0x04) → ESC[4;7m
       if (next === '6') {
-        if (i + 2 < data.length) {
-          const attr = data.charCodeAt(i + 2);
-          const parts: string[] = [];
-          if (attr & 0x01) parts.push('4');  // underline
-          if (attr & 0x02) parts.push('5');  // blink
-          if (attr & 0x04) parts.push('7');  // reverse video
-          if (attr & 0x08) parts.push('2');  // dim / half-bright
-          if (attr & 0x10) parts.push('8');  // invisible / hidden
-          if (attr & 0x20) parts.push('1');  // bold / bright
-          result += `\x1b[${parts.length > 0 ? parts.join(';') : '0'}m`;
-          i += 3;
-        } else {
-          result += '\x1b[4m'; // default to underline if truncated
-          i += 2;
+        if (i + 2 >= data.length) {
+          pendingRemainder = data.substring(i);
+          break;
         }
+        const attr = data.charCodeAt(i + 2);
+        const parts: string[] = [];
+        if (attr & 0x01) parts.push('4');  // underline
+        if (attr & 0x02) parts.push('5');  // blink
+        if (attr & 0x04) parts.push('7');  // reverse video
+        if (attr & 0x08) parts.push('2');  // dim / half-bright
+        if (attr & 0x10) parts.push('8');  // invisible / hidden
+        if (attr & 0x20) parts.push('1');  // bold / bright
+        result += `\x1b[${parts.length > 0 ? parts.join(';') : '0'}m`;
+        i += 3;
         continue;
       }
 
       // ── 6530 single-character escape sequences ──
       switch (next) {
         // Cursor movement — also track in screen buffer
-        case 'A': result += '\x1b[A'; screenCommands.push({ type: 'cursor', row: -1, col: -99 }); i += 2; continue; // cursor up (relative)
-        case 'B': result += '\x1b[B'; screenCommands.push({ type: 'cursor', row: -2, col: -99 }); i += 2; continue; // cursor down (relative)
-        case 'C': result += '\x1b[C'; screenCommands.push({ type: 'cursor', row: -99, col: -1 }); i += 2; continue; // cursor right (relative)
-        case 'D': result += '\x1b[D'; screenCommands.push({ type: 'cursor', row: -99, col: -2 }); i += 2; continue; // cursor left (relative)
+        case 'A': result += '\x1b[A'; screenCommands.push({ type: 'cursor', row: -1, col: -99 }); i += 2; continue; // cursor up
+        case 'B': result += '\x1b[B'; screenCommands.push({ type: 'cursor', row: -2, col: -99 }); i += 2; continue; // cursor down
+        case 'C': result += '\x1b[C'; screenCommands.push({ type: 'cursor', row: -99, col: -1 }); i += 2; continue; // cursor right
+        case 'D': result += '\x1b[D'; screenCommands.push({ type: 'cursor', row: -99, col: -2 }); i += 2; continue; // cursor left
         case 'H': result += '\x1b[H'; screenCommands.push({ type: 'cursor', row: 0, col: 0 }); i += 2; continue; // cursor home
         case 'F': i += 2; continue; // enter character mode — consume (xterm default)
 
@@ -198,23 +215,20 @@ function translate6530ToAnsi(data: string): Translate6530Result {
         case 'N': result += '\x1b[2m'; screenCommands.push({ type: 'protectStart' }); i += 2; continue;
 
         // Protect submode (ESC W = enter, ESC X = exit)
-        // ESC W: enter protect submode — clears screen, resets cursor, initializes field map
         case 'W': result += '\x1b[2J\x1b[H'; modeSignal = 'block'; screenCommands.push({ type: 'protectSubEnter' }); i += 2; continue;
-        // ESC X: exit protect submode — return to normal operation
         case 'X': result += '\x1b[0m'; modeSignal = 'conv'; screenCommands.push({ type: 'protectSubExit' }); i += 2; continue;
 
         // Display enhancement end
         case '7': result += '\x1b[0m'; i += 2; continue; // reset all attributes
 
-        // Block/conversational mode signals — signal to caller
-        case 'b': modeSignal = 'block'; i += 2; continue; // server sent: switch to block mode
-        case 'c': modeSignal = 'conv';  i += 2; continue; // server sent: switch to conversational mode
+        // Block/conversational mode signals
+        case 'b': modeSignal = 'block'; i += 2; continue; // switch to block mode
+        case 'c': modeSignal = 'conv';  i += 2; continue; // switch to conversational mode
 
-        // Cursor visibility (6530 uses ESC e = cursor off, ESC d = cursor on)
-        // Note: some docs show ESC ` for cursor on — we handle both
-        case 'e': result += '\x1b[?25l'; i += 2; continue; // cursor off (hide)
-        case 'd': result += '\x1b[?25h'; i += 2; continue; // cursor on (show)
-        case 'Y': result += '\x1b[?25h'; i += 2; continue; // cursor on (alternate)
+        // Cursor visibility
+        case 'e': result += '\x1b[?25l'; i += 2; continue; // cursor off
+        case 'd': result += '\x1b[?25h'; i += 2; continue; // cursor on
+        case 'Y': result += '\x1b[?25h'; i += 2; continue; // cursor on
 
         // Tab operations
         case 'i': result += '\t'; i += 2; continue;     // forward tab
@@ -224,24 +238,32 @@ function translate6530ToAnsi(data: string): Translate6530Result {
         case 'T': result += '\x1b[1S'; i += 2; continue; // scroll up
         case 'S': result += '\x1b[1T'; i += 2; continue; // scroll down
 
-        // Read cursor address (ESC Z) — ignored, xterm tracks its own cursor
+        // Read cursor address (ESC Z) — ignored
         case 'Z': i += 2; continue;
 
         // Insert/delete character
-        case 'P': result += '\x1b[1@'; i += 2; continue; // insert character position
-        case 'Q': result += '\x1b[1P'; i += 2; continue; // delete character position
+        case 'P': result += '\x1b[1@'; i += 2; continue;
+        case 'Q': result += '\x1b[1P'; i += 2; continue;
 
         // Bell / audible alarm
-        case 'E': result += '\x07'; i += 2; continue; // ring bell
+        case 'E': result += '\x07'; i += 2; continue;
 
-        // Terminal configuration (ESC v config_byte) — consume silently
-        // The host sends this to set block mode parameters, compression, etc.
-        case 'v': i += (i + 2 < data.length ? 3 : 2); continue;
+        // Terminal configuration (ESC v config_byte)
+        case 'v':
+          if (i + 2 >= data.length) {
+            pendingRemainder = data.substring(i);
+            break;
+          }
+          i += 3;
+          continue;
 
-        // Read cursor address (ESC a) — consume, we track cursor in Screen6530
-        case 'a': i += 2; continue;
+        // Read cursor address (ESC a or ESC ^)
+        case 'a':
+        case '^':
+          readCursorRequested = true;
+          i += 2;
+          continue;
 
-        // Set tab stop (ESC 1) — already handled above as back tab
         // Clear all tab stops (ESC 2) — consume
         case '2': i += 2; continue;
 
@@ -249,48 +271,38 @@ function translate6530ToAnsi(data: string): Translate6530Result {
         case 'o': result += '\x1b[0K'; i += 2; continue;
 
         default: {
-          // Unknown single-char 6530 sequence — silently drop it
-          // This prevents garbage from unrecognized 6530 control codes
           if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
             next === ')' || next === '(' || next === '#' || next === '&') {
             i += 2;
             continue;
           }
-          // Non-letter ESC sequence — pass through as-is
           result += data[i];
           i++;
           continue;
         }
       }
+      if (pendingRemainder) break;
     }
 
     // ── 6530 Control Characters ──
     // DC1 (0x11) — start of WRITEREAD message from server ("I'm going to read from you")
     // DC3 (0x13) — end of WRITEREAD message
-    // Signal this to the caller so block-mode can handle the response
     if (data[i] === '\x11') {
       writeReadActive = true;
       i++;
       continue;
     }
     if (data[i] === '\x13') {
-      // End of WRITEREAD framing — data between DC1..DC3 is the form screen
       i++;
       continue;
     }
 
-    // SOH (0x01) — start of header in 6530 protocol, consume
-    if (data[i] === '\x01') {
+    // SOH (0x01), STX (0x02) — consume framing
+    if (data[i] === '\x01' || data[i] === '\x02') {
       i++;
       continue;
     }
-    // STX (0x02) — start of text, consume
-    if (data[i] === '\x02') {
-      i++;
-      continue;
-    }
-    // ETX (0x03) — end of text, consume (not Ctrl+C in block mode context)
-    // Only consume if we're inside a write-read frame; otherwise pass through
+    // ETX (0x03) — consume if inside writeRead frame
     if (data[i] === '\x03' && writeReadActive) {
       i++;
       continue;
@@ -302,7 +314,7 @@ function translate6530ToAnsi(data: string): Translate6530Result {
     i++;
   }
 
-  return { data: result, modeSignal, writeReadActive, screenCommands };
+  return { data: result, modeSignal, writeReadActive, readCursorRequested, screenCommands, pendingRemainder };
 }
 
 import { Icons } from "./Icons";
@@ -326,15 +338,22 @@ export function TerminalComponent({
   useCustomColors = false,
   customForeground = "#e6edf3",
   customBackground = "#0d1117",
-  sessionTimeout = 120,
+  sessionTimeout: _sessionTimeout = 120,
   onTitleChange
 }: TerminalProps) {
-  // HP NonStop 6530 detection
-  const is6530 = termType === "6530";
-  const is6530Ref = useRef(is6530);
-  useEffect(() => { is6530Ref.current = is6530; }, [is6530]);
+  // HP NonStop 6530 detection: match "6530", "t6530", "hp6530", "6530-80", "tandem", etc.
+  const isConfigured6530 = Boolean(
+    termType && (termType === "6530" || termType.toLowerCase().includes("6530") || termType.toLowerCase().includes("tandem"))
+  );
+  const [is6530Session, setIs6530Session] = useState(isConfigured6530);
+  const is6530Ref = useRef(isConfigured6530);
+  useEffect(() => {
+    setIs6530Session(isConfigured6530);
+    is6530Ref.current = isConfigured6530;
+  }, [isConfigured6530]);
+
   // Choose the right sequence map based on terminal type
-  const CONTROL_SEQUENCES = is6530 ? HP_6530_SEQUENCES : VT_SEQUENCES;
+  const CONTROL_SEQUENCES = is6530Session ? HP_6530_SEQUENCES : VT_SEQUENCES;
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -343,14 +362,15 @@ export function TerminalComponent({
   const backspaceModeRef = useRef(backspaceMode); // Track latest backspace mode for closure
   const blockBufferRef = useRef(""); // Buffer for Inbuilt Block Mode
   const screen6530Ref = useRef<Screen6530>(new Screen6530()); // 6530 screen buffer engine
+  const pending6530BufferRef = useRef(""); // Buffer for incomplete 6530 escape sequences across network chunks
 
   // UI State
   const [showSearch, setShowSearch] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [showToolbar, setShowToolbar] = useState(false); // Collapsible toolbar state
   const [showHistoryModal, setShowHistoryModal] = useState(false); // History Modal State
-  const [isBlockMode, setIsBlockMode] = useState(is6530); // Enabled for 6530 sessions
-  const isBlockModeRef = useRef(is6530); // Ref for closure sync
+  const [isBlockMode, setIsBlockMode] = useState(false); // 6530 starts in Conversational mode (TACL); dynamically enters block mode when server commands it
+  const isBlockModeRef = useRef(false); // Ref for closure sync
   const historyBufferRef = useRef(""); // Generic command buffer for history
   const hpNsUserRef = useRef(""); // Tracks potential HP NS dynamic username
 
@@ -475,6 +495,7 @@ export function TerminalComponent({
       scrollback: scrollback,
       macOptionIsMeta: true,
       macOptionClickForcesSelection: true,
+      convertEol: true,
       // @ts-ignore - bellStyle exists in xterm.js but types might be outdated
       bellStyle: bellSound ? "sound" : "none",
     });
@@ -544,6 +565,14 @@ export function TerminalComponent({
           }
           return false; // Prevent xterm from processing it further
         }
+
+        // In 6530 conversational mode, default to ^H (0x08) for Tandem TACL/Guardian
+        if (is6530Ref.current) {
+          const bsCode = currentBackspaceMode === "ctrl-?" ? "\x7f" : "\x08";
+          sendData(bsCode);
+          return false;
+        }
+
         if (currentBackspaceMode === "ctrl-h") {
           sendData("\x08"); // ^H
           return false;
@@ -553,22 +582,57 @@ export function TerminalComponent({
         }
       }
 
-      // HP 6530 function key interception
+      // HP 6530 navigation & function keys
       if (is6530Ref.current && e.type === "keydown") {
-        // Tab key — field navigation in block mode
-        if (e.key === "Tab" && isBlockModeRef.current) {
+        // Local cursor navigation in Block Mode
+        if (isBlockModeRef.current) {
           const screen = screen6530Ref.current;
           if (screen.hasFields) {
-            const newPos = e.shiftKey ? screen.tabToPrevField() : screen.tabToNextField();
-            if (newPos) {
-              terminal.write(`\x1b[${newPos.row + 1};${newPos.col + 1}H`);
+            // Tab / Shift-Tab field navigation
+            if (e.key === "Tab") {
+              const newPos = e.shiftKey ? screen.tabToPrevField() : screen.tabToNextField();
+              if (newPos) {
+                terminal.write(`\x1b[${newPos.row + 1};${newPos.col + 1}H`);
+              }
+              e.preventDefault();
+              return false;
             }
-            e.preventDefault();
-            return false;
+
+            // Arrow keys inside block mode form
+            if (e.key === "ArrowLeft") {
+              const pos = screen.moveCursorLeft();
+              if (pos) terminal.write(`\x1b[${pos.row + 1};${pos.col + 1}H`);
+              e.preventDefault();
+              return false;
+            }
+            if (e.key === "ArrowRight") {
+              const pos = screen.moveCursorRight();
+              if (pos) terminal.write(`\x1b[${pos.row + 1};${pos.col + 1}H`);
+              e.preventDefault();
+              return false;
+            }
+            if (e.key === "ArrowUp") {
+              const pos = screen.moveCursorUp();
+              if (pos) terminal.write(`\x1b[${pos.row + 1};${pos.col + 1}H`);
+              e.preventDefault();
+              return false;
+            }
+            if (e.key === "ArrowDown") {
+              const pos = screen.moveCursorDown();
+              if (pos) terminal.write(`\x1b[${pos.row + 1};${pos.col + 1}H`);
+              e.preventDefault();
+              return false;
+            }
+            if (e.key === "Home") {
+              const pos = screen.homeCursor();
+              if (pos) terminal.write(`\x1b[${pos.row + 1};${pos.col + 1}H`);
+              e.preventDefault();
+              return false;
+            }
           }
         }
 
-        // F-key interception — in block mode with fields, trigger WRITEREAD response
+        // F-key interception
         const fkeyEntry = FKEY_MAP[e.key];
         if (fkeyEntry) {
           const seqKey = e.shiftKey ? fkeyEntry.shift : fkeyEntry.normal;
@@ -577,12 +641,13 @@ export function TerminalComponent({
             e.preventDefault();
             const screen = screen6530Ref.current;
             if (isBlockModeRef.current && screen.hasFields) {
-              // Generate WRITEREAD response with field data + F-key trigger
+              // Block mode: generate WRITEREAD response with F-key trigger
               const response = screen.generateWriteReadResponse(seq);
               sendData(response);
             } else {
-              // Simple mode — just send the F-key sequence
-              sendData(seq);
+              // Conversational mode: standard 6530 F-key sequence is SOH <key> CR
+              const keyChar = seq.length >= 2 ? seq[1] : seq;
+              sendData(`\x01${keyChar}\r`);
             }
             return false;
           }
@@ -697,12 +762,6 @@ export function TerminalComponent({
         } else {
           // ── Simple buffer mode (no form fields) ──
           const bufferedCommand = blockBufferRef.current;
-          // Erase locally-echoed text so it doesn't show after submit
-          let erasure = "";
-          for (let ci = 0; ci < bufferedCommand.length; ci++) {
-            erasure += "\b \b";
-          }
-          terminal.write(erasure);
           // Send the buffered input to the server
           sendData(bufferedCommand + "\r");
         }
@@ -774,11 +833,20 @@ export function TerminalComponent({
       if (event.payload.session_id === sessionId) {
         const incomingData = event.payload.data;
 
+        // Dynamic 6530 Auto-detection: If connection was opened with another terminal type
+        // (e.g. xterm, vt100), but the host sends signature 6530 sequences (ESC W to enter protect
+        // submode, or ESC b for block mode), automatically promote the session to 6530 mode.
+        if (!is6530Ref.current && (incomingData.includes("\x1bW") || incomingData.includes("\x1bb"))) {
+          setIs6530Session(true);
+          is6530Ref.current = true;
+        }
+
         // --- 6530 Block Mode Detection & Sequence Filtering ---
         if (is6530Ref.current) {
-          // Translate 6530-specific escape sequences to ANSI equivalents for xterm.js.
-          // The translator also returns screen commands for the Screen6530 buffer engine.
-          const translated = translate6530ToAnsi(incomingData);
+          // Prepend any leftover bytes from previous packet to handle split escape sequences
+          const chunk = pending6530BufferRef.current + incomingData;
+          const translated = translate6530ToAnsi(chunk);
+          pending6530BufferRef.current = translated.pendingRemainder;
           const screen = screen6530Ref.current;
 
           // ── Process screen commands to update the 6530 buffer ──
@@ -812,16 +880,15 @@ export function TerminalComponent({
             }
           }
 
-          // --- Auto-respond to DC1 (WRITEREAD request from host) ---
-          // When the host sends DC1, it's requesting the terminal to send back
-          // the current field data. We respond automatically with the screen buffer.
-          if (translated.writeReadActive && screen.hasFields) {
-            const autoResponse = screen.generateWriteReadResponse('\r');
-            sendData(autoResponse);
+          // If server requested cursor address (ESC a or ESC ^)
+          if (translated.readCursorRequested) {
+            const cursorRowChar = String.fromCharCode(screen.cursorRow + 0x20);
+            const cursorColChar = String.fromCharCode(screen.cursorCol + 0x20);
+            sendData(`\x1b=${cursorRowChar}${cursorColChar}`);
           }
 
-          // --- Handle server-sent mode switches (ESC b / ESC c / ESC W / ESC X) ---
-          if (translated.modeSignal === 'block') {
+          // --- Handle server-sent mode switches (ESC b / ESC c / ESC W / ESC X / DC1) ---
+          if (translated.modeSignal === 'block' || translated.writeReadActive) {
             setIsBlockMode(true);
             isBlockModeRef.current = true;
             blockBufferRef.current = "";
@@ -829,22 +896,6 @@ export function TerminalComponent({
             setIsBlockMode(false);
             isBlockModeRef.current = false;
             blockBufferRef.current = "";
-          }
-
-          // Also detect ANSI alt-buffer as a fallback (some servers via vt220 TERM)
-          if (incomingData.includes("\x1b[?1049h") || incomingData.includes("\x1b[?47h")) {
-            setIsBlockMode(true);
-            isBlockModeRef.current = true;
-          } else if (incomingData.includes("\x1b[?1049l") || incomingData.includes("\x1b[?47l")) {
-            setIsBlockMode(false);
-            isBlockModeRef.current = false;
-            blockBufferRef.current = "";
-          }
-
-          // Screen clear in 6530 context often means a new form screen
-          if (incomingData.includes("\x1b[2J") && !translated.modeSignal) {
-            setIsBlockMode(true);
-            isBlockModeRef.current = true;
           }
 
           terminal.write(translated.data);
@@ -950,7 +1001,7 @@ export function TerminalComponent({
         <div style={{
           background: "var(--bg-secondary)", border: "1px solid var(--border-color)",
           padding: "2px 8px", borderRadius: "12px", fontSize: "11px",
-          color: is6530 ? "#60a5fa" : "var(--text-muted)",
+          color: is6530Session ? "#60a5fa" : "var(--text-muted)",
           display: "flex", alignItems: "center", gap: "6px"
         }}>
           <span style={{
@@ -958,7 +1009,7 @@ export function TerminalComponent({
             background: isBlockMode ? "#60a5fa" : "var(--text-muted)",
             boxShadow: isBlockMode ? "0 0 6px rgba(96,165,250,0.5)" : "none"
           }} />
-          {is6530 ? (isBlockMode ? "6530 Block" : "6530 Conv.") : (isBlockMode ? "Block Mode" : "Line Mode")}
+          {is6530Session ? (isBlockMode ? "6530 Block" : "6530 Conv.") : (isBlockMode ? "Block Mode" : "Line Mode")}
         </div>
 
         {/* Clear Button */}

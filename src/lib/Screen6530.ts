@@ -132,8 +132,14 @@ export class Screen6530 {
       startCol: this.cursorCol,
       endRow: this.cursorRow,
       endCol: this.cursorCol,
-      length: 0,
+      length: 1,
     });
+    // Mark the starting cell as belonging to this field
+    if (this.cursorRow < SCREEN_ROWS && this.cursorCol < SCREEN_COLS) {
+      const cell = this.buffer[this.cursorRow][this.cursorCol];
+      cell.fieldId = fieldId;
+      cell.protected = false;
+    }
   }
 
   // ─── Close Current Unprotected Field ───
@@ -247,7 +253,20 @@ export class Screen6530 {
     if (cell.protected) return false;
 
     // Check if we're in a valid field
-    if (cell.fieldId < 0 && this.protectSubmode) return false;
+    if (cell.fieldId < 0 && this.protectSubmode) {
+      if (this.currentFieldId >= 0) {
+        cell.fieldId = this.currentFieldId;
+        cell.protected = false;
+        const field = this.fields.find(f => f.id === this.currentFieldId);
+        if (field) {
+          field.endRow = this.cursorRow;
+          field.endCol = this.cursorCol;
+          field.length = this._calculateFieldLength(field);
+        }
+      } else {
+        return false;
+      }
+    }
 
     cell.char = ch;
     cell.modified = true;
@@ -256,13 +275,16 @@ export class Screen6530 {
     const fieldId = cell.fieldId;
     this._advanceCursor();
 
-    // If the new position is in a different field or protected, don't overflow
-    if (this.protectSubmode) {
-      const newCell = this.buffer[this.cursorRow][this.cursorCol];
-      if (newCell.protected || newCell.fieldId !== fieldId) {
-        // Cursor moved out of field — stay at last position of the field
-        // (allow it — the cursor will appear on the next protected char,
-        // but the next char typed will be rejected, which is correct 6530 behavior)
+    if (this.currentFieldId === fieldId && this.cursorRow < SCREEN_ROWS && this.cursorCol < SCREEN_COLS) {
+      const nextCell = this.buffer[this.cursorRow][this.cursorCol];
+      if (nextCell.fieldId < 0 && !nextCell.protected) {
+        nextCell.fieldId = fieldId;
+        const field = this.fields.find(f => f.id === fieldId);
+        if (field) {
+          field.endRow = this.cursorRow;
+          field.endCol = this.cursorCol;
+          field.length = this._calculateFieldLength(field);
+        }
       }
     }
 
@@ -285,7 +307,7 @@ export class Screen6530 {
     const cell = this.buffer[this.cursorRow][this.cursorCol];
 
     // Don't delete from protected area
-    if (cell.protected) {
+    if (cell.protected || (this.protectSubmode && cell.fieldId < 0)) {
       // Restore cursor position
       this._advanceCursor();
       return false;
@@ -453,22 +475,90 @@ export class Screen6530 {
 
   // ─── Generate WRITEREAD Response ───
   // Per 6530 spec, the response format is:
-  //   DC2 (acknowledge) + cursor_row + cursor_col + field_data + CR
+  //   If Enter: DC2 (0x12) + cursor_row + cursor_col + field_data + CR
+  //   If Function Key (F1-F16): SOH (0x01) + key_code + cursor_row + cursor_col + field_data + CR
   // Cursor position bytes are space-offset (pos + 0x20)
   // Field data is separated by FS (0x1C) between fields
-  generateWriteReadResponse(_triggerKey?: string): string {
+  generateWriteReadResponse(triggerKey?: string): string {
     const cursorRow = String.fromCharCode(this.cursorRow + 0x20);
     const cursorCol = String.fromCharCode(this.cursorCol + 0x20);
     const fieldData = this.collectFieldData();
-    
-    // DC2 (0x12) = Device Control 2 — terminal readiness acknowledgment
-    // The response includes: DC2 + cursor_pos + field_data + CR
-    const response = '\x12' + cursorRow + cursorCol + fieldData + '\r';
-    
+
+    let prefix = '\x12'; // DC2 default for Enter submission
+    if (triggerKey) {
+      // Check if triggerKey specifies an F-key sequence or code
+      let keyChar = '';
+      if (triggerKey.startsWith('\x1b') && triggerKey.length >= 2) {
+        keyChar = triggerKey[1];
+      } else if (triggerKey.startsWith('\x01') && triggerKey.length >= 2) {
+        keyChar = triggerKey[1];
+      } else if (triggerKey.length === 1 && triggerKey !== '\r' && triggerKey !== '\n') {
+        keyChar = triggerKey;
+      }
+
+      if (keyChar && ((keyChar >= 'a' && keyChar <= 'w') || (keyChar >= 'A' && keyChar <= 'W'))) {
+        prefix = '\x01' + keyChar;
+      }
+    }
+
+    const response = prefix + cursorRow + cursorCol + fieldData + '\r';
+
     // Clear modified flags after sending
     this._clearModifiedFlags();
-    
+
     return response;
+  }
+
+  // ─── Local Cursor Movement in Block Mode ───
+  moveCursorLeft(): { row: number; col: number } | null {
+    if (this.cursorCol > 0) {
+      this.cursorCol--;
+    } else if (this.cursorRow > 0) {
+      this.cursorRow--;
+      this.cursorCol = SCREEN_COLS - 1;
+    } else {
+      return null;
+    }
+    return { row: this.cursorRow, col: this.cursorCol };
+  }
+
+  moveCursorRight(): { row: number; col: number } | null {
+    if (this.cursorCol < SCREEN_COLS - 1) {
+      this.cursorCol++;
+    } else if (this.cursorRow < SCREEN_ROWS - 1) {
+      this.cursorRow++;
+      this.cursorCol = 0;
+    } else {
+      return null;
+    }
+    return { row: this.cursorRow, col: this.cursorCol };
+  }
+
+  moveCursorUp(): { row: number; col: number } | null {
+    if (this.cursorRow > 0) {
+      this.cursorRow--;
+      return { row: this.cursorRow, col: this.cursorCol };
+    }
+    return null;
+  }
+
+  moveCursorDown(): { row: number; col: number } | null {
+    if (this.cursorRow < SCREEN_ROWS - 1) {
+      this.cursorRow++;
+      return { row: this.cursorRow, col: this.cursorCol };
+    }
+    return null;
+  }
+
+  homeCursor(): { row: number; col: number } | null {
+    if (this.fields.length > 0) {
+      this.cursorRow = this.fields[0].startRow;
+      this.cursorCol = this.fields[0].startCol;
+    } else {
+      this.cursorRow = 0;
+      this.cursorCol = 0;
+    }
+    return { row: this.cursorRow, col: this.cursorCol };
   }
 
   // ─── Clear Modified Flags ───
@@ -510,7 +600,8 @@ export class Screen6530 {
   // ─── Is Cursor in Protected Area? ───
   isCursorProtected(): boolean {
     if (this.cursorRow >= SCREEN_ROWS || this.cursorCol >= SCREEN_COLS) return true;
-    return this.buffer[this.cursorRow][this.cursorCol].protected;
+    const cell = this.buffer[this.cursorRow][this.cursorCol];
+    return cell.protected || (this.protectSubmode && cell.fieldId < 0);
   }
 
   // ─── Get Screen Content as String (Debug) ───
