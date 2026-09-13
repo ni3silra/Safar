@@ -261,7 +261,7 @@ impl TelnetManager {
                         }
 
                         if !clean_data.is_empty() {
-                            let data_str = String::from_utf8_lossy(&clean_data).to_string();
+                            let data_str = decode_terminal_bytes(&clean_data);
 
                             // Auto-enter Service Name (e.g. "TACL") on TELSERV prompt
                             if !service_sent && (data_str.contains("Enter Choice>") || data_str.contains("Enter choice>")) {
@@ -352,3 +352,82 @@ impl TelnetManager {
         Ok(())
     }
 }
+
+/// Decodes incoming terminal bytes into a UTF-8 String without character loss.
+/// Fast-paths valid UTF-8 streams. For legacy systems (like Tandem NonStop or European systems)
+/// sending ISO-8859-1 / Windows-1252 or 8-bit C1 control characters, non-UTF-8 bytes are
+/// decoded into their proper Unicode characters instead of being corrupted to U+FFFD ('?').
+pub fn decode_terminal_bytes(bytes: &[u8]) -> String {
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
+    }
+
+    let mut result = String::with_capacity(bytes.len() * 2);
+    let mut i = 0;
+    while i < bytes.len() {
+        match std::str::from_utf8(&bytes[i..]) {
+            Ok(s) => {
+                result.push_str(s);
+                break;
+            }
+            Err(e) => {
+                let valid_len = e.valid_up_to();
+                if valid_len > 0 {
+                    if let Ok(s) = std::str::from_utf8(&bytes[i..i + valid_len]) {
+                        result.push_str(s);
+                    }
+                    i += valid_len;
+                }
+                if let Some(err_len) = e.error_len() {
+                    for &b in &bytes[i..i + err_len] {
+                        result.push(decode_single_byte(b));
+                    }
+                    i += err_len;
+                } else {
+                    for &b in &bytes[i..] {
+                        result.push(decode_single_byte(b));
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    result
+}
+
+#[inline]
+fn decode_single_byte(b: u8) -> char {
+    match b {
+        0x80 => '€',
+        0x82 => '‚',
+        0x83 => 'ƒ',
+        0x84 => '„', // German low quote
+        0x85 => '…',
+        0x86 => '†',
+        0x87 => '‡',
+        0x88 => 'ˆ',
+        0x89 => '‰',
+        0x8A => 'Š',
+        0x8B => '‹',
+        0x8C => 'Œ',
+        0x8E => '\u{008E}', // C1 SS2
+        0x8F => '\u{008F}', // C1 SS3
+        0x91 => '‘',
+        0x92 => '’',
+        0x93 => '“', // German high quote
+        0x94 => '”',
+        0x95 => '•',
+        0x96 => '–', // en dash
+        0x97 => '—', // em dash
+        0x98 => '˜',
+        0x99 => '™',
+        0x9A => 'š',
+        0x9B => '\u{009B}', // C1 CSI
+        0x9C => 'œ',
+        0x9D => '\u{009D}', // C1 OSC
+        0x9E => 'ž',
+        0x9F => 'Ÿ',
+        _ => b as char, // 0x00-0x7F and 0xA0-0xFF (exact 1:1 ISO-8859-1 Latin-1: ä, ö, ü, ß, §, etc.)
+    }
+}
+

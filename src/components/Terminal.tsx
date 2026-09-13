@@ -119,6 +119,15 @@ export interface Translate6530Result {
 }
 
 export function translate6530ToAnsi(data: string): Translate6530Result {
+  // Normalize 8-bit C1 control characters (ISO-8859-1 / ECMA-48) to standard 7-bit ESC equivalents
+  data = data
+    .replace(/\u009b/g, '\x1b[')
+    .replace(/\u009d/g, '\x1b]')
+    .replace(/\u008e/g, '\x1bN')
+    .replace(/\u008f/g, '\x1bO')
+    .replace(/\u0090/g, '\x1bP')
+    .replace(/\u009c/g, '\x1b\\');
+
   let result = '';
   let i = 0;
   let modeSignal: 'block' | 'conv' | null = null;
@@ -227,14 +236,28 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
           break;
         }
         const attr = data.charCodeAt(i + 2);
+        // In Tandem 6530, bits 0-4 are the display enhancement flags:
+        // Bit 0: Underline
+        // Bit 1: Blink
+        // Bit 2: Reverse video
+        // Bit 3: Half-bright / Dim
+        // Bit 4: Hidden / Invisible
+        // Bits 5 and 6 (0x20 space, 0x40 '@') are ASCII printable offsets, NOT enhancements.
+        const flags = attr & 0x1f;
         const parts: string[] = [];
-        if (attr & 0x01) parts.push('4');  // underline
-        if (attr & 0x02) parts.push('5');  // blink
-        if (attr & 0x04) parts.push('7');  // reverse video
-        if (attr & 0x08) parts.push('2');  // dim / half-bright
-        if (attr & 0x10) parts.push('8');  // invisible / hidden
-        if (attr & 0x20) parts.push('1');  // bold / bright
-        result += `\x1b[${parts.length > 0 ? parts.join(';') : '0'}m`;
+        if (flags & 0x01) parts.push('4');  // underline
+        if (flags & 0x02) parts.push('5');  // blink
+        if (flags & 0x04) parts.push('7');  // reverse video
+        if (flags & 0x08) parts.push('2');  // dim / half-bright
+        if (flags & 0x10) parts.push('8');  // invisible / hidden
+
+        // ESC 6 replaces all prior enhancements. Always emit \x1b[0m first to clear reverse video / styles,
+        // then apply active enhancements if any.
+        if (parts.length > 0) {
+          result += `\x1b[0;${parts.join(';')}m`;
+        } else {
+          result += '\x1b[0m';
+        }
         i += 3;
         continue;
       }
@@ -334,8 +357,13 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
         case 'o': result += '\x1b[0K'; i += 2; continue;
 
         default: {
-          if ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
-            next === ')' || next === '(' || next === '#' || next === '&') {
+          if (
+            (next >= 'a' && next <= 'z') ||
+            (next >= 'A' && next <= 'Z') ||
+            (next >= '0' && next <= '9') ||
+            next === ')' || next === '(' || next === '#' || next === '&' ||
+            next === '%' || next === '@' || next === '<' || next === '>'
+          ) {
             i += 2;
             continue;
           }
@@ -381,6 +409,13 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
     }
     // ETX (0x03) — consume if inside writeRead frame
     if (data[i] === '\x03' && writeReadActive) {
+      i++;
+      continue;
+    }
+
+    // Ignore stray non-printable C1 control characters (0x80-0x9F)
+    const code = data.charCodeAt(i);
+    if (code >= 0x80 && code <= 0x9f) {
       i++;
       continue;
     }

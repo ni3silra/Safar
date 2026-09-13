@@ -264,7 +264,7 @@ impl SshManager {
                             }
                             Ok(n) => {
                                 last_keepalive = std::time::Instant::now();
-                                let data = String::from_utf8_lossy(&buffer[..n]).to_string();
+                                let data = crate::telnet::decode_terminal_bytes(&buffer[..n]);
                                 let _ = app_handle_clone.emit(
                                     "terminal-data",
                                     TerminalData {

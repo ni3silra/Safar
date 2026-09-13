@@ -206,9 +206,55 @@ describe('translate6530ToAnsi Protocol Parser', () => {
     expect(daResult.deviceAttributesRequested).toBe(true);
     expect(daResult.data).toBe(''); // Consumed
 
-    // Ensure ESC 6 does NOT emit reverse video (\x1b[7m) or highlight text
+    // Ensure ESC 6 does NOT emit reverse video (\x1b[7m) or highlight text on normal prompt
     const esc6Result = translate6530ToAnsi('\x1b6Prompt>');
     expect(esc6Result.data).not.toContain('\x1b[7m');
+  });
+
+  it('correctly toggles and resets reverse video via ESC 6 without leaving persistent white backgrounds', () => {
+    // ESC 6 $ (0x24 = reverse video bit 2 set, offset by 0x20 space)
+    const revResult = translate6530ToAnsi('\x1b6$Guten Abend, NISI');
+    expect(revResult.data).toBe('\x1b[0;7mGuten Abend, NISI');
+
+    // ESC 6 <space> (0x20 = normal text, all enhancement bits 0) -> MUST emit \x1b[0m to reset reverse video
+    const normResult = translate6530ToAnsi('\x1b6 $USER1 USNISI 1>');
+    expect(normResult.data).toBe('\x1b[0m$USER1 USNISI 1>');
+
+    // Full banner flow: reverse video banner followed by normal text
+    const fullBannerFlow = '\x1b6$Guten Abend, NISI System: \\OX8\x1b6 \r\n$USER1 USNISI 1> who';
+    const flowResult = translate6530ToAnsi(fullBannerFlow);
+    expect(flowResult.data).toBe('\x1b[0;7mGuten Abend, NISI System: \\OX8\x1b[0m\r\n$USER1 USNISI 1> who');
+
+    // ESC 6 D (0x44 = reverse video bit 2 set, offset by 0x40 '@')
+    const revAtResult = translate6530ToAnsi('\x1b6DBANNER');
+    expect(revAtResult.data).toBe('\x1b[0;7mBANNER');
+
+    // ESC 6 @ (0x40 = normal text) -> MUST emit \x1b[0m
+    const normAtResult = translate6530ToAnsi('\x1b6@Normal');
+    expect(normAtResult.data).toBe('\x1b[0mNormal');
+  });
+
+  it('normalizes 8-bit C1 controls (CSI 0x9B, OSC 0x9D) to ANSI equivalents', () => {
+    // 8-bit CSI (\u009B) followed by 0m -> \x1b[0m
+    const csiReset = translate6530ToAnsi('\u009b0m');
+    expect(csiReset.data).toBe('\x1b[0m');
+
+    // 8-bit CSI clear screen (\u009B2J)
+    const csiClear = translate6530ToAnsi('\u009b2J');
+    expect(csiClear.data).toBe('\x1b[2J');
+  });
+
+  it('preserves ISO-8859-1 / European characters without corruption or replacement characters', () => {
+    const germanText = 'Guten Abend: ä ö ü ß Ä Ö Ü § „German“ – 100€';
+    const res = translate6530ToAnsi(germanText);
+    expect(res.data).toBe(germanText);
+    expect(res.data).not.toContain('\uFFFD');
+  });
+
+  it('filters stray non-printable C1 control characters (0x80-0x9F)', () => {
+    const textWithC1 = 'Hello\u0080\u0081World';
+    const res = translate6530ToAnsi(textWithC1);
+    expect(res.data).toBe('HelloWorld');
   });
 
   it('handles split escape sequence chunks via pendingRemainder', () => {
