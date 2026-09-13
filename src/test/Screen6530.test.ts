@@ -174,17 +174,28 @@ describe('translate6530ToAnsi Protocol Parser', () => {
     const dc1Result = translate6530ToAnsi('\x11Form Data\x13');
     expect(dc1Result.writeReadActive).toBe(true);
 
-    // ESC a -> Read Cursor Address
+    // ESC a and ESC Z -> Read Cursor Address / Identify
     const cursorQueryResult = translate6530ToAnsi('\x1ba');
     expect(cursorQueryResult.readCursorRequested).toBe(true);
+
+    const cursorZResult = translate6530ToAnsi('\x1bZ');
+    expect(cursorZResult.readCursorRequested).toBe(true);
 
     // ESC ^ -> Read Primary Terminal Status
     const statusQueryResult = translate6530ToAnsi('\x1b^');
     expect(statusQueryResult.readStatusRequested).toBe(true);
 
+    // ESC ] -> Read Secondary Terminal Status (when not followed by digit)
+    const secStatusQueryResult = translate6530ToAnsi('\x1b]');
+    expect(secStatusQueryResult.readSecondaryStatusRequested).toBe(true);
+
     // ESC / -> Read Model Number
     const modelQueryResult = translate6530ToAnsi('\x1b/');
     expect(modelQueryResult.readModelRequested).toBe(true);
+
+    // ESC ? -> Read Terminal ID
+    const idQueryResult = translate6530ToAnsi('\x1b?');
+    expect(idQueryResult.readIdRequested).toBe(true);
 
     // ENQ (\x05) -> Host Enquiry
     const enqResult = translate6530ToAnsi('\x05');
@@ -194,6 +205,10 @@ describe('translate6530ToAnsi Protocol Parser', () => {
     const daResult = translate6530ToAnsi('\x1b[c');
     expect(daResult.deviceAttributesRequested).toBe(true);
     expect(daResult.data).toBe(''); // Consumed
+
+    // Ensure ESC 6 does NOT emit reverse video (\x1b[7m) or highlight text
+    const esc6Result = translate6530ToAnsi('\x1b6Prompt>');
+    expect(esc6Result.data).not.toContain('\x1b[7m');
   });
 
   it('handles split escape sequence chunks via pendingRemainder', () => {

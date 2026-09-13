@@ -190,11 +190,10 @@ impl SshManager {
         })?;
 
         // Request PTY
-        // When user selects "6530", the canonical terminfo entry on HP NonStop is "t6530".
-        // Sending "t6530" ensures NonStop OpenSSH sets the Guardian device subtype to 6530 (Subtype 1),
-        // which allows DBU, Pathway, and other block-mode utilities to run natively.
+        // On HP NonStop, OpenSSH specifically inspects the term string to allocate
+        // a Guardian Device Subtype 1 (6530) PTY. The standard identifier is "6530".
         let raw_term = config.term_type.as_deref().unwrap_or("xterm-256color");
-        let term = if raw_term == "6530" { "t6530" } else { raw_term };
+        let term = if raw_term == "t6530" { "6530" } else { raw_term };
         channel
             .request_pty(term, None, Some((80, 24, 0, 0)))
             .map_err(|e| SshError::ChannelError(format!("Failed to request PTY: {}", e)))?;

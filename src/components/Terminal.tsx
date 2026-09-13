@@ -106,7 +106,9 @@ export interface Translate6530Result {
   writeReadActive: boolean; // true if DC1 framing detected (server is doing a WRITEREAD)
   readCursorRequested: boolean; // true if host requested cursor address (ESC a)
   readStatusRequested: boolean; // true if host requested terminal status (ESC ^)
+  readSecondaryStatusRequested: boolean; // true if host requested secondary terminal status (ESC ])
   readModelRequested: boolean;  // true if host requested model number (ESC /)
+  readIdRequested: boolean;     // true if host requested terminal ID (ESC ?)
   deviceAttributesRequested: boolean; // true if host requested DA (ESC [ c)
   enquiryRequested: boolean; // true if host sent ENQ (0x05)
   screenCommands: ScreenCommand[]; // commands for the Screen6530 buffer engine
@@ -120,7 +122,9 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
   let writeReadActive = false;
   let readCursorRequested = false;
   let readStatusRequested = false;
+  let readSecondaryStatusRequested = false;
   let readModelRequested = false;
+  let readIdRequested = false;
   let deviceAttributesRequested = false;
   let enquiryRequested = false;
   let pendingRemainder = '';
@@ -162,23 +166,29 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
         continue;
       }
 
-      // ── ANSI OSC pass-through: ESC ] ... (BEL \x07 or ST \x1b\) ──
-      // Operating System Commands used by shells for window title setting, etc.
+      // ── ANSI OSC (ESC ] <digit> ...) vs 6530 Read Secondary Terminal Status (ESC ]) ──
       if (next === ']') {
-        let j = i + 2;
-        while (j < data.length && data[j] !== '\x07' && !(data[j] === '\x1b' && j + 1 < data.length && data[j + 1] === '\\')) {
-          j++;
+        // If followed by digit (e.g. \x1b]0;title\x07), this is an ANSI OSC sequence
+        if (i + 2 < data.length && data.charCodeAt(i + 2) >= 0x30 && data.charCodeAt(i + 2) <= 0x39) {
+          let j = i + 2;
+          while (j < data.length && data[j] !== '\x07' && !(data[j] === '\x1b' && j + 1 < data.length && data[j + 1] === '\\')) {
+            j++;
+          }
+          if (j >= data.length) {
+            pendingRemainder = data.substring(i);
+            break;
+          }
+          if (data[j] === '\x07') j++;
+          else if (data[j] === '\x1b') j += 2;
+          result += data.substring(i, j);
+          i = j;
+          continue;
+        } else {
+          // 6530 Read Secondary Terminal Status: ESC ]
+          readSecondaryStatusRequested = true;
+          i += 2;
+          continue;
         }
-        if (j >= data.length) {
-          // Truncated OSC sequence at end of chunk — buffer for next packet
-          pendingRemainder = data.substring(i);
-          break;
-        }
-        if (data[j] === '\x07') j++;
-        else if (data[j] === '\x1b') j += 2;
-        result += data.substring(i, j);
-        i = j;
-        continue;
       }
 
       // ── ANSI SS3 pass-through: ESC O (uppercase O, not zero) ──
@@ -252,8 +262,9 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
         case 'W': result += '\x1b[2J\x1b[H'; modeSignal = 'block'; screenCommands.push({ type: 'protectSubEnter' }); i += 2; continue;
         case 'X': result += '\x1b[0m'; modeSignal = 'conv'; screenCommands.push({ type: 'protectSubExit' }); i += 2; continue;
 
-        // Display enhancement end
-        case '7': result += '\x1b[0m'; i += 2; continue; // reset all attributes
+        // Save / Restore Cursor (VT / ANSI pass-through)
+        case '7': result += '\x1b7'; i += 2; continue;
+        case '8': result += '\x1b8'; i += 2; continue;
 
         // Block/conversational mode signals
         case 'b': modeSignal = 'block'; i += 2; continue; // switch to block mode
@@ -272,8 +283,12 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
         case 'T': result += '\x1b[1S'; i += 2; continue; // scroll up
         case 'S': result += '\x1b[1T'; i += 2; continue; // scroll down
 
-        // Read cursor address (ESC Z) — ignored
-        case 'Z': i += 2; continue;
+        // Read cursor address / identify terminal (ESC a / ESC Z)
+        case 'a':
+        case 'Z':
+          readCursorRequested = true;
+          i += 2;
+          continue;
 
         // Insert/delete character
         case 'P': result += '\x1b[1@'; i += 2; continue;
@@ -291,12 +306,6 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
           i += 3;
           continue;
 
-        // Read cursor address (ESC a)
-        case 'a':
-          readCursorRequested = true;
-          i += 2;
-          continue;
-
         // Read Primary Terminal Status (ESC ^)
         case '^':
           readStatusRequested = true;
@@ -306,6 +315,12 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
         // Read Model Number (ESC /)
         case '/':
           readModelRequested = true;
+          i += 2;
+          continue;
+
+        // Read Terminal ID (ESC ?)
+        case '?':
+          readIdRequested = true;
           i += 2;
           continue;
 
@@ -343,10 +358,11 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
     }
 
     // ── 6530 Control Characters ──
-    // DC1 (0x11) — start of WRITEREAD message from server ("I'm going to read from you")
-    // DC3 (0x13) — end of WRITEREAD message
+    // DC1 (0x11) — start of WRITEREAD message from server
+    // DC3 (0x13) — end of WRITEREAD message (consume)
     if (data[i] === '\x11') {
       writeReadActive = true;
+      modeSignal = 'block';
       i++;
       continue;
     }
@@ -378,7 +394,9 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
     writeReadActive,
     readCursorRequested,
     readStatusRequested,
+    readSecondaryStatusRequested,
     readModelRequested,
+    readIdRequested,
     deviceAttributesRequested,
     enquiryRequested,
     screenCommands,
@@ -951,23 +969,36 @@ export function TerminalComponent({
             }
           }
 
-          // If server requested cursor address (ESC a)
+          // If server requested cursor address (ESC a or ESC Z)
           if (translated.readCursorRequested) {
-            const cursorRowChar = String.fromCharCode(screen.cursorRow + 0x20);
-            const cursorColChar = String.fromCharCode(screen.cursorCol + 0x20);
-            sendData(`\x1b=${cursorRowChar}${cursorColChar}`);
+            const activeBuf = xtermRef.current?.buffer.active;
+            const cursorY = activeBuf ? activeBuf.cursorY : screen.cursorRow;
+            const cursorX = activeBuf ? activeBuf.cursorX : screen.cursorCol;
+            const cursorRowChar = String.fromCharCode(Math.min(23, Math.max(0, cursorY)) + 0x20);
+            const cursorColChar = String.fromCharCode(Math.min(79, Math.max(0, cursorX)) + 0x20);
+            sendData(`\x1b=${cursorRowChar}${cursorColChar}\r`);
           }
 
           // If server requested 6530 Primary Terminal Status (ESC ^)
           if (translated.readStatusRequested) {
             // Standard 6530 status: ESC ^ <p1><p2><p3><p4> CR
-            // p1='0' (6530 model), p2='0' (display memory), p3='0' (keyboard), p4='0' (ready)
-            sendData("\x1b^0000\r");
+            // 4 spaces (0x20): bit 5=1, bit 6=0, bits 0-4=0 (all error/parity bits 0, clean ready status)
+            sendData("\x1b^    \r");
+          }
+
+          // If server requested 6530 Secondary Terminal Status (ESC ])
+          if (translated.readSecondaryStatusRequested) {
+            sendData("\x1b]    \r");
           }
 
           // If server requested 6530 Model Number (ESC /)
           if (translated.readModelRequested) {
             sendData("\x1b/6530\r");
+          }
+
+          // If server requested 6530 Terminal ID (ESC ?)
+          if (translated.readIdRequested) {
+            sendData("\x1b?6530\r");
           }
 
           // If server sent ENQ (0x05)
@@ -977,7 +1008,7 @@ export function TerminalComponent({
 
           // If server requested Device Attributes (ESC [ c) in 6530 mode
           if (translated.deviceAttributesRequested) {
-            sendData("\x1b^0000\r");
+            sendData("\x1b^    \r");
           }
 
           // --- Handle server-sent mode switches (ESC b / ESC c / ESC W / ESC X / DC1) ---
