@@ -14,6 +14,9 @@ export interface ConnectConfig {
     termType?: string;
     remoteCommand?: string;
     backspaceMode?: string;
+    protocol?: "ssh" | "telnet";
+    serviceName?: string;
+    isNonStop?: boolean;
     savedSessionId?: string | null; // If set, updates this existing session instead of creating a new one
 }
 

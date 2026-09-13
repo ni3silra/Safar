@@ -71,6 +71,7 @@ export interface ConnectConfig {
     protocol?: "ssh" | "telnet";
     serviceName?: string;
     isNonStop?: boolean;
+    savedSessionId?: string | null;
 }
 
 export interface ConnectionResult {

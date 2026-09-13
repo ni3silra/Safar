@@ -74,6 +74,7 @@ struct TerminalDataPayload {
 
 pub struct TelnetSession {
     pub stream: Arc<RwLock<TcpStream>>,
+    #[allow(dead_code)]
     pub config: TelnetConfig,
     pub running: Arc<RwLock<bool>>,
     pub cols: Arc<AtomicU32>,

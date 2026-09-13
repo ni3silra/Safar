@@ -260,7 +260,7 @@ export function Workspace({
                                     sessionId={session.id}
                                     onDisconnect={() => disconnect(session.id)}
                                     fontSize={appSettings.terminalFontSize}
-                                    themeName={(session.isNonStop || session.termType === "6530") ? "Tandem Blue" : appSettings.terminalTheme}
+                                    themeName={appSettings.terminalTheme}
                                     fontFamily={appSettings.terminalFontFamily}
                                     fontWeight={appSettings.terminalFontWeight}
                                     lineHeight={appSettings.terminalLineHeight}
