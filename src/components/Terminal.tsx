@@ -354,47 +354,10 @@ export function TerminalComponent({
   const historyBufferRef = useRef(""); // Generic command buffer for history
   const hpNsUserRef = useRef(""); // Tracks potential HP NS dynamic username
 
-  // Inactivity State
-  const [isInactive, setIsInactive] = useState(false);
-  const lastActivityRef = useRef(Date.now());          // Tracks last USER keystroke (not server data)
-  const lastTickRef = useRef(Date.now());               // Tracks last timer tick to detect machine sleep
+  // Disconnect State (only triggers when the connection is truly closed by the server or dropped)
+  const [isDisconnected, setIsDisconnected] = useState(false);
   const onDisconnectRef = useRef(_onDisconnect);        // Stable ref so sleep handler doesn't stale-close
   useEffect(() => { onDisconnectRef.current = _onDisconnect; }, [_onDisconnect]);
-
-  // Inactivity Timer Effect
-  // Tracks USER-ONLY keystrokes (not server data) — so background noise doesn't reset the idle clock.
-  // Also detects machine sleep by measuring the gap between consecutive 30s ticks.
-  useEffect(() => {
-    if (sessionTimeout <= 0) return;
-
-    const SLEEP_THRESHOLD_MS = 60_000; // >60s between ticks = machine likely slept
-
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const tickGap = now - lastTickRef.current;
-      lastTickRef.current = now;
-
-      // --- Sleep Detection ---
-      // If tick gap > threshold, machine slept and SSH TCP is dead.
-      // Show the disconnect overlay. User chooses to close or try resume.
-      if (tickGap > SLEEP_THRESHOLD_MS) {
-        setIsInactive(true);
-        return;
-      }
-
-      // --- Inactivity Detection ---
-      if (!isInactive) {
-        const timeSinceLastActivity = Date.now() - lastActivityRef.current;
-        const timeoutMs = sessionTimeout * 60 * 1000;
-        if (timeSinceLastActivity > timeoutMs) {
-          setIsInactive(true);
-          // Don't call onDisconnect here — let user decide via the overlay buttons
-        }
-      }
-    }, 30000); // Check every 30 seconds
-
-    return () => clearInterval(interval);
-  }, [sessionTimeout, isInactive]);
 
   // Send data to SSH server
   const sendData = useCallback(
@@ -438,6 +401,29 @@ export function TerminalComponent({
       }, 100);
     }
   }, [isVisible]);
+
+  // Continuous Keepalive Heartbeat: pings backend & remote server every 30s to keep session open for hours
+  useEffect(() => {
+    // Send keepalive ping immediately and periodically
+    const keepaliveInterval = setInterval(() => {
+      invoke("ssh_keepalive", { sessionId }).catch(() => {});
+    }, 30000);
+
+    // On window focus or tab visibility change, ping keepalive and re-fit terminal
+    const handleWakeup = () => {
+      invoke("ssh_keepalive", { sessionId }).catch(() => {});
+      safeFit();
+    };
+
+    window.addEventListener("focus", handleWakeup);
+    document.addEventListener("visibilitychange", handleWakeup);
+
+    return () => {
+      clearInterval(keepaliveInterval);
+      window.removeEventListener("focus", handleWakeup);
+      document.removeEventListener("visibilitychange", handleWakeup);
+    };
+  }, [sessionId, safeFit]);
 
   // Re-fit when visibility changes
   useEffect(() => {
@@ -638,8 +624,7 @@ export function TerminalComponent({
 
     // User Input Handler (Block vs Line Mode Logic)
     terminal.onData((data) => {
-      lastActivityRef.current = Date.now(); // Only user keystrokes reset idle clock — NOT server data
-      if (isInactive) setIsInactive(false);  // Dismiss overlay if user types while it showed
+      if (isDisconnected) setIsDisconnected(false);
 
       // Data from xterm can be multiple characters (e.g. paste) or ANSI escape sequences (arrows).
       const isEscapeSequence = data.startsWith("\x1b");
@@ -768,16 +753,25 @@ export function TerminalComponent({
       invoke("ssh_resize", { sessionId, cols, rows }).catch(console.error);
     });
 
-    // Listen for data
+    // Listen for data and true disconnect events
     let unlisten: UnlistenFn | null = null;
+    let unlistenDisconnect: UnlistenFn | null = null;
     let isMounted = true;
+
+    listen<string>("terminal-disconnected", (event) => {
+      if (event.payload === sessionId) {
+        setIsDisconnected(true);
+      }
+    }).then((fn) => {
+      if (!isMounted) {
+        fn();
+      } else {
+        unlistenDisconnect = fn;
+      }
+    });
 
     listen<TerminalData>("terminal-data", (event) => {
       if (event.payload.session_id === sessionId) {
-        // NOTE: Do NOT update lastActivityRef here.
-        // Server keepalives and background noise would constantly reset the idle clock,
-        // preventing the inactivity timeout from ever firing correctly.
-
         const incomingData = event.payload.data;
 
         // --- 6530 Block Mode Detection & Sequence Filtering ---
@@ -908,6 +902,7 @@ export function TerminalComponent({
       isMounted = false;
       window.removeEventListener("resize", handleResize);
       if (unlisten) unlisten();
+      if (unlistenDisconnect) unlistenDisconnect();
       if (unlistenRef.current) unlistenRef.current();
       terminal.dispose();
     };
@@ -1129,7 +1124,7 @@ export function TerminalComponent({
         )
       }
 
-      {isInactive && (
+      {isDisconnected && (
         <div style={{
           position: "absolute",
           top: 0, left: 0, right: 0, bottom: 0,
@@ -1146,15 +1141,14 @@ export function TerminalComponent({
           <Icons.Terminal style={{ width: 48, height: 48, marginBottom: "16px", opacity: 0.5 }} />
           <h2 style={{ margin: "0 0 8px 0", fontSize: "20px", fontWeight: 600 }}>Session Disconnected</h2>
           <p style={{ margin: "0 0 28px 0", color: "var(--text-muted, #94a3b8)", fontSize: "14px", textAlign: "center", maxWidth: "280px", lineHeight: 1.5 }}>
-            The session was closed due to inactivity or the system went to sleep.
+            The remote SSH server closed the connection or the network was interrupted.
           </p>
           <div style={{ display: "flex", gap: "12px", marginTop: "4px" }}>
             <button
               onClick={() => {
-                setIsInactive(false);
-                lastActivityRef.current = Date.now();
-                lastTickRef.current = Date.now();
+                setIsDisconnected(false);
                 terminalRef.current?.focus();
+                invoke("ssh_keepalive", { sessionId }).catch(() => {});
               }}
               style={{
                 padding: "10px 22px",
@@ -1178,7 +1172,7 @@ export function TerminalComponent({
             </button>
             <button
               onClick={() => {
-                setIsInactive(false);
+                setIsDisconnected(false);
                 _onDisconnect?.();
               }}
               style={{

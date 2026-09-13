@@ -106,6 +106,7 @@ pub fn run() {
             ssh_connect,
             ssh_send,
             ssh_resize,
+            ssh_keepalive,
             ssh_disconnect,
             ssh_execute,
             ssh_list_sessions,

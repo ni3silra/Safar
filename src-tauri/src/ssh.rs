@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use ssh2::{Channel, Session};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}};
 use std::thread;
 use std::net::{TcpListener, TcpStream};
 use tauri::Emitter;
@@ -99,6 +99,8 @@ struct SshSession {
     config: ConnectionConfig,
     _stream: TcpStream,
     running: Arc<RwLock<bool>>,
+    cols: Arc<AtomicU32>,
+    rows: Arc<AtomicU32>,
     tunnels: HashMap<u16, Arc<AtomicBool>>, // Local -> Remote tunnels
     remote_tunnels: HashMap<u16, Arc<AtomicBool>>, // Remote -> Local tunnels
 }
@@ -140,9 +142,8 @@ impl SshManager {
             SshError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e))
         })?;
 
-        // Set timeout
-        tcp.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
-        tcp.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
+        // Enable TCP nodelay for responsive interactive terminal performance
+        let _ = tcp.set_nodelay(true);
 
         // Create SSH session
         let mut session = Session::new().map_err(|e| {
@@ -213,6 +214,8 @@ impl SshManager {
         let session_id = Uuid::new_v4().to_string();
 
         let running = Arc::new(RwLock::new(true));
+        let cols = Arc::new(AtomicU32::new(80));
+        let rows = Arc::new(AtomicU32::new(24));
 
         // Store session
         let ssh_session = SshSession {
@@ -221,6 +224,8 @@ impl SshManager {
             config: config.clone(),
             _stream: tcp,
             running: running.clone(),
+            cols: cols.clone(),
+            rows: rows.clone(),
             tunnels: HashMap::new(),
             remote_tunnels: HashMap::new(),
         };
@@ -233,9 +238,12 @@ impl SshManager {
         // Spawn reader thread to emit terminal data
         let session_id_clone = session_id.clone();
         let app_handle_clone = app_handle.clone();
+        let cols_clone = cols.clone();
+        let rows_clone = rows.clone();
 
         thread::spawn(move || {
             let mut buffer = [0u8; 4096];
+            let mut last_keepalive = std::time::Instant::now();
 
             loop {
                 // Check if still running
@@ -257,6 +265,7 @@ impl SshManager {
                                 break;
                             }
                             Ok(n) => {
+                                last_keepalive = std::time::Instant::now();
                                 let data = String::from_utf8_lossy(&buffer[..n]).to_string();
                                 let _ = app_handle_clone.emit(
                                     "terminal-data",
@@ -266,13 +275,26 @@ impl SshManager {
                                     },
                                 );
                             }
-                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                // No data available, wait a bit
+                            Err(ref e)
+                                if e.kind() == std::io::ErrorKind::WouldBlock
+                                    || e.kind() == std::io::ErrorKind::TimedOut =>
+                            {
+                                // Send background keepalive signal if idle for 30 seconds.
+                                // Re-affirming terminal window size generates real SSH control packets
+                                // over the wire without injecting any visible characters into the shell.
+                                if last_keepalive.elapsed() >= std::time::Duration::from_secs(30) {
+                                    let c = cols_clone.load(Ordering::Relaxed);
+                                    let r = rows_clone.load(Ordering::Relaxed);
+                                    let _ = channel.request_pty_size(c, r, None, None);
+                                    last_keepalive = std::time::Instant::now();
+                                }
+
+                                // No data available right now, wait a bit
                                 drop(session_guard);
                                 thread::sleep(std::time::Duration::from_millis(10));
                             }
                             Err(_) => {
-                                // Error reading
+                                // Real fatal socket error or EOF
                                 break;
                             }
                         }
@@ -281,6 +303,9 @@ impl SshManager {
                     break;
                 }
             }
+
+            // Emit disconnect notification to frontend when the SSH channel has truly terminated
+            let _ = app_handle_clone.emit("terminal-disconnected", &session_id_clone);
         });
 
         Ok(ConnectionResult {
@@ -316,10 +341,30 @@ impl SshManager {
             .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
 
         let mut session = session_arc.write();
+        session.cols.store(cols, Ordering::Relaxed);
+        session.rows.store(rows, Ordering::Relaxed);
         if let Some(ref mut channel) = session.channel {
             channel
                 .request_pty_size(cols, rows, None, None)
                 .map_err(|e| SshError::ChannelError(format!("Failed to resize PTY: {}", e)))?;
+            Ok(())
+        } else {
+            Err(SshError::ChannelError("No active channel".to_string()))
+        }
+    }
+
+    /// Send an internal keepalive signal (window-change re-affirmation) to keep the SSH connection open
+    pub fn send_keepalive(&self, session_id: &str) -> Result<(), SshError> {
+        let sessions = self.sessions.read();
+        let session_arc = sessions
+            .get(session_id)
+            .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
+
+        let mut session = session_arc.write();
+        let cols = session.cols.load(Ordering::Relaxed);
+        let rows = session.rows.load(Ordering::Relaxed);
+        if let Some(ref mut channel) = session.channel {
+            let _ = channel.request_pty_size(cols, rows, None, None);
             Ok(())
         } else {
             Err(SshError::ChannelError("No active channel".to_string()))

@@ -74,6 +74,15 @@ pub fn ssh_resize(
     }
 }
 
+/// Send an internal keepalive heartbeat to keep the SSH connection alive
+#[tauri::command]
+pub fn ssh_keepalive(state: State<AppState>, session_id: String) -> CommandResponse<()> {
+    match state.ssh_manager.send_keepalive(&session_id) {
+        Ok(()) => CommandResponse::ok(()),
+        Err(e) => CommandResponse::err(e.to_string()),
+    }
+}
+
 /// Disconnect from an SSH session
 #[tauri::command]
 pub fn ssh_disconnect(state: State<AppState>, session_id: String) -> CommandResponse<()> {
