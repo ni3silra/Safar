@@ -80,7 +80,7 @@ describe('QuickConnectModal', () => {
             protocol: 'telnet',
             serviceName: 'TACL',
             isNonStop: true,
-            termType: '6530',
+            termType: 'TN6530-8',
             backspaceMode: 'ctrl-h',
         }), expect.any(Boolean), expect.any(Boolean));
     });

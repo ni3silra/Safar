@@ -142,6 +142,7 @@ impl TelnetManager {
         thread::spawn(move || {
             let mut read_buf = [0u8; 4096];
             let mut service_sent = false;
+            let mut last_term_reply = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
             while *running_clone.read() {
                 let read_res = {
@@ -229,11 +230,11 @@ impl TelnetManager {
                                         }
                                         if j + 1 < incoming.len() {
                                             let opt = incoming[i + 2];
-                                            if opt == OPT_TERMINAL_TYPE && incoming.len() > i + 3 && incoming[i + 3] == 1 {
+                                            if opt == OPT_TERMINAL_TYPE {
                                                 // Host sent: IAC SB TERMINAL-TYPE SEND IAC SE (request terminal type)
-                                                // Reply: IAC SB TERMINAL-TYPE IS "6530" IAC SE
+                                                // RFC 1091 / RFC 854: Reply: IAC SB TERMINAL-TYPE IS "TN6530-8" IAC SE
                                                 let mut sub_resp = vec![IAC, SB, OPT_TERMINAL_TYPE, 0]; // 0 = IS
-                                                sub_resp.extend_from_slice(b"6530");
+                                                sub_resp.extend_from_slice(b"TN6530-8");
                                                 sub_resp.extend_from_slice(&[IAC, SE]);
                                                 let mut guard = stream_reader.write();
                                                 let _ = guard.write_all(&sub_resp);
@@ -270,6 +271,25 @@ impl TelnetManager {
                                 let service_cmd = format!("{}\r", service_name_to_send);
                                 let _ = guard.write_all(service_cmd.as_bytes());
                                 let _ = guard.flush();
+                            }
+
+                            // Auto-answer Terminal Type if TELSERV or TACL prompts in conversational stream
+                            let lower_data = data_str.to_lowercase();
+                            if lower_data.contains("terminal type?")
+                                || lower_data.contains("terminal type:")
+                                || lower_data.contains("terminal type [")
+                                || lower_data.contains("terminal type (")
+                                || lower_data.contains("enter terminal type")
+                                || lower_data.contains("term = ")
+                                || lower_data.contains("terminal [6530]")
+                                || lower_data.contains("terminal [tn6530")
+                            {
+                                if last_term_reply.elapsed() > std::time::Duration::from_millis(1000) {
+                                    last_term_reply = std::time::Instant::now();
+                                    let mut guard = stream_reader.write();
+                                    let _ = guard.write_all(b"TN6530-8\r");
+                                    let _ = guard.flush();
+                                }
                             }
 
                             // Emit clean data to frontend xterm

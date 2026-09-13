@@ -191,9 +191,13 @@ impl SshManager {
 
         // Request PTY
         // On HP NonStop, OpenSSH specifically inspects the term string to allocate
-        // a Guardian Device Subtype 1 (6530) PTY. The standard identifier is "6530".
+        // a Guardian Device Subtype 1 (6530) PTY. Use "TN6530-8".
         let raw_term = config.term_type.as_deref().unwrap_or("xterm-256color");
-        let term = if raw_term == "t6530" { "6530" } else { raw_term };
+        let term = if raw_term == "6530" || raw_term == "t6530" || raw_term.to_lowercase().contains("6530") || raw_term == "tandem" {
+            "TN6530-8"
+        } else {
+            raw_term
+        };
         channel
             .request_pty(term, None, Some((80, 24, 0, 0)))
             .map_err(|e| SshError::ChannelError(format!("Failed to request PTY: {}", e)))?;

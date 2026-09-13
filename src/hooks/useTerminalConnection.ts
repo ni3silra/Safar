@@ -99,7 +99,7 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
                         service_name: config.serviceName || "TACL",
                         username: config.username || null,
                         password: config.password || null,
-                        term_type: config.termType || "6530",
+                        term_type: config.termType || "TN6530-8",
                     },
                 });
 
@@ -122,7 +122,7 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
                         password: config.password || null,
                         private_key_path: config.privateKeyPath || null,
                         session_name: config.sessionName || `${config.username}@${config.host}`,
-                        term_type: config.termType || null,
+                        term_type: config.termType || (config.isNonStop ? "TN6530-8" : null),
                         remote_command: config.remoteCommand || null,
                         backspace_mode: config.backspaceMode || null,
                     },
@@ -139,7 +139,7 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
                     connected: true,
                     activeView: "terminal",
                     backspaceMode: config.backspaceMode,
-                    termType: config.termType,
+                    termType: config.termType || (config.isNonStop || isTelnet ? "TN6530-8" : undefined),
                     protocol: config.protocol || "ssh",
                     serviceName: config.serviceName,
                     isNonStop: config.isNonStop,

@@ -272,7 +272,7 @@ export function Workspace({
                                     backspaceMode={session.backspaceMode}
                                     termType={session.termType}
                                     protocol={session.protocol}
-                                    isNonStop={session.isNonStop || session.termType === "6530"}
+                                    isNonStop={session.isNonStop || session.termType === "TN6530-8" || session.termType === "6530" || (session.termType ? session.termType.toLowerCase().includes("6530") : false)}
                                     isVisible={activeSessionId === session.id && session.activeView === "terminal"}
                                     useCustomColors={appSettings.useCustomColors}
                                     customForeground={appSettings.customForeground}

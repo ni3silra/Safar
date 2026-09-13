@@ -88,7 +88,9 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
         initialConfig?.isNonStop ||
         initialConfig?.protocol === "telnet" ||
         initialConfig?.termType === "6530" ||
-        initialConfig?.termType === "t6530"
+        initialConfig?.termType === "t6530" ||
+        initialConfig?.termType === "TN6530-8" ||
+        (initialConfig?.termType ? initialConfig.termType.toLowerCase().includes("6530") : false)
     );
 
     const [connectionMode, setConnectionMode] = useState<"standard" | "nonstop">(
@@ -121,7 +123,7 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
         (initialConfig?.backspaceMode as any) || (isInitialNonStop ? "ctrl-h" : "auto")
     );
     const [terminalType, setTerminalType] = useState(
-        initialConfig?.termType || (isInitialNonStop ? "6530" : "xterm-256color")
+        initialConfig?.termType || (isInitialNonStop ? "TN6530-8" : "xterm-256color")
     );
     const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -130,7 +132,7 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
         if (newMode === "nonstop") {
             setProtocol("telnet");
             if (port === 22) setPort(23);
-            setTerminalType("6530");
+            setTerminalType("TN6530-8");
             setBackspaceMode("ctrl-h");
             if (!serviceName) setServiceName("TACL");
         } else {
@@ -192,7 +194,7 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
                 password: keyMode === "password" ? password : "",
                 privateKeyPath: (!isNonStop || chosenProtocol === "ssh") && keyMode !== "password" ? finalKeyPath : null,
                 sessionName: effectiveSessionName,
-                termType: isNonStop ? "6530" : terminalType,
+                termType: isNonStop ? "TN6530-8" : terminalType,
                 remoteCommand: remoteCommand || undefined,
                 backspaceMode: isNonStop ? (backspaceMode || "ctrl-h") : backspaceMode,
                 protocol: chosenProtocol,
@@ -787,15 +789,15 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
                                 <div>
                                     <FieldLabel>Terminal Type</FieldLabel>
                                     <StyledSelect
-                                        value={isNonStop ? "6530" : (terminalType === "t6530" ? "6530" : terminalType)}
+                                        value={isNonStop ? "TN6530-8" : (terminalType === "t6530" || terminalType === "6530" ? "TN6530-8" : terminalType)}
                                         onChange={(e) => setTerminalType(e.target.value)}
                                         disabled={isNonStop}
                                     >
-                                        <option value="6530">6530 (HP NonStop)</option>
+                                        <option value="TN6530-8">TN6530-8 (HP NonStop)</option>
                                         <option value="xterm-256color">xterm-256color (Default)</option>
                                         <option value="vt100">vt100</option>
                                     </StyledSelect>
-                                    {(isNonStop || terminalType === "6530" || terminalType === "t6530") && (
+                                    {(isNonStop || terminalType === "TN6530-8" || terminalType === "6530" || terminalType === "t6530") && (
                                         <p style={{ margin: "6px 0 0", fontSize: "11px", color: isNonStop ? "#facc15" : "#60a5fa" }}>
                                             HP NonStop 6530 emulation: conversational TACL, block mode forms (DBU / Pathway), and F1–F16 function keys.
                                         </p>

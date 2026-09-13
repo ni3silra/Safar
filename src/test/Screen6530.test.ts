@@ -163,11 +163,21 @@ describe('translate6530ToAnsi Protocol Parser', () => {
     expect(result.screenCommands).toContainEqual({ type: 'cursor', row: 0, col: 0 });
   });
 
-  it('detects mode signals (ESC b, ESC c, ESC W, ESC X)', () => {
+  it('detects mode signals (ESC b, ESC c, ESC W, ESC X, and SOH B/C ETX 0x01 0x42/0x43 0x03)', () => {
     expect(translate6530ToAnsi('\x1bb').modeSignal).toBe('block');
     expect(translate6530ToAnsi('\x1bc').modeSignal).toBe('conv');
     expect(translate6530ToAnsi('\x1bW').modeSignal).toBe('block');
     expect(translate6530ToAnsi('\x1bX').modeSignal).toBe('conv');
+
+    // 0x01 0x42 0x03 (SOH B ETX) -> Block Mode
+    const sohB = translate6530ToAnsi('\x01B\x03');
+    expect(sohB.modeSignal).toBe('block');
+    expect(sohB.data).toBe(''); // Consumed framing without leaking 'B' to screen
+
+    // 0x01 0x43 0x03 (SOH C ETX) -> Conversational Mode
+    const sohC = translate6530ToAnsi('\x01C\x03');
+    expect(sohC.modeSignal).toBe('conv');
+    expect(sohC.data).toBe(''); // Consumed framing without leaking 'C' to screen
   });
 
   it('detects DC1 write-read activation and terminal interrogation queries', () => {
@@ -201,35 +211,40 @@ describe('translate6530ToAnsi Protocol Parser', () => {
     const enqResult = translate6530ToAnsi('\x05');
     expect(enqResult.enquiryRequested).toBe(true);
 
-    // ESC [ c -> Device Attributes (intercepted so xterm does not reply VT100)
+    // ESC [ c and ESC [ > c -> Device Attributes (intercepted so xterm does not reply VT100)
     const daResult = translate6530ToAnsi('\x1b[c');
     expect(daResult.deviceAttributesRequested).toBe(true);
     expect(daResult.data).toBe(''); // Consumed
+
+    const daSecResult = translate6530ToAnsi('\x1b[>c');
+    expect(daSecResult.deviceAttributesRequested).toBe(true);
+    expect(daSecResult.data).toBe('');
 
     // Ensure ESC 6 does NOT emit reverse video (\x1b[7m) or highlight text on normal prompt
     const esc6Result = translate6530ToAnsi('\x1b6Prompt>');
     expect(esc6Result.data).not.toContain('\x1b[7m');
   });
 
-  it('correctly toggles and resets reverse video via ESC 6 without leaving persistent white backgrounds', () => {
-    // ESC 6 $ (0x24 = reverse video bit 2 set, offset by 0x20 space)
-    const revResult = translate6530ToAnsi('\x1b6$Guten Abend, NISI');
-    expect(revResult.data).toBe('\x1b[0;7mGuten Abend, NISI');
+  it('correctly maps 6530 display enhancements without emitting reverse video white backgrounds', () => {
+    // Underline (bit 0 set: 0x21 '!'): emits \x1b[0;4m
+    const underResult = translate6530ToAnsi('\x1b6!UnderlineText');
+    expect(underResult.data).toBe('\x1b[0;4mUnderlineText');
 
-    // ESC 6 <space> (0x20 = normal text, all enhancement bits 0) -> MUST emit \x1b[0m to reset reverse video
+    // Normal text via ESC 6 <space> (0x20): emits \x1b[0m
     const normResult = translate6530ToAnsi('\x1b6 $USER1 USNISI 1>');
     expect(normResult.data).toBe('\x1b[0m$USER1 USNISI 1>');
 
-    // Full banner flow: reverse video banner followed by normal text
-    const fullBannerFlow = '\x1b6$Guten Abend, NISI System: \\OX8\x1b6 \r\n$USER1 USNISI 1> who';
+    // Full banner flow: attributes are safely handled without white background
+    const fullBannerFlow = '\x1b6!Guten Abend, NISI System: \\OX8\x1b6 \r\n$USER1 USNISI 1> who';
     const flowResult = translate6530ToAnsi(fullBannerFlow);
-    expect(flowResult.data).toBe('\x1b[0;7mGuten Abend, NISI System: \\OX8\x1b[0m\r\n$USER1 USNISI 1> who');
+    expect(flowResult.data).toBe('\x1b[0;4mGuten Abend, NISI System: \\OX8\x1b[0m\r\n$USER1 USNISI 1> who');
+    expect(flowResult.data).not.toContain('\x1b[7m');
 
-    // ESC 6 D (0x44 = reverse video bit 2 set, offset by 0x40 '@')
-    const revAtResult = translate6530ToAnsi('\x1b6DBANNER');
-    expect(revAtResult.data).toBe('\x1b[0;7mBANNER');
+    // Concealed / Hidden attribute (bit 4 set: 0x50 'P'): emits \x1b[0;8m
+    const hiddenResult = translate6530ToAnsi('\x1b6PHidden');
+    expect(hiddenResult.data).toBe('\x1b[0;8mHidden');
 
-    // ESC 6 @ (0x40 = normal text) -> MUST emit \x1b[0m
+    // Normal text via ESC 6 @ (0x40): emits \x1b[0m
     const normAtResult = translate6530ToAnsi('\x1b6@Normal');
     expect(normAtResult.data).toBe('\x1b[0mNormal');
   });

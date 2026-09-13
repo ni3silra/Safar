@@ -165,7 +165,7 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
           break;
         }
         const csiSeq = data.substring(i, j + 1);
-        if (csiSeq === '\x1b[c' || csiSeq === '\x1b[0c') {
+        if (csiSeq === '\x1b[c' || csiSeq === '\x1b[0c' || csiSeq === '\x1b[>c' || csiSeq === '\x1b[>0c') {
           // Intercept Device Attributes query in 6530 mode so xterm.js does NOT emit VT100 ID (\x1b[?1;2c)
           deviceAttributesRequested = true;
           i = j + 1;
@@ -236,22 +236,20 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
           break;
         }
         const attr = data.charCodeAt(i + 2);
-        // In Tandem 6530, bits 0-4 are the display enhancement flags:
-        // Bit 0: Underline
-        // Bit 1: Blink
-        // Bit 2: Reverse video
-        // Bit 3: Half-bright / Dim
-        // Bit 4: Hidden / Invisible
-        // Bits 5 and 6 (0x20 space, 0x40 '@') are ASCII printable offsets, NOT enhancements.
+        // Display attributes per 6530 specification:
+        // - Bit 0 (0x01): Underline -> \x1b[4m
+        // - Bit 1 (0x02): Blink -> \x1b[5m
+        // - Bit 3 (0x08): Dim / Half-bright -> \x1b[2m
+        // - Bit 4 (0x10): Concealed / Invisible (hides character) -> \x1b[8m
+        // Note: No reverse video (\x1b[7m) is emitted; highlighting is reserved for user selection.
         const flags = attr & 0x1f;
         const parts: string[] = [];
         if (flags & 0x01) parts.push('4');  // underline
         if (flags & 0x02) parts.push('5');  // blink
-        if (flags & 0x04) parts.push('7');  // reverse video
         if (flags & 0x08) parts.push('2');  // dim / half-bright
         if (flags & 0x10) parts.push('8');  // invisible / hidden
 
-        // ESC 6 replaces all prior enhancements. Always emit \x1b[0m first to clear reverse video / styles,
+        // ESC 6 replaces all prior enhancements. Always emit \x1b[0m first to clear prior styles,
         // then apply active enhancements if any.
         if (parts.length > 0) {
           result += `\x1b[0;${parts.join(';')}m`;
@@ -393,7 +391,6 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
     // DC3 (0x13) — end of WRITEREAD message (consume)
     if (data[i] === '\x11') {
       writeReadActive = true;
-      modeSignal = 'block';
       i++;
       continue;
     }
@@ -402,13 +399,45 @@ export function translate6530ToAnsi(data: string): Translate6530Result {
       continue;
     }
 
-    // SOH (0x01), STX (0x02) — consume framing
-    if (data[i] === '\x01' || data[i] === '\x02') {
+    // ── 6530 SOH Mode Commands: \x01 <cmd> \x03 ──
+    // SOH 'B' ETX (0x01 0x42 0x03) -> Set Block Mode
+    // SOH 'C' ETX (0x01 0x43 0x03) -> Set Conversational Mode
+    if (data[i] === '\x01') {
+      if (i + 1 >= data.length) {
+        pendingRemainder = data.substring(i);
+        break;
+      }
+      const cmd = data[i + 1];
+      if (cmd === 'B' || cmd === 'b') {
+        if (i + 2 >= data.length) {
+          pendingRemainder = data.substring(i);
+          break;
+        }
+        modeSignal = 'block';
+        i += data[i + 2] === '\x03' ? 3 : 2;
+        continue;
+      }
+      if (cmd === 'C' || cmd === 'c') {
+        if (i + 2 >= data.length) {
+          pendingRemainder = data.substring(i);
+          break;
+        }
+        modeSignal = 'conv';
+        i += data[i + 2] === '\x03' ? 3 : 2;
+        continue;
+      }
+      // Other SOH framing — consume SOH
       i++;
       continue;
     }
-    // ETX (0x03) — consume if inside writeRead frame
-    if (data[i] === '\x03' && writeReadActive) {
+
+    // STX (0x02) — consume framing
+    if (data[i] === '\x02') {
+      i++;
+      continue;
+    }
+    // ETX (0x03) — consume framing
+    if (data[i] === '\x03') {
       i++;
       continue;
     }
@@ -469,9 +498,9 @@ export function TerminalComponent({
   serviceName: _serviceName,
   isNonStop = false
 }: TerminalProps) {
-  // HP NonStop 6530 detection: match "6530", "t6530", "hp6530", "6530-80", "tandem", etc., or isNonStop prop
+  // HP NonStop 6530 detection: match "6530", "t6530", "hp6530", "6530-80", "tn6530", "tandem", etc., or isNonStop prop
   const isConfigured6530 = Boolean(
-    isNonStop || (termType && (termType === "6530" || termType.toLowerCase().includes("6530") || termType.toLowerCase().includes("tandem")))
+    isNonStop || (termType && (termType === "6530" || termType.toLowerCase().includes("6530") || termType.toLowerCase().includes("tandem") || termType.toLowerCase().includes("tn6530")))
   );
   const [is6530Session, setIs6530Session] = useState(isConfigured6530);
   const is6530Ref = useRef(isConfigured6530);
@@ -501,6 +530,7 @@ export function TerminalComponent({
   const isBlockModeRef = useRef(false); // Ref for closure sync
   const historyBufferRef = useRef(""); // Generic command buffer for history
   const hpNsUserRef = useRef(""); // Tracks potential HP NS dynamic username
+  const lastTermTypePromptReplyRef = useRef(0); // Rate-limit prompt replies to avoid loops
 
   // Disconnect State (only triggers when the connection is truly closed by the server or dropped)
   const [isDisconnected, setIsDisconnected] = useState(false);
@@ -656,6 +686,12 @@ export function TerminalComponent({
       if (terminalRef.current.clientWidth > 0 && terminalRef.current.clientHeight > 0) {
         try {
           xtermRef.current.open(terminalRef.current);
+          xtermRef.current.reset();
+          xtermRef.current.write("\x1b[0m\x1b[2J\x1b[H");
+          screen6530Ref.current.reset();
+          isBlockModeRef.current = false;
+          setIsBlockMode(false);
+          blockBufferRef.current = "";
           if (protocol === "telnet") {
             xtermRef.current.write("\x1b[33m● Connecting to HP NonStop TELSERV via Telnet (6530)...\x1b[0m\r\n");
           } else {
@@ -1048,12 +1084,12 @@ export function TerminalComponent({
 
           // If server requested 6530 Model Number (ESC /)
           if (translated.readModelRequested) {
-            sendData("\x1b/6530\r");
+            sendData("\x1b/TN6530-8\r");
           }
 
           // If server requested 6530 Terminal ID (ESC ?)
           if (translated.readIdRequested) {
-            sendData("\x1b?6530\r");
+            sendData("\x1b?TN6530-8\r");
           }
 
           // If server sent ENQ (0x05)
@@ -1061,20 +1097,41 @@ export function TerminalComponent({
             sendData("\x06"); // ACK
           }
 
-          // If server requested Device Attributes (ESC [ c) in 6530 mode
+          // If server requested Device Attributes (ESC [ c / ESC [ > c) in 6530 mode
           if (translated.deviceAttributesRequested) {
-            sendData("\x1b^    \r");
+            sendData("\x1b/TN6530-8\r");
           }
 
-          // --- Handle server-sent mode switches (ESC b / ESC c / ESC W / ESC X / DC1) ---
-          if (translated.modeSignal === 'block' || translated.writeReadActive) {
+          // Auto-answer Terminal Type if host prompts in conversational stream (e.g. "Terminal type?", "terminal type:", "Enter terminal type:")
+          const lowerText = (translated.data || "").toLowerCase();
+          if (
+            lowerText.includes("terminal type?") ||
+            lowerText.includes("terminal type:") ||
+            lowerText.includes("terminal type [") ||
+            lowerText.includes("terminal type (") ||
+            lowerText.includes("enter terminal type") ||
+            lowerText.includes("term = ") ||
+            lowerText.includes("terminal [6530]") ||
+            lowerText.includes("terminal [tn6530")
+          ) {
+            const now = Date.now();
+            if (now - lastTermTypePromptReplyRef.current > 1000) {
+              lastTermTypePromptReplyRef.current = now;
+              sendData("TN6530-8\r");
+            }
+          }
+
+          // --- Handle host-controlled mode switches (Section 9: ESC b / ESC c / ESC W / ESC X) ---
+          if (translated.modeSignal === 'block') {
             setIsBlockMode(true);
             isBlockModeRef.current = true;
             blockBufferRef.current = "";
+            screen.reset();
           } else if (translated.modeSignal === 'conv') {
             setIsBlockMode(false);
             isBlockModeRef.current = false;
             blockBufferRef.current = "";
+            terminal.write("\x1b[0m");
           }
 
           terminal.write(translated.data);
@@ -1094,6 +1151,21 @@ export function TerminalComponent({
           if (hpNsUserRef.current && onTitleChange) {
             if (incomingData.includes(">") || incomingData.includes("$") || incomingData.includes("#")) {
               onTitleChange(hpNsUserRef.current);
+            }
+          }
+
+          // If host prompts for terminal type in standard session
+          const lowerNon6530 = incomingData.toLowerCase();
+          if (
+            lowerNon6530.includes("terminal type?") ||
+            lowerNon6530.includes("terminal type:") ||
+            lowerNon6530.includes("enter terminal type") ||
+            lowerNon6530.includes("terminal type [")
+          ) {
+            const now = Date.now();
+            if (now - lastTermTypePromptReplyRef.current > 1000) {
+              lastTermTypePromptReplyRef.current = now;
+              sendData("TN6530-8\r");
             }
           }
 
@@ -1184,28 +1256,20 @@ export function TerminalComponent({
       {/* Toolbar Trigger Area */}
       <div style={{ position: "absolute", top: 4, right: 12, zIndex: 10, display: "flex", alignItems: "center", gap: "8px" }}>
 
-        {/* Terminal Mode Pill Indicator (Clickable toggle) */}
+        {/* Terminal Mode Pill Indicator (Host-controlled per 6530 specification) */}
         <div
-          role="button"
-          tabIndex={0}
-          title={isBlockMode ? "Click to switch to Conversational Mode" : "Click to switch to Block Mode"}
-          onClick={() => {
-            const nextMode = !isBlockMode;
-            setIsBlockMode(nextMode);
-            isBlockModeRef.current = nextMode;
-            blockBufferRef.current = "";
-          }}
+          title={is6530Session ? (isBlockMode ? "6530 Block Mode (Host Controlled)" : "6530 Conversational Mode (Host Controlled)") : (isBlockMode ? "Block Mode" : "Line Mode")}
           style={{
             background: "var(--bg-secondary)", border: "1px solid var(--border-color)",
             padding: "2px 8px", borderRadius: "12px", fontSize: "11px",
             color: is6530Session ? "#60a5fa" : "var(--text-muted)",
             display: "flex", alignItems: "center", gap: "6px",
-            cursor: "pointer", userSelect: "none"
+            cursor: "default", userSelect: "none"
           }}
         >
           <span style={{
             width: "6px", height: "6px", borderRadius: "50%",
-            background: isBlockMode ? "#60a5fa" : "var(--text-muted)",
+            background: isBlockMode ? "#60a5fa" : "#34d399",
             boxShadow: isBlockMode ? "0 0 6px rgba(96,165,250,0.5)" : "none"
           }} />
           {is6530Session ? (isBlockMode ? "6530 Block" : "6530 Conv.") : (isBlockMode ? "Block Mode" : "Line Mode")}
