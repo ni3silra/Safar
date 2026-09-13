@@ -170,15 +170,30 @@ describe('translate6530ToAnsi Protocol Parser', () => {
     expect(translate6530ToAnsi('\x1bX').modeSignal).toBe('conv');
   });
 
-  it('detects DC1 write-read activation and cursor address queries', () => {
+  it('detects DC1 write-read activation and terminal interrogation queries', () => {
     const dc1Result = translate6530ToAnsi('\x11Form Data\x13');
     expect(dc1Result.writeReadActive).toBe(true);
 
+    // ESC a -> Read Cursor Address
     const cursorQueryResult = translate6530ToAnsi('\x1ba');
     expect(cursorQueryResult.readCursorRequested).toBe(true);
 
-    const altCursorQueryResult = translate6530ToAnsi('\x1b^');
-    expect(altCursorQueryResult.readCursorRequested).toBe(true);
+    // ESC ^ -> Read Primary Terminal Status
+    const statusQueryResult = translate6530ToAnsi('\x1b^');
+    expect(statusQueryResult.readStatusRequested).toBe(true);
+
+    // ESC / -> Read Model Number
+    const modelQueryResult = translate6530ToAnsi('\x1b/');
+    expect(modelQueryResult.readModelRequested).toBe(true);
+
+    // ENQ (\x05) -> Host Enquiry
+    const enqResult = translate6530ToAnsi('\x05');
+    expect(enqResult.enquiryRequested).toBe(true);
+
+    // ESC [ c -> Device Attributes (intercepted so xterm does not reply VT100)
+    const daResult = translate6530ToAnsi('\x1b[c');
+    expect(daResult.deviceAttributesRequested).toBe(true);
+    expect(daResult.data).toBe(''); // Consumed
   });
 
   it('handles split escape sequence chunks via pendingRemainder', () => {

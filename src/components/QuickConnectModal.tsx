@@ -569,18 +569,17 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
 
                                 <div>
                                     <FieldLabel>Terminal Type</FieldLabel>
-                                    <StyledSelect value={terminalType} onChange={(e) => setTerminalType(e.target.value)}>
+                                    <StyledSelect
+                                        value={terminalType === "t6530" ? "6530" : terminalType}
+                                        onChange={(e) => setTerminalType(e.target.value)}
+                                    >
                                         <option value="xterm-256color">xterm-256color (Default)</option>
-                                        <option value="xterm">xterm</option>
-                                        <option value="vt100">vt100</option>
-                                        <option value="vt220">vt220</option>
                                         <option value="6530">6530 (HP NonStop)</option>
-                                        <option value="linux">linux</option>
-                                        <option value="dumb">dumb</option>
+                                        <option value="vt100">vt100</option>
                                     </StyledSelect>
-                                    {terminalType === "6530" && (
+                                    {(terminalType === "6530" || terminalType === "t6530") && (
                                         <p style={{ margin: "6px 0 0", fontSize: "11px", color: "#60a5fa" }}>
-                                            HP NonStop 6530 emulation: block mode, F-key mapping (F1-F16), and native 6530 escape sequence translation. Server receives TERM=6530 for full protocol support.
+                                            HP NonStop 6530 emulation: conversational TACL, block mode forms (DBU / Pathway), and F1–F16 function keys.
                                         </p>
                                     )}
                                 </div>
