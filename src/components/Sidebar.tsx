@@ -214,6 +214,9 @@ export function Sidebar({
                                             termType: saved.term_type,
                                             remoteCommand: saved.remote_command,
                                             backspaceMode: saved.backspace_mode,
+                                            protocol: saved.protocol,
+                                            serviceName: saved.service_name,
+                                            isNonStop: saved.is_nonstop,
                                         })
                                     }
                                 >
@@ -269,6 +272,9 @@ export function Sidebar({
                                             termType: saved.term_type,
                                             remoteCommand: saved.remote_command,
                                             backspaceMode: saved.backspace_mode,
+                                            protocol: saved.protocol,
+                                            serviceName: saved.service_name,
+                                            isNonStop: saved.is_nonstop,
                                         })
                                     }
                                 >
@@ -324,6 +330,9 @@ export function Sidebar({
                                             termType: saved.term_type,
                                             remoteCommand: saved.remote_command,
                                             backspaceMode: saved.backspace_mode,
+                                            protocol: saved.protocol,
+                                            serviceName: saved.service_name,
+                                            isNonStop: saved.is_nonstop,
                                         })
                                     }
                                 >

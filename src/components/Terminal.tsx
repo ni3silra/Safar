@@ -33,6 +33,9 @@ interface TerminalProps {
   customBackground?: string;
   sessionTimeout?: number;
   onTitleChange?: (title: string) => void;
+  protocol?: "ssh" | "telnet";
+  serviceName?: string;
+  isNonStop?: boolean;
 }
 
 interface TerminalData {
@@ -426,11 +429,14 @@ export function TerminalComponent({
   customForeground = "#e6edf3",
   customBackground = "#0d1117",
   sessionTimeout: _sessionTimeout = 120,
-  onTitleChange
+  onTitleChange,
+  protocol = "ssh",
+  serviceName: _serviceName,
+  isNonStop = false
 }: TerminalProps) {
-  // HP NonStop 6530 detection: match "6530", "t6530", "hp6530", "6530-80", "tandem", etc.
+  // HP NonStop 6530 detection: match "6530", "t6530", "hp6530", "6530-80", "tandem", etc., or isNonStop prop
   const isConfigured6530 = Boolean(
-    termType && (termType === "6530" || termType.toLowerCase().includes("6530") || termType.toLowerCase().includes("tandem"))
+    isNonStop || (termType && (termType === "6530" || termType.toLowerCase().includes("6530") || termType.toLowerCase().includes("tandem")))
   );
   const [is6530Session, setIs6530Session] = useState(isConfigured6530);
   const is6530Ref = useRef(isConfigured6530);
@@ -438,6 +444,8 @@ export function TerminalComponent({
     setIs6530Session(isConfigured6530);
     is6530Ref.current = isConfigured6530;
   }, [isConfigured6530]);
+
+  const [shiftFKeys, setShiftFKeys] = useState(false);
 
   // Choose the right sequence map based on terminal type
   const CONTROL_SEQUENCES = is6530Session ? HP_6530_SEQUENCES : VT_SEQUENCES;
@@ -466,11 +474,15 @@ export function TerminalComponent({
   const onDisconnectRef = useRef(_onDisconnect);        // Stable ref so sleep handler doesn't stale-close
   useEffect(() => { onDisconnectRef.current = _onDisconnect; }, [_onDisconnect]);
 
-  // Send data to SSH server
+  // Send data to SSH/Telnet server
   const sendData = useCallback(
     async (data: string) => {
       try {
-        await invoke("ssh_send", { sessionId, data });
+        if (protocol === "telnet") {
+          await invoke("telnet_send", { sessionId, data });
+        } else {
+          await invoke("ssh_send", { sessionId, data });
+        }
       } catch (error) {
         // Error shown in terminal output
         if (xtermRef.current) {
@@ -478,7 +490,7 @@ export function TerminalComponent({
         }
       }
     },
-    [sessionId]
+    [sessionId, protocol]
   );
 
   // Safe fit function
@@ -509,8 +521,10 @@ export function TerminalComponent({
     }
   }, [isVisible]);
 
-  // Continuous Keepalive Heartbeat: pings backend & remote server every 30s to keep session open for hours
+  // Continuous Keepalive Heartbeat: pings backend & remote server every 30s to keep session open for hours (SSH only)
   useEffect(() => {
+    if (protocol === "telnet") return;
+
     // Send keepalive ping immediately and periodically
     const keepaliveInterval = setInterval(() => {
       invoke("ssh_keepalive", { sessionId }).catch(() => {});
@@ -530,7 +544,33 @@ export function TerminalComponent({
       window.removeEventListener("focus", handleWakeup);
       document.removeEventListener("visibilitychange", handleWakeup);
     };
-  }, [sessionId, safeFit]);
+  }, [sessionId, safeFit, protocol]);
+
+  // Handle CAIL softkey click
+  const handleFKeyClick = useCallback((fkey: string) => {
+    const isShift = shiftFKeys;
+    const seqKey = isShift ? `S-${fkey}` : fkey;
+    const seq = CONTROL_SEQUENCES[seqKey] || CONTROL_SEQUENCES[fkey];
+    if (!seq) return;
+
+    if (is6530Session) {
+      const screen = screen6530Ref.current;
+      if (isBlockModeRef.current && screen.hasFields) {
+        // Block mode form: collect unprotected fields and send with function key trigger
+        const fieldData = screen.collectFieldData();
+        if (fieldData.trim()) addHistory(fieldData.trim());
+        const response = screen.generateWriteReadResponse(seq);
+        sendData(response);
+      } else {
+        // Conversational mode: standard 6530 F-key sequence is SOH <key> CR
+        const keyChar = seq.length >= 2 ? seq[1] : seq;
+        sendData(`\x01${keyChar}\r`);
+      }
+    } else {
+      sendData(seq);
+    }
+    terminalRef.current?.focus();
+  }, [shiftFKeys, CONTROL_SEQUENCES, is6530Session, sendData]);
 
   // Re-fit when visibility changes
   useEffect(() => {
@@ -609,7 +649,11 @@ export function TerminalComponent({
       if (terminalRef.current.clientWidth > 0 && terminalRef.current.clientHeight > 0) {
         try {
           xtermRef.current.open(terminalRef.current);
-          xtermRef.current.write("\x1b[36m● Connecting to SSH session...\x1b[0m\r\n");
+          if (protocol === "telnet") {
+            xtermRef.current.write("\x1b[33m● Connecting to HP NonStop TELSERV via Telnet (6530)...\x1b[0m\r\n");
+          } else {
+            xtermRef.current.write("\x1b[36m● Connecting to SSH session...\x1b[0m\r\n");
+          }
           safeFit();
         } catch (err) {
           console.error("[Terminal] Open error:", err);
@@ -898,7 +942,11 @@ export function TerminalComponent({
     });
 
     terminal.onResize(({ cols, rows }) => {
-      invoke("ssh_resize", { sessionId, cols, rows }).catch(console.error);
+      if (protocol === "telnet") {
+        invoke("telnet_resize", { sessionId, cols, rows }).catch(console.error);
+      } else {
+        invoke("ssh_resize", { sessionId, cols, rows }).catch(console.error);
+      }
     });
 
     // Listen for data and true disconnect events
@@ -1126,141 +1174,310 @@ export function TerminalComponent({
   return (
     <div className="terminal-container" style={{ backgroundColor: useCustomColors ? customBackground : TERMINAL_THEMES[themeName].colors.background, display: "flex", flexDirection: "column" }}>
 
-      {/* Toolbar Trigger Area */}
-      <div style={{ position: "absolute", top: 4, right: 12, zIndex: 10, display: "flex", alignItems: "center", gap: "8px" }}>
+      {/* CAIL Top Toolbar for NonStop / 6530 sessions */}
+      {(is6530Session || isNonStop) ? (
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "6px 12px",
+          background: "rgba(0, 0, 0, 0.4)",
+          borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+          backdropFilter: "blur(8px)",
+          gap: "12px",
+          flexShrink: 0,
+          zIndex: 10,
+        }}>
+          {/* Left Side: Disconnect + Controls */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+            {/* Disconnect Button */}
+            <button
+              onClick={() => _onDisconnect?.()}
+              style={{
+                padding: "5px 12px",
+                background: "linear-gradient(180deg, #fee2e2 0%, #fecaca 100%)",
+                color: "#991b1b",
+                border: "1px solid #f87171",
+                borderRadius: "5px",
+                fontSize: "11px",
+                fontWeight: 700,
+                cursor: "pointer",
+                boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+                transition: "all 0.1s ease",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "#fee2e2"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "linear-gradient(180deg, #fee2e2 0%, #fecaca 100%)"}
+              title="Disconnect Session"
+            >
+              <Icons.X style={{ width: 12, height: 12 }} />
+              Disconnect
+            </button>
 
-        {/* Terminal Mode Pill Indicator (Clickable toggle) */}
-        <div
-          role="button"
-          tabIndex={0}
-          title={isBlockMode ? "Click to switch to Conversational Mode" : "Click to switch to Block Mode"}
-          onClick={() => {
-            const nextMode = !isBlockMode;
-            setIsBlockMode(nextMode);
-            isBlockModeRef.current = nextMode;
-            blockBufferRef.current = "";
-          }}
-          style={{
-            background: "var(--bg-secondary)", border: "1px solid var(--border-color)",
-            padding: "2px 8px", borderRadius: "12px", fontSize: "11px",
-            color: is6530Session ? "#60a5fa" : "var(--text-muted)",
-            display: "flex", alignItems: "center", gap: "6px",
-            cursor: "pointer", userSelect: "none"
-          }}
-        >
-          <span style={{
-            width: "6px", height: "6px", borderRadius: "50%",
-            background: isBlockMode ? "#60a5fa" : "var(--text-muted)",
-            boxShadow: isBlockMode ? "0 0 6px rgba(96,165,250,0.5)" : "none"
-          }} />
-          {is6530Session ? (isBlockMode ? "6530 Block" : "6530 Conv.") : (isBlockMode ? "Block Mode" : "Line Mode")}
-        </div>
+            {/* Terminal Mode Pill Indicator */}
+            <div
+              role="button"
+              tabIndex={0}
+              title={isBlockMode ? "Click to switch to Conversational Mode" : "Click to switch to Block Mode"}
+              onClick={() => {
+                const nextMode = !isBlockMode;
+                setIsBlockMode(nextMode);
+                isBlockModeRef.current = nextMode;
+                blockBufferRef.current = "";
+              }}
+              style={{
+                background: "rgba(255, 255, 255, 0.06)",
+                border: "1px solid rgba(255, 255, 255, 0.15)",
+                padding: "4px 9px",
+                borderRadius: "12px",
+                fontSize: "11px",
+                color: isBlockMode ? "#60a5fa" : "#facc15",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                cursor: "pointer",
+                userSelect: "none",
+                fontWeight: 600,
+              }}
+            >
+              <span style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: isBlockMode ? "#60a5fa" : "#facc15",
+                boxShadow: isBlockMode ? "0 0 6px rgba(96,165,250,0.5)" : "0 0 6px rgba(250,204,21,0.5)"
+              }} />
+              {isBlockMode ? "6530 Block" : "6530 Conv."}
+            </div>
 
-        {/* Clear Button */}
-        <button
-          className="btn btn-secondary"
-          style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px", color: "var(--col-red)", borderColor: "rgba(239, 68, 68, 0.3)" }}
-          onClick={() => {
-            blockBufferRef.current = "";
-            screen6530Ref.current.reset();
-            xtermRef.current?.clear();
-            terminalRef.current?.focus();
-          }}
-          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.1)"}
-          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-          title="Clear Terminal Display"
-        >
-          Clear
-        </button>
+            {/* Clear Button */}
+            <button
+              className="btn btn-secondary"
+              style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "4px", color: "var(--col-red)", borderColor: "rgba(239, 68, 68, 0.3)" }}
+              onClick={() => {
+                blockBufferRef.current = "";
+                screen6530Ref.current.reset();
+                xtermRef.current?.clear();
+                terminalRef.current?.focus();
+              }}
+              title="Clear Terminal Display"
+            >
+              Clear
+            </button>
 
-        {/* History Button */}
-        <button
-          className="btn btn-secondary"
-          style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px" }}
-          onClick={() => setShowHistoryModal(true)}
-          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
-          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-          title="Command History"
-        >
-          <Icons.Clock style={{ width: 12, height: 12 }} />
-          History
-        </button>
+            {/* History Button */}
+            <button
+              className="btn btn-secondary"
+              style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "4px" }}
+              onClick={() => setShowHistoryModal(true)}
+              title="Command History"
+            >
+              <Icons.Clock style={{ width: 11, height: 11 }} />
+              History
+            </button>
 
+            {/* Shift Toggle */}
+            <button
+              type="button"
+              onClick={() => setShiftFKeys(!shiftFKeys)}
+              style={{
+                padding: "4px 8px",
+                borderRadius: "4px",
+                fontSize: "10px",
+                fontWeight: 700,
+                cursor: "pointer",
+                background: shiftFKeys ? "#3b82f6" : "rgba(255, 255, 255, 0.08)",
+                border: `1px solid ${shiftFKeys ? "#60a5fa" : "rgba(255, 255, 255, 0.15)"}`,
+                color: shiftFKeys ? "#ffffff" : "var(--text-muted, #94a3b8)",
+              }}
+              title="Toggle Shift for F-keys (Shift+F1..F16)"
+            >
+              SHIFT
+            </button>
+          </div>
 
-        <button
-          className="btn btn-secondary"
-          style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px" }}
-          onClick={() => {
-            setShowToolbar(!showToolbar);
-            terminalRef.current?.focus();
-          }}
-          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
-          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-          title="Toggle Control Sequences"
-        >
-          {showToolbar ? <Icons.CaretUp style={{ width: 12, height: 12 }} /> : <Icons.CaretDown style={{ width: 12, height: 12 }} />}
-          {showToolbar ? "Hide Controls" : "Show Controls"}
-        </button>
-      </div>
-
-      {/* Control Sequence Toolbar Header */}
-      {
-        showToolbar && (
-          <div style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid rgba(255, 255, 255, 0.05)" }}>
-            {/* Row 1 */}
-            <div style={{
-              display: "flex", gap: "6px", padding: "4px 6px 2px 6px",
-              background: "rgba(0, 0, 0, 0.2)",
-              overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
-            }}>
-              {["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16"].map(key => (
+          {/* Right Side: 2 Rows of F1-F16 Softkeys (CAIL style) */}
+          <div style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "3px",
+            alignItems: "flex-end",
+          }}>
+            {/* Row 1: F1 to F8 */}
+            <div style={{ display: "flex", gap: "4px" }}>
+              {["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8"].map(key => (
                 <button
                   key={key}
-                  onClick={() => {
-                    sendData(CONTROL_SEQUENCES[key]);
-                    terminalRef.current?.focus();
-                  }}
+                  onClick={() => handleFKeyClick(key)}
                   style={{
-                    padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
-                    color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
+                    minWidth: "38px",
+                    height: "22px",
+                    padding: "0 4px",
+                    background: "linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)",
+                    border: "1px solid #94a3b8",
+                    color: "#0f172a",
+                    borderRadius: "3px",
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    fontFamily: "var(--font-mono, monospace)",
+                    cursor: "pointer",
+                    boxShadow: "0 1px 0 #94a3b8, 0 1px 2px rgba(0,0,0,0.1)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "transform 0.05s ease, background 0.1s ease",
                   }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
-                  title={`Send ${key}`}
+                  onMouseDown={(e) => { e.currentTarget.style.transform = "translateY(1px)"; }}
+                  onMouseUp={(e) => { e.currentTarget.style.transform = "translateY(0)"; }}
+                  title={`Send ${shiftFKeys ? `Shift+${key}` : key}`}
                 >
-                  {key}
+                  {shiftFKeys ? `S-${key}` : key}
                 </button>
               ))}
             </div>
 
-            {/* Row 2 */}
-            <div style={{
-              display: "flex", gap: "6px", padding: "2px 6px 6px 6px",
-              background: "rgba(0, 0, 0, 0.2)",
-              overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
-            }}>
-              {["S-F1", "S-F2", "S-F3", "S-F4", "S-F5", "S-F6", "S-F7", "S-F8", "S-F9", "S-F10", "S-F11", "S-F12", "S-F13", "S-F14", "S-F15", "S-F16", "Ctrl+C", "Up", "Down"].map(key => (
+            {/* Row 2: F9 to F16 */}
+            <div style={{ display: "flex", gap: "4px" }}>
+              {["F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16"].map(key => (
                 <button
                   key={key}
-                  onClick={() => {
-                    sendData(CONTROL_SEQUENCES[key]);
-                    terminalRef.current?.focus();
-                  }}
+                  onClick={() => handleFKeyClick(key)}
                   style={{
-                    padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
-                    color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
+                    minWidth: "38px",
+                    height: "22px",
+                    padding: "0 4px",
+                    background: "linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%)",
+                    border: "1px solid #94a3b8",
+                    color: "#0f172a",
+                    borderRadius: "3px",
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    fontFamily: "var(--font-mono, monospace)",
+                    cursor: "pointer",
+                    boxShadow: "0 1px 0 #94a3b8, 0 1px 2px rgba(0,0,0,0.1)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "transform 0.05s ease, background 0.1s ease",
                   }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
-                  title={`Send ${key}`}
+                  onMouseDown={(e) => { e.currentTarget.style.transform = "translateY(1px)"; }}
+                  onMouseUp={(e) => { e.currentTarget.style.transform = "translateY(0)"; }}
+                  title={`Send ${shiftFKeys ? `Shift+${key}` : key}`}
                 >
-                  {key}
+                  {shiftFKeys ? `S-${key}` : key}
                 </button>
               ))}
             </div>
           </div>
-        )
-      }
+        </div>
+      ) : (
+        <>
+          {/* Standard Floating Toolbar Trigger Area */}
+          <div style={{ position: "absolute", top: 4, right: 12, zIndex: 10, display: "flex", alignItems: "center", gap: "8px" }}>
+            <button
+              className="btn btn-secondary"
+              style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px", color: "var(--col-red)", borderColor: "rgba(239, 68, 68, 0.3)" }}
+              onClick={() => {
+                blockBufferRef.current = "";
+                screen6530Ref.current.reset();
+                xtermRef.current?.clear();
+                terminalRef.current?.focus();
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.1)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              title="Clear Terminal Display"
+            >
+              Clear
+            </button>
+
+            <button
+              className="btn btn-secondary"
+              style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px" }}
+              onClick={() => setShowHistoryModal(true)}
+              onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              title="Command History"
+            >
+              <Icons.Clock style={{ width: 12, height: 12 }} />
+              History
+            </button>
+
+            <button
+              className="btn btn-secondary"
+              style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px" }}
+              onClick={() => {
+                setShowToolbar(!showToolbar);
+                terminalRef.current?.focus();
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              title="Toggle Control Sequences"
+            >
+              {showToolbar ? <Icons.CaretUp style={{ width: 12, height: 12 }} /> : <Icons.CaretDown style={{ width: 12, height: 12 }} />}
+              {showToolbar ? "Hide Controls" : "Show Controls"}
+            </button>
+          </div>
+
+          {/* Control Sequence Toolbar Header */}
+          {showToolbar && (
+            <div style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid rgba(255, 255, 255, 0.05)" }}>
+              {/* Row 1 */}
+              <div style={{
+                display: "flex", gap: "6px", padding: "4px 6px 2px 6px",
+                background: "rgba(0, 0, 0, 0.2)",
+                overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
+              }}>
+                {["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16"].map(key => (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      sendData(CONTROL_SEQUENCES[key]);
+                      terminalRef.current?.focus();
+                    }}
+                    style={{
+                      padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
+                      color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
+                    title={`Send ${key}`}
+                  >
+                    {key}
+                  </button>
+                ))}
+              </div>
+
+              {/* Row 2 */}
+              <div style={{
+                display: "flex", gap: "6px", padding: "2px 6px 6px 6px",
+                background: "rgba(0, 0, 0, 0.2)",
+                overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
+              }}>
+                {["S-F1", "S-F2", "S-F3", "S-F4", "S-F5", "S-F6", "S-F7", "S-F8", "S-F9", "S-F10", "S-F11", "S-F12", "S-F13", "S-F14", "S-F15", "S-F16", "Ctrl+C", "Up", "Down"].map(key => (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      sendData(CONTROL_SEQUENCES[key]);
+                      terminalRef.current?.focus();
+                    }}
+                    style={{
+                      padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
+                      color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
+                    title={`Send ${key}`}
+                  >
+                    {key}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Terminal View */}
       <div
@@ -1338,14 +1555,18 @@ export function TerminalComponent({
           <Icons.Terminal style={{ width: 48, height: 48, marginBottom: "16px", opacity: 0.5 }} />
           <h2 style={{ margin: "0 0 8px 0", fontSize: "20px", fontWeight: 600 }}>Session Disconnected</h2>
           <p style={{ margin: "0 0 28px 0", color: "var(--text-muted, #94a3b8)", fontSize: "14px", textAlign: "center", maxWidth: "280px", lineHeight: 1.5 }}>
-            The remote SSH server closed the connection or the network was interrupted.
+            {protocol === "telnet"
+              ? "The remote NonStop / TELSERV host closed the connection or the network was interrupted."
+              : "The remote SSH server closed the connection or the network was interrupted."}
           </p>
           <div style={{ display: "flex", gap: "12px", marginTop: "4px" }}>
             <button
               onClick={() => {
                 setIsDisconnected(false);
                 terminalRef.current?.focus();
-                invoke("ssh_keepalive", { sessionId }).catch(() => {});
+                if (protocol !== "telnet") {
+                  invoke("ssh_keepalive", { sessionId }).catch(() => {});
+                }
               }}
               style={{
                 padding: "10px 22px",

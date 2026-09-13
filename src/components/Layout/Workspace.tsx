@@ -175,6 +175,9 @@ export function Workspace({
                                                         termType: session.term_type,
                                                         remoteCommand: session.remote_command,
                                                         backspaceMode: session.backspace_mode,
+                                                        protocol: session.protocol,
+                                                        serviceName: session.service_name,
+                                                        isNonStop: session.is_nonstop,
                                                     });
                                                 }}
                                                 onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--bg-hover)"}
@@ -257,7 +260,7 @@ export function Workspace({
                                     sessionId={session.id}
                                     onDisconnect={() => disconnect(session.id)}
                                     fontSize={appSettings.terminalFontSize}
-                                    themeName={appSettings.terminalTheme}
+                                    themeName={(session.isNonStop || session.termType === "6530") ? "Tandem Blue" : appSettings.terminalTheme}
                                     fontFamily={appSettings.terminalFontFamily}
                                     fontWeight={appSettings.terminalFontWeight}
                                     lineHeight={appSettings.terminalLineHeight}
@@ -268,6 +271,8 @@ export function Workspace({
                                     copyOnSelect={appSettings.copyOnSelect}
                                     backspaceMode={session.backspaceMode}
                                     termType={session.termType}
+                                    protocol={session.protocol}
+                                    isNonStop={session.isNonStop || session.termType === "6530"}
                                     isVisible={activeSessionId === session.id && session.activeView === "terminal"}
                                     useCustomColors={appSettings.useCustomColors}
                                     customForeground={appSettings.customForeground}

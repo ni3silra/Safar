@@ -29,6 +29,33 @@ export interface ITheme {
 }
 
 export const TERMINAL_THEMES: Record<string, ITheme> = {
+    "Tandem Blue": {
+        name: "Tandem Blue",
+        colors: {
+            background: "#0000a0",
+            foreground: "#ffff55",
+            cursor: "#ffffff",
+            cursorAccent: "#0000a0",
+            selectionBackground: "#0033cc",
+            selectionForeground: "#ffff55",
+            black: "#000000",
+            red: "#ff5555",
+            green: "#55ff55",
+            yellow: "#ffff55",
+            blue: "#5555ff",
+            magenta: "#ff55ff",
+            cyan: "#55ffff",
+            white: "#ffffff",
+            brightBlack: "#555555",
+            brightRed: "#ff7777",
+            brightGreen: "#77ff77",
+            brightYellow: "#ffff77",
+            brightBlue: "#7777ff",
+            brightMagenta: "#ff77ff",
+            brightCyan: "#77ffff",
+            brightWhite: "#ffffff",
+        },
+    },
     "Safar Dark": {
         name: "Safar Dark",
         colors: {
