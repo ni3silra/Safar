@@ -40,19 +40,50 @@ export const PROTOCOL_CONFIG: Record<SupportedProtocol, ProtocolMeta> = {
  * Resolves the effective protocol for any session object or raw protocol string.
  * Defaults to "ssh".
  */
-export function resolveProtocol(item?: { protocol?: string; is_nonstop?: boolean; isNonStop?: boolean } | string): SupportedProtocol {
+export function resolveProtocol(
+    item?: {
+        protocol?: string;
+        is_nonstop?: boolean;
+        isNonStop?: boolean;
+        port?: number;
+        term_type?: string;
+        termType?: string;
+    } | string
+): SupportedProtocol {
     if (typeof item === "string") {
         return item.toLowerCase() === "telnet" ? "telnet" : "ssh";
     }
     if (!item) return "ssh";
     if (item.protocol === "telnet") return "telnet";
+    if (item.protocol === "ssh") return "ssh";
+
+    // Legacy backward compatibility:
+    // If an older saved session was created without a `protocol` field,
+    // infer it from port 23 or NonStop / 6530 indicators:
+    if (item.port === 23) return "telnet";
+    const term = item.term_type || item.termType;
+    if ((item.is_nonstop || item.isNonStop) && term && term.toLowerCase().includes("6530")) {
+        // If it was NonStop on port 23 or default NonStop telnet
+        if (!item.port || item.port === 23) return "telnet";
+    }
+
     return "ssh";
 }
 
 /**
  * Returns metadata for displaying protocol badge / tag in UI
  */
-export function getProtocolMeta(item?: { protocol?: string; is_nonstop?: boolean; isNonStop?: boolean } | string): ProtocolMeta {
+export function getProtocolMeta(
+    item?: {
+        protocol?: string;
+        is_nonstop?: boolean;
+        isNonStop?: boolean;
+        port?: number;
+        term_type?: string;
+        termType?: string;
+    } | string
+): ProtocolMeta {
     const proto = resolveProtocol(item);
     return PROTOCOL_CONFIG[proto];
 }
+

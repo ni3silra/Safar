@@ -65,6 +65,9 @@ export function useSessions() {
                     term_type: session.term_type,
                     remote_command: session.remote_command,
                     backspace_mode: session.backspace_mode,
+                    protocol: session.protocol,
+                    service_name: session.service_name,
+                    is_nonstop: session.is_nonstop,
                 };
 
                 const res = await invoke<CommandResponse<SavedSession>>("sessions_save", {
