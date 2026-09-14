@@ -130,6 +130,9 @@ impl SavedSession {
             term_type: None,
             remote_command: None,
             backspace_mode: None,
+            protocol: None,
+            service_name: None,
+            is_nonstop: None,
         }
     }
 }
