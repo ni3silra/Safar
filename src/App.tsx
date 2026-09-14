@@ -164,14 +164,17 @@ function App() {
         term_type: config.termType,
         remote_command: config.remoteCommand,
         backspace_mode: config.backspaceMode,
+        protocol: config.protocol,
+        service_name: config.serviceName,
+        is_nonstop: config.isNonStop,
       } as SavedSession);
 
       setEditingSession(null);
       return;
     }
 
-    // Preemptive credential check: If no password/key provided, prompt immediately
-    if (!editingSession && !config.password && !config.privateKeyPath) {
+    // Preemptive credential check: If no password/key provided, prompt immediately (skip for Telnet)
+    if (!editingSession && config.protocol !== "telnet" && !config.password && !config.privateKeyPath) {
       const existingSession = sessions.find(
         (s) => s.host === config.host && s.username === config.username
       );
@@ -284,7 +287,10 @@ function App() {
             password: editingSession.password,
             termType: editingSession.term_type,
             backspaceMode: editingSession.backspace_mode,
-            remoteCommand: editingSession.remote_command
+            remoteCommand: editingSession.remote_command,
+            protocol: editingSession.protocol,
+            serviceName: editingSession.service_name,
+            isNonStop: editingSession.is_nonstop
           } : (retryConfig ? { ...retryConfig, sessionName: retryConfig.sessionName || "" } : undefined)}
         />
       )}

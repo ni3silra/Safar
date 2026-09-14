@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use ssh2::{Channel, Session};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}};
 use std::thread;
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::time::Duration;
 use tauri::Emitter;
 use thiserror::Error;
 use uuid::Uuid;
@@ -99,6 +100,8 @@ struct SshSession {
     config: ConnectionConfig,
     _stream: TcpStream,
     running: Arc<RwLock<bool>>,
+    cols: Arc<AtomicU32>,
+    rows: Arc<AtomicU32>,
     tunnels: HashMap<u16, Arc<AtomicBool>>, // Local -> Remote tunnels
     remote_tunnels: HashMap<u16, Arc<AtomicBool>>, // Remote -> Local tunnels
 }
@@ -134,21 +137,32 @@ impl SshManager {
         config: ConnectionConfig,
         app_handle: tauri::AppHandle,
     ) -> Result<ConnectionResult, SshError> {
-        // Create TCP connection
+        // Resolve host address
         let addr = format!("{}:{}", config.host, config.port);
-        let tcp = TcpStream::connect(&addr).map_err(|e| {
+        let socket_addrs: Vec<_> = addr
+            .to_socket_addrs()
+            .map_err(|e| SshError::ConnectionFailed(format!("Failed to resolve {}: {}", addr, e)))?
+            .collect();
+
+        if socket_addrs.is_empty() {
+            return Err(SshError::ConnectionFailed(format!("Could not resolve host: {}", config.host)));
+        }
+
+        // Connect with 15s timeout
+        let tcp = TcpStream::connect_timeout(&socket_addrs[0], Duration::from_secs(15)).map_err(|e| {
             SshError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e))
         })?;
 
-        // Set timeout
-        tcp.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
-        tcp.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
+        // Enable TCP nodelay for responsive interactive terminal performance
+        let _ = tcp.set_nodelay(true);
 
         // Create SSH session
         let mut session = Session::new().map_err(|e| {
             SshError::ConnectionFailed(format!("Failed to create SSH session: {}", e))
         })?;
 
+        // Set handshake & auth timeout (15 seconds) so it doesn't get stuck indefinitely
+        session.set_timeout(15000);
         session.set_tcp_stream(tcp.try_clone()?);
         session.handshake().map_err(|e| {
             SshError::ConnectionFailed(format!("SSH handshake failed: {}", e))
@@ -189,8 +203,14 @@ impl SshManager {
         })?;
 
         // Request PTY
-        // Request PTY
-        let term = config.term_type.as_deref().unwrap_or("xterm-256color");
+        // On HP NonStop, OpenSSH specifically inspects the term string to allocate
+        // a Guardian Device Subtype 1 (6530) PTY. Use "TN6530-8".
+        let raw_term = config.term_type.as_deref().unwrap_or("xterm-256color");
+        let term = if raw_term == "6530" || raw_term == "t6530" || raw_term.to_lowercase().contains("6530") || raw_term == "tandem" {
+            "TN6530-8"
+        } else {
+            raw_term
+        };
         channel
             .request_pty(term, None, Some((80, 24, 0, 0)))
             .map_err(|e| SshError::ChannelError(format!("Failed to request PTY: {}", e)))?;
@@ -209,6 +229,8 @@ impl SshManager {
         let session_id = Uuid::new_v4().to_string();
 
         let running = Arc::new(RwLock::new(true));
+        let cols = Arc::new(AtomicU32::new(80));
+        let rows = Arc::new(AtomicU32::new(24));
 
         // Store session
         let ssh_session = SshSession {
@@ -217,6 +239,8 @@ impl SshManager {
             config: config.clone(),
             _stream: tcp,
             running: running.clone(),
+            cols: cols.clone(),
+            rows: rows.clone(),
             tunnels: HashMap::new(),
             remote_tunnels: HashMap::new(),
         };
@@ -229,9 +253,12 @@ impl SshManager {
         // Spawn reader thread to emit terminal data
         let session_id_clone = session_id.clone();
         let app_handle_clone = app_handle.clone();
+        let cols_clone = cols.clone();
+        let rows_clone = rows.clone();
 
         thread::spawn(move || {
             let mut buffer = [0u8; 4096];
+            let mut last_keepalive = std::time::Instant::now();
 
             loop {
                 // Check if still running
@@ -253,7 +280,8 @@ impl SshManager {
                                 break;
                             }
                             Ok(n) => {
-                                let data = String::from_utf8_lossy(&buffer[..n]).to_string();
+                                last_keepalive = std::time::Instant::now();
+                                let data = crate::telnet::decode_terminal_bytes(&buffer[..n]);
                                 let _ = app_handle_clone.emit(
                                     "terminal-data",
                                     TerminalData {
@@ -262,13 +290,26 @@ impl SshManager {
                                     },
                                 );
                             }
-                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                // No data available, wait a bit
+                            Err(ref e)
+                                if e.kind() == std::io::ErrorKind::WouldBlock
+                                    || e.kind() == std::io::ErrorKind::TimedOut =>
+                            {
+                                // Send background keepalive signal if idle for 30 seconds.
+                                // Re-affirming terminal window size generates real SSH control packets
+                                // over the wire without injecting any visible characters into the shell.
+                                if last_keepalive.elapsed() >= std::time::Duration::from_secs(30) {
+                                    let c = cols_clone.load(Ordering::Relaxed);
+                                    let r = rows_clone.load(Ordering::Relaxed);
+                                    let _ = channel.request_pty_size(c, r, None, None);
+                                    last_keepalive = std::time::Instant::now();
+                                }
+
+                                // No data available right now, wait a bit
                                 drop(session_guard);
                                 thread::sleep(std::time::Duration::from_millis(10));
                             }
                             Err(_) => {
-                                // Error reading
+                                // Real fatal socket error or EOF
                                 break;
                             }
                         }
@@ -277,6 +318,9 @@ impl SshManager {
                     break;
                 }
             }
+
+            // Emit disconnect notification to frontend when the SSH channel has truly terminated
+            let _ = app_handle_clone.emit("terminal-disconnected", &session_id_clone);
         });
 
         Ok(ConnectionResult {
@@ -312,10 +356,30 @@ impl SshManager {
             .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
 
         let mut session = session_arc.write();
+        session.cols.store(cols, Ordering::Relaxed);
+        session.rows.store(rows, Ordering::Relaxed);
         if let Some(ref mut channel) = session.channel {
             channel
                 .request_pty_size(cols, rows, None, None)
                 .map_err(|e| SshError::ChannelError(format!("Failed to resize PTY: {}", e)))?;
+            Ok(())
+        } else {
+            Err(SshError::ChannelError("No active channel".to_string()))
+        }
+    }
+
+    /// Send an internal keepalive signal (window-change re-affirmation) to keep the SSH connection open
+    pub fn send_keepalive(&self, session_id: &str) -> Result<(), SshError> {
+        let sessions = self.sessions.read();
+        let session_arc = sessions
+            .get(session_id)
+            .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
+
+        let mut session = session_arc.write();
+        let cols = session.cols.load(Ordering::Relaxed);
+        let rows = session.rows.load(Ordering::Relaxed);
+        if let Some(ref mut channel) = session.channel {
+            let _ = channel.request_pty_size(cols, rows, None, None);
             Ok(())
         } else {
             Err(SshError::ChannelError("No active channel".to_string()))
@@ -422,13 +486,13 @@ impl SshManager {
                 }
             }
         } else {
-            // Assume Standard Linux
+            // Assume Standard Linux / Unix
             let mut captured_error = String::new();
             match self.execute_command(session_id, "top -b -n 1 | head -n 57") {
                 Ok(out) => serde_json::json!({ "os": "LINUX", "raw_output": out }).to_string(),
                 Err(e) => {
                     captured_error.push_str(&format!("'top' command failed: {}. ", e));
-                    // Unix ps fallback
+                    // Unix ps -eo fallback
                     match self.execute_command(session_id, "ps -eo pid,user,pcpu,pmem,args --sort=-pcpu | head -n 51") {
                         Ok(out2) => serde_json::json!({ "os": "UNIX_PS", "raw_output": out2 }).to_string(),
                         Err(e2) => {
@@ -436,12 +500,19 @@ impl SshManager {
                             match self.execute_command(session_id, "ps aux | head -n 51") {
                                 Ok(out3) => serde_json::json!({ "os": "UNIX_PS_AUX", "raw_output": out3 }).to_string(),
                                 Err(e3) => {
-                                    captured_error.push_str(&format!("'ps aux' fallback failed: {}", e3));
-                                    serde_json::json!({
-                                        "os": "LINUX",
-                                        "raw_output": "LINUX_METRICS_UNAVAILABLE",
-                                        "error_detail": captured_error
-                                    }).to_string()
+                                    captured_error.push_str(&format!("'ps aux' fallback failed: {}. ", e3));
+                                    // Final fallback: simple ps -ef (works on ALL Unix including HP NonStop OSS)
+                                    match self.execute_command(session_id, "ps -ef | head -n 51") {
+                                        Ok(out4) => serde_json::json!({ "os": "UNIX_PS_EF", "raw_output": out4 }).to_string(),
+                                        Err(e4) => {
+                                            captured_error.push_str(&format!("'ps -ef' fallback failed: {}", e4));
+                                            serde_json::json!({
+                                                "os": "LINUX",
+                                                "raw_output": "LINUX_METRICS_UNAVAILABLE",
+                                                "error_detail": captured_error
+                                            }).to_string()
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -451,6 +522,112 @@ impl SshManager {
         };
 
         Ok(metrics_json)
+    }
+
+    /// Get process info by PID or process name (for Guardian Monitor)
+    /// Uses only simple POSIX commands (ps -ef + grep) for maximum compatibility
+    /// including HP NonStop OSS L25.2 where many ps flags are unavailable.
+    pub fn get_process_info(&self, session_id: &str, pid_or_name: &str) -> Result<String, SshError> {
+        // Determine OS type
+        let os_type_res = self.execute_command(session_id, "uname -s");
+        let os = match &os_type_res {
+            Ok(val) => val.trim().to_uppercase(),
+            Err(_) => "UNKNOWN".to_string(),
+        };
+
+        if os.contains("NONSTOP") || os_type_res.is_err() {
+            // HP NonStop / Guardian — try native status first, then OSS ps -ef
+            let cmd = format!("status {}, detail", pid_or_name);
+            match self.execute_command(session_id, &cmd) {
+                Ok(out) => Ok(serde_json::json!({
+                    "os": "NONSTOP_KERNEL",
+                    "format": "guardian_status",
+                    "target": pid_or_name,
+                    "raw_output": out,
+                    "children_output": ""
+                }).to_string()),
+                Err(_) => {
+                    // Fallback to gtacl
+                    let cmd2 = format!("gtacl -c \"status {}, detail\"", pid_or_name);
+                    match self.execute_command(session_id, &cmd2) {
+                        Ok(out2) => Ok(serde_json::json!({
+                            "os": "NONSTOP_KERNEL",
+                            "format": "guardian_status",
+                            "target": pid_or_name,
+                            "raw_output": out2,
+                            "children_output": ""
+                        }).to_string()),
+                        Err(_) => {
+                            // Final fallback: simple ps -ef on OSS
+                            let is_pid = pid_or_name.chars().all(|c| c.is_ascii_digit());
+                            let ps_cmd = if is_pid {
+                                format!("ps -ef | grep {} | grep -v grep", pid_or_name)
+                            } else {
+                                format!("ps -ef | grep -i {} | grep -v grep", pid_or_name)
+                            };
+                            let main_out = self.execute_command(session_id, &ps_cmd).unwrap_or_default();
+
+                            // Children: grep for PPID column match
+                            let children_out = if is_pid {
+                                let child_cmd = format!(
+                                    "ps -ef | awk '$3 == {}' | grep -v grep",
+                                    pid_or_name
+                                );
+                                self.execute_command(session_id, &child_cmd).unwrap_or_default()
+                            } else {
+                                String::new()
+                            };
+
+                            Ok(serde_json::json!({
+                                "os": "NONSTOP_KERNEL",
+                                "format": "ps_ef",
+                                "target": pid_or_name,
+                                "raw_output": main_out,
+                                "children_output": children_out
+                            }).to_string())
+                        }
+                    }
+                }
+            }
+        } else {
+            // Linux / Unix — use simple ps -ef + grep (works EVERYWHERE)
+            let is_pid = pid_or_name.chars().all(|c| c.is_ascii_digit());
+
+            let main_cmd = if is_pid {
+                // Match on PID column (column 2 in ps -ef)
+                format!(
+                    "ps -ef | awk '$2 == {}' | grep -v grep",
+                    pid_or_name
+                )
+            } else {
+                // Match by name anywhere in the line
+                format!(
+                    "ps -ef | grep -i {} | grep -v grep",
+                    pid_or_name
+                )
+            };
+
+            let main_output = self.execute_command(session_id, &main_cmd).unwrap_or_default();
+
+            // Get child processes: match PPID column (column 3 in ps -ef)
+            let children_output = if is_pid {
+                let child_cmd = format!(
+                    "ps -ef | awk '$3 == {}' | grep -v grep",
+                    pid_or_name
+                );
+                self.execute_command(session_id, &child_cmd).unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            Ok(serde_json::json!({
+                "os": "LINUX",
+                "format": "ps_ef",
+                "target": pid_or_name,
+                "raw_output": main_output,
+                "children_output": children_output
+            }).to_string())
+        }
     }
 
     /// List all sessions
