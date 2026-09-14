@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from 'sonner';
 import { Session, ConnectionResult, CommandResponse, SavedSession, LogEntry } from "../types";
 
@@ -31,6 +32,16 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
     const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
     const [statusMessage, setStatusMessage] = useState("Disconnected");
+
+    useEffect(() => {
+        const unlisten = listen<{session_id: string, message: string}>("terminal-log", (event) => {
+            addLog(event.payload.session_id, event.payload.message, "info", "SYSTEM");
+        });
+
+        return () => {
+            unlisten.then(f => f());
+        };
+    }, [addLog]);
 
     const derivedActiveSession = activeSessions.find(s => s.id === activeSessionId);
 

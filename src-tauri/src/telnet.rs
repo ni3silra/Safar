@@ -72,6 +72,12 @@ struct TerminalDataPayload {
     data: String,
 }
 
+#[derive(Clone, Serialize)]
+struct TerminalLogPayload {
+    session_id: String,
+    message: String,
+}
+
 pub struct TelnetSession {
     pub stream: Arc<RwLock<TcpStream>>,
     #[allow(dead_code)]
@@ -79,6 +85,7 @@ pub struct TelnetSession {
     pub running: Arc<RwLock<bool>>,
     pub cols: Arc<AtomicU32>,
     pub rows: Arc<AtomicU32>,
+    pub app_handle: AppHandle,
 }
 
 pub struct TelnetManager {
@@ -130,6 +137,7 @@ impl TelnetManager {
             running: running.clone(),
             cols: cols.clone(),
             rows: rows.clone(),
+            app_handle: app_handle.clone(),
         };
 
         self.sessions.write().insert(session_id.clone(), session);
@@ -139,6 +147,7 @@ impl TelnetManager {
         let stream_writer = stream_arc.clone();
         let app_handle_clone = app_handle.clone();
         let service_name_to_send = config.service_name.clone().unwrap_or_else(|| "TACL".to_string());
+        let term_type_to_send = config.term_type.clone().unwrap_or_else(|| "TN6530-8".to_string());
 
         // Spawn background reader & Telnet negotiation thread
         thread::spawn(move || {
@@ -156,6 +165,15 @@ impl TelnetManager {
                     }
                     Ok(n) => {
                         let incoming = &read_buf[..n];
+                        
+                        let _ = app_handle_clone.emit(
+                            "terminal-log",
+                            TerminalLogPayload {
+                                session_id: session_id_clone.clone(),
+                                message: format!("Received {} bytes: {:?}", n, incoming),
+                            }
+                        );
+
                         let mut clean_data = Vec::new();
                         let mut i = 0;
 
@@ -181,6 +199,7 @@ impl TelnetManager {
                                             let mut guard = stream_writer.write();
                                             let _ = guard.write_all(&response);
                                             let _ = guard.flush();
+                                            let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
                                             i += 3;
                                             continue;
                                         }
@@ -192,6 +211,7 @@ impl TelnetManager {
                                             let mut guard = stream_writer.write();
                                             let _ = guard.write_all(&response);
                                             let _ = guard.flush();
+                                            let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
                                             i += 3;
                                             continue;
                                         }
@@ -206,6 +226,7 @@ impl TelnetManager {
                                             let mut guard = stream_writer.write();
                                             let _ = guard.write_all(&response);
                                             let _ = guard.flush();
+                                            let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
                                             i += 3;
                                             continue;
                                         }
@@ -217,6 +238,7 @@ impl TelnetManager {
                                             let mut guard = stream_writer.write();
                                             let _ = guard.write_all(&response);
                                             let _ = guard.flush();
+                                            let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
                                             i += 3;
                                             continue;
                                         }
@@ -231,13 +253,14 @@ impl TelnetManager {
                                             let opt = incoming[i + 2];
                                             if opt == OPT_TERMINAL_TYPE {
                                                 // Host sent: IAC SB TERMINAL-TYPE SEND IAC SE (request terminal type)
-                                                // RFC 1091 / RFC 854: Reply: IAC SB TERMINAL-TYPE IS "TN6530-8" IAC SE
+                                                // RFC 1091 / RFC 854: Reply: IAC SB TERMINAL-TYPE IS "..." IAC SE
                                                 let mut sub_resp = vec![IAC, SB, OPT_TERMINAL_TYPE, 0]; // 0 = IS
-                                                sub_resp.extend_from_slice(b"TN6530-8");
+                                                sub_resp.extend_from_slice(term_type_to_send.as_bytes());
                                                 sub_resp.extend_from_slice(&[IAC, SE]);
                                                 let mut guard = stream_writer.write();
                                                 let _ = guard.write_all(&sub_resp);
                                                 let _ = guard.flush();
+                                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes (RFC Terminal-Type {}): {:?}", sub_resp.len(), term_type_to_send, sub_resp) });
                                             }
                                             i = j + 2;
                                             continue;
@@ -270,6 +293,7 @@ impl TelnetManager {
                                 let service_cmd = format!("{}\r", service_name_to_send);
                                 let _ = guard.write_all(service_cmd.as_bytes());
                                 let _ = guard.flush();
+                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", service_cmd.as_bytes().len(), service_cmd.as_bytes()) });
                             }
 
                             // Auto-answer Terminal Type if TELSERV or TACL prompts in conversational stream
@@ -286,8 +310,10 @@ impl TelnetManager {
                                 if last_term_reply.elapsed() > std::time::Duration::from_millis(1000) {
                                     last_term_reply = std::time::Instant::now();
                                     let mut guard = stream_writer.write();
-                                    let _ = guard.write_all(b"TN6530-8\r");
+                                    let term_cmd = format!("{}\r", term_type_to_send);
+                                    let _ = guard.write_all(term_cmd.as_bytes());
                                     let _ = guard.flush();
+                                    let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes (Conversational Terminal-Type {}): {:?}", term_cmd.as_bytes().len(), term_type_to_send, term_cmd.as_bytes()) });
                                 }
                             }
 
@@ -337,6 +363,7 @@ impl TelnetManager {
         let mut stream = session.stream.write();
         stream.write_all(data.as_bytes())?;
         stream.flush()?;
+        let _ = session.app_handle.emit("terminal-log", TerminalLogPayload { session_id: session_id.to_string(), message: format!("Sent {} bytes: {:?}", data.as_bytes().len(), data.as_bytes()) });
         Ok(())
     }
 
@@ -371,6 +398,7 @@ impl TelnetManager {
         let mut stream = session.stream.write();
         let _ = stream.write_all(&naws_bytes);
         let _ = stream.flush();
+        let _ = session.app_handle.emit("terminal-log", TerminalLogPayload { session_id: session_id.to_string(), message: format!("Sent {} bytes: {:?}", naws_bytes.len(), naws_bytes) });
         Ok(())
     }
 }
