@@ -155,6 +155,24 @@ impl TelnetManager {
             let mut service_sent = false;
             let mut last_term_reply = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
+            // Proactively send WILL SGA and WILL TTYPE as required by some NonStop hosts
+            {
+                let init_bytes = vec![
+                    IAC, WILL, OPT_SUPPRESS_GO_AHEAD,
+                    IAC, WILL, OPT_TERMINAL_TYPE
+                ];
+                let mut guard = stream_writer.write();
+                let _ = guard.write_all(&init_bytes);
+                let _ = guard.flush();
+                let _ = app_handle_clone.emit(
+                    "terminal-log",
+                    TerminalLogPayload {
+                        session_id: session_id_clone.clone(),
+                        message: format!("Sent {} bytes (Initial Telnet WILL SGA/TTYPE): {:?}", init_bytes.len(), init_bytes),
+                    }
+                );
+            }
+
             while *running_clone.read() {
                 let read_res = stream_reader.read(&mut read_buf);
 
