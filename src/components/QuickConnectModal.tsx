@@ -5,6 +5,7 @@ import { appLocalDataDir, join } from '@tauri-apps/api/path';
 import { toast } from 'sonner';
 import { Icons } from "./Icons";
 import { ConnectConfig } from "../types";
+import { PROTOCOL_CONFIG, SupportedProtocol } from "../utils/protocol";
 
 interface QuickConnectModalProps {
     onClose: () => void;
@@ -131,13 +132,14 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
         setConnectionMode(newMode);
         if (newMode === "nonstop") {
             setProtocol("telnet");
-            if (port === 22) setPort(23);
+            if (port === 22) setPort(PROTOCOL_CONFIG.telnet.defaultPort);
             setTerminalType("TN6530-8");
             setBackspaceMode("ctrl-h");
             if (!serviceName) setServiceName("TACL");
+            if (activeTab === "security") setActiveTab("basic");
         } else {
             setProtocol("ssh");
-            if (port === 23) setPort(22);
+            if (port === 23) setPort(PROTOCOL_CONFIG.ssh.defaultPort);
             setTerminalType("xterm-256color");
             setBackspaceMode("auto");
         }
@@ -145,10 +147,11 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
 
     const handleProtocolSwitch = (newProtocol: "telnet" | "ssh") => {
         setProtocol(newProtocol);
-        if (newProtocol === "telnet" && port === 22) {
-            setPort(23);
-        } else if (newProtocol === "ssh" && port === 23) {
-            setPort(22);
+        if (newProtocol === "telnet") {
+            if (port === 22) setPort(PROTOCOL_CONFIG.telnet.defaultPort);
+            if (activeTab === "security") setActiveTab("basic");
+        } else if (newProtocol === "ssh") {
+            if (port === 23) setPort(PROTOCOL_CONFIG.ssh.defaultPort);
         }
     };
 
@@ -179,20 +182,21 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
         }
 
         try {
-            const chosenProtocol = isNonStop ? protocol : "ssh";
+            const chosenProtocol: SupportedProtocol = isNonStop ? protocol : "ssh";
             const effectiveServiceName = isNonStop ? (serviceName.trim() || "TACL") : undefined;
             const effectiveSessionName = sessionName.trim() || (
                 isNonStop
                     ? `NonStop (${effectiveServiceName}) - ${host.trim()}`
                     : `${username.trim()}@${host.trim()}`
             );
+            const protoConfig = PROTOCOL_CONFIG[chosenProtocol];
 
             onConnect({
                 host: host.trim(),
-                port: Number(port) || (chosenProtocol === "telnet" ? 23 : 22),
+                port: Number(port) || protoConfig.defaultPort,
                 username: username.trim(),
-                password: keyMode === "password" ? password : "",
-                privateKeyPath: (!isNonStop || chosenProtocol === "ssh") && keyMode !== "password" ? finalKeyPath : null,
+                password: protoConfig.requiresPasswordAuth && keyMode === "password" ? password : "",
+                privateKeyPath: protoConfig.requiresPasswordAuth && keyMode !== "password" ? finalKeyPath : null,
                 sessionName: effectiveSessionName,
                 termType: isNonStop ? "TN6530-8" : terminalType,
                 remoteCommand: remoteCommand || undefined,
@@ -373,7 +377,7 @@ export function QuickConnectModal({ onClose, onConnect, initialConfig, mode = "c
                     padding: "12px 24px 0",
                     flexShrink: 0,
                 }}>
-                    {TABS.map((tab) => (
+                    {TABS.filter((tab) => tab.id !== "security" || (isNonStop ? protocol === "ssh" : true)).map((tab) => (
                         <button
                             key={tab.id}
                             type="button"

@@ -10,6 +10,7 @@ import { SessionLogs } from "../SessionLogs";
 
 import { WelcomeScreen } from "../WelcomeScreen";
 import { TransferManager } from "../TransferManager";
+import { getProtocolMeta } from "../../utils/protocol";
 
 interface WorkspaceProps {
     activeSessions: Session[];
@@ -69,27 +70,42 @@ export function Workspace({
         <div className="content">
             {/* Tab Bar */}
             <div className="tab-bar">
-                {activeSessions.map((session) => (
-                    <button
-                        key={session.id}
-                        className={`tab ${activeSessionId === session.id ? "active" : ""}`}
-                        onClick={() => setActiveSessionId(session.id)}
-                    >
-                        <span className="tab-icon">
-                            <Icons.Terminal />
-                        </span>
-                        <span>{session.name}{session.dynamicTitle ? ` (${session.dynamicTitle})` : ''}</span>
-                        <span
-                            className="tab-close"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                disconnect(session.id);
-                            }}
+                {activeSessions.map((session) => {
+                    const protoMeta = getProtocolMeta(session);
+                    return (
+                        <button
+                            key={session.id}
+                            className={`tab ${activeSessionId === session.id ? "active" : ""}`}
+                            onClick={() => setActiveSessionId(session.id)}
                         >
-                            <Icons.X />
-                        </span>
-                    </button>
-                ))}
+                            <span className="tab-icon">
+                                <Icons.Terminal />
+                            </span>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                                <span>{session.name}{session.dynamicTitle ? ` (${session.dynamicTitle})` : ''}</span>
+                                <span
+                                    className="session-proto-badge"
+                                    style={{
+                                        background: protoMeta.badgeBg,
+                                        color: protoMeta.badgeColor,
+                                        border: `1px solid ${protoMeta.badgeBorder}`,
+                                    }}
+                                >
+                                    {protoMeta.badgeText}
+                                </span>
+                            </span>
+                            <span
+                                className="tab-close"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    disconnect(session.id);
+                                }}
+                            >
+                                <Icons.X />
+                            </span>
+                        </button>
+                    );
+                })}
                 <div style={{ position: "relative" }} ref={addMenuRef}>
                     <button
                         ref={buttonRef}
@@ -153,45 +169,59 @@ export function Workspace({
                                         Available Sessions
                                     </div>
                                     <div style={{ maxHeight: "200px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "2px" }}>
-                                        {sessions.map(session => (
-                                            <button
-                                                key={session.id}
-                                                style={{
-                                                    display: "flex", alignItems: "center", gap: "8px",
-                                                    padding: "8px 12px", border: "none", background: "transparent",
-                                                    color: "var(--text-primary)", cursor: "pointer",
-                                                    textAlign: "left", borderRadius: "4px", fontSize: "14px",
-                                                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
-                                                }}
-                                                onClick={() => {
-                                                    setShowAddMenu(false);
-                                                    onConnectSession({
-                                                        host: session.host,
-                                                        port: session.port,
-                                                        username: session.username,
-                                                        password: session.password || "",
-                                                        privateKeyPath: session.private_key_path,
-                                                        sessionName: session.name,
-                                                        termType: session.term_type,
-                                                        remoteCommand: session.remote_command,
-                                                        backspaceMode: session.backspace_mode,
-                                                        protocol: session.protocol,
-                                                        serviceName: session.service_name,
-                                                        isNonStop: session.is_nonstop,
-                                                    });
-                                                }}
-                                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--bg-hover)"}
-                                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
-                                            >
-                                                <Icons.Server style={{ width: 14, height: 14, flexShrink: 0 }} />
-                                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                                    {session.name}
-                                                </span>
-                                            </button>
-                                        ))}
+                                        {sessions.map(session => {
+                                            const protoMeta = getProtocolMeta(session);
+                                            return (
+                                                <button
+                                                    key={session.id}
+                                                    style={{
+                                                        display: "flex", alignItems: "center", gap: "8px",
+                                                        padding: "8px 12px", border: "none", background: "transparent",
+                                                        color: "var(--text-primary)", cursor: "pointer",
+                                                        textAlign: "left", borderRadius: "4px", fontSize: "14px",
+                                                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
+                                                    }}
+                                                    onClick={() => {
+                                                        setShowAddMenu(false);
+                                                        onConnectSession({
+                                                            host: session.host,
+                                                            port: session.port,
+                                                            username: session.username,
+                                                            password: session.password || "",
+                                                            privateKeyPath: session.private_key_path,
+                                                            sessionName: session.name,
+                                                            termType: session.term_type,
+                                                            remoteCommand: session.remote_command,
+                                                            backspaceMode: session.backspace_mode,
+                                                            protocol: session.protocol,
+                                                            serviceName: session.service_name,
+                                                            isNonStop: session.is_nonstop,
+                                                        });
+                                                    }}
+                                                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--bg-hover)"}
+                                                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
+                                                >
+                                                    <Icons.Server style={{ width: 14, height: 14, flexShrink: 0 }} />
+                                                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                                                        {session.name}
+                                                    </span>
+                                                    <span
+                                                        className="session-proto-badge"
+                                                        style={{
+                                                            background: protoMeta.badgeBg,
+                                                            color: protoMeta.badgeColor,
+                                                            border: `1px solid ${protoMeta.badgeBorder}`,
+                                                        }}
+                                                    >
+                                                        {protoMeta.badgeText}
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                 </>
                             )}
+
                         </div>,
                         document.body
                     )}
