@@ -116,6 +116,8 @@ impl TelnetManager {
         let _ = stream.set_nodelay(true);
         let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
 
+        let mut stream_reader = stream.try_clone().map_err(|e| TelnetError::ConnectionFailed(format!("Failed to clone stream: {}", e)))?;
+
         let session_id = Uuid::new_v4().to_string();
         let running = Arc::new(RwLock::new(true));
         let cols = Arc::new(AtomicU32::new(80));
@@ -134,7 +136,7 @@ impl TelnetManager {
 
         let session_id_clone = session_id.clone();
         let running_clone = running.clone();
-        let stream_reader = stream_arc.clone();
+        let stream_writer = stream_arc.clone();
         let app_handle_clone = app_handle.clone();
         let service_name_to_send = config.service_name.clone().unwrap_or_else(|| "TACL".to_string());
 
@@ -145,10 +147,7 @@ impl TelnetManager {
             let mut last_term_reply = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
             while *running_clone.read() {
-                let read_res = {
-                    let mut stream_guard = stream_reader.write();
-                    stream_guard.read(&mut read_buf)
-                };
+                let read_res = stream_reader.read(&mut read_buf);
 
                 match read_res {
                     Ok(0) => {
@@ -179,7 +178,7 @@ impl TelnetManager {
                                                 OPT_ECHO => vec![IAC, WILL, OPT_ECHO],
                                                 _ => vec![IAC, WONT, opt],
                                             };
-                                            let mut guard = stream_reader.write();
+                                            let mut guard = stream_writer.write();
                                             let _ = guard.write_all(&response);
                                             let _ = guard.flush();
                                             i += 3;
@@ -190,7 +189,7 @@ impl TelnetManager {
                                         if i + 2 < incoming.len() {
                                             let opt = incoming[i + 2];
                                             let response = vec![IAC, WONT, opt];
-                                            let mut guard = stream_reader.write();
+                                            let mut guard = stream_writer.write();
                                             let _ = guard.write_all(&response);
                                             let _ = guard.flush();
                                             i += 3;
@@ -204,7 +203,7 @@ impl TelnetManager {
                                                 OPT_SUPPRESS_GO_AHEAD | OPT_ECHO | OPT_BINARY => vec![IAC, DO, opt],
                                                 _ => vec![IAC, DONT, opt],
                                             };
-                                            let mut guard = stream_reader.write();
+                                            let mut guard = stream_writer.write();
                                             let _ = guard.write_all(&response);
                                             let _ = guard.flush();
                                             i += 3;
@@ -215,7 +214,7 @@ impl TelnetManager {
                                         if i + 2 < incoming.len() {
                                             let opt = incoming[i + 2];
                                             let response = vec![IAC, DONT, opt];
-                                            let mut guard = stream_reader.write();
+                                            let mut guard = stream_writer.write();
                                             let _ = guard.write_all(&response);
                                             let _ = guard.flush();
                                             i += 3;
@@ -236,7 +235,7 @@ impl TelnetManager {
                                                 let mut sub_resp = vec![IAC, SB, OPT_TERMINAL_TYPE, 0]; // 0 = IS
                                                 sub_resp.extend_from_slice(b"TN6530-8");
                                                 sub_resp.extend_from_slice(&[IAC, SE]);
-                                                let mut guard = stream_reader.write();
+                                                let mut guard = stream_writer.write();
                                                 let _ = guard.write_all(&sub_resp);
                                                 let _ = guard.flush();
                                             }
@@ -267,7 +266,7 @@ impl TelnetManager {
                             // Auto-enter Service Name (e.g. "TACL") on TELSERV prompt
                             if !service_sent && (data_str.contains("Enter Choice>") || data_str.contains("Enter choice>")) {
                                 service_sent = true;
-                                let mut guard = stream_reader.write();
+                                let mut guard = stream_writer.write();
                                 let service_cmd = format!("{}\r", service_name_to_send);
                                 let _ = guard.write_all(service_cmd.as_bytes());
                                 let _ = guard.flush();
@@ -286,7 +285,7 @@ impl TelnetManager {
                             {
                                 if last_term_reply.elapsed() > std::time::Duration::from_millis(1000) {
                                     last_term_reply = std::time::Instant::now();
-                                    let mut guard = stream_reader.write();
+                                    let mut guard = stream_writer.write();
                                     let _ = guard.write_all(b"TN6530-8\r");
                                     let _ = guard.flush();
                                 }
@@ -306,12 +305,15 @@ impl TelnetManager {
                         // Sleep briefly on timeout to yield CPU
                         thread::sleep(Duration::from_millis(10));
                     }
-                    Err(_) => {
+                    Err(e) => {
                         // Socket error or connection lost
+                        println!("Telnet socket error: {:?}", e);
                         break;
                     }
                 }
             }
+
+            println!("Telnet thread exiting for session {}", session_id_clone);
 
             // Notify frontend of disconnection
             let _ = app_handle_clone.emit("terminal-disconnected", &session_id_clone);
