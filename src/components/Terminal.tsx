@@ -843,14 +843,11 @@ export function TerminalComponent({
           return false;
         }
       }
-      // Ctrl+Shift+V or Cmd+V for Paste
-      if (((e.ctrlKey && e.shiftKey) || e.metaKey) && e.code === "KeyV" && e.type === "keydown") {
-        navigator.clipboard.readText().then((text) => {
-          if (text) {
-            terminal.paste(text);
-          }
-        }).catch(console.error);
-        return false;
+      // Ctrl+Shift+V or Cmd+V or Ctrl+V for Paste:
+      // Return true to let xterm and browser's native paste handler deliver the text into onData exactly once.
+      // Do not manually read clipboard and call paste()/sendData() here, as xterm already listens for paste.
+      if (((e.ctrlKey && e.shiftKey) || e.metaKey || (e.ctrlKey && !e.shiftKey && !e.altKey)) && e.code === "KeyV" && e.type === "keydown") {
+        return true;
       }
       return true;
     });
