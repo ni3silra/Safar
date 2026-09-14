@@ -209,7 +209,7 @@ impl TelnetManager {
                                             let opt = incoming[i + 2];
                                             let response = match opt {
                                                 OPT_TERMINAL_TYPE => vec![IAC, WILL, OPT_TERMINAL_TYPE],
-                                                OPT_NAWS => vec![IAC, WILL, OPT_NAWS],
+                                                OPT_NAWS => vec![IAC, WONT, OPT_NAWS], // Disabled for HP NonStop compatibility
                                                 OPT_SUPPRESS_GO_AHEAD => vec![IAC, WILL, OPT_SUPPRESS_GO_AHEAD],
                                                 OPT_ECHO => vec![IAC, WILL, OPT_ECHO],
                                                 _ => vec![IAC, WONT, opt],
@@ -407,6 +407,8 @@ impl TelnetManager {
         session.rows.store(rows, Ordering::Relaxed);
 
         // Send Telnet NAWS subnegotiation: IAC SB NAWS <col_hi> <col_lo> <row_hi> <row_lo> IAC SE
+        // DISABLED FOR HP NONSTOP COMPATIBILITY
+        /*
         let col_hi = ((cols >> 8) & 0xFF) as u8;
         let col_lo = (cols & 0xFF) as u8;
         let row_hi = ((rows >> 8) & 0xFF) as u8;
@@ -417,6 +419,7 @@ impl TelnetManager {
         let _ = stream.write_all(&naws_bytes);
         let _ = stream.flush();
         let _ = session.app_handle.emit("terminal-log", TerminalLogPayload { session_id: session_id.to_string(), message: format!("Sent {} bytes: {:?}", naws_bytes.len(), naws_bytes) });
+        */
         Ok(())
     }
 }
