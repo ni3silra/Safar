@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}};
 use std::thread;
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::time::Duration;
 use tauri::Emitter;
 use thiserror::Error;
 use uuid::Uuid;
@@ -136,9 +137,19 @@ impl SshManager {
         config: ConnectionConfig,
         app_handle: tauri::AppHandle,
     ) -> Result<ConnectionResult, SshError> {
-        // Create TCP connection
+        // Resolve host address
         let addr = format!("{}:{}", config.host, config.port);
-        let tcp = TcpStream::connect(&addr).map_err(|e| {
+        let socket_addrs: Vec<_> = addr
+            .to_socket_addrs()
+            .map_err(|e| SshError::ConnectionFailed(format!("Failed to resolve {}: {}", addr, e)))?
+            .collect();
+
+        if socket_addrs.is_empty() {
+            return Err(SshError::ConnectionFailed(format!("Could not resolve host: {}", config.host)));
+        }
+
+        // Connect with 15s timeout
+        let tcp = TcpStream::connect_timeout(&socket_addrs[0], Duration::from_secs(15)).map_err(|e| {
             SshError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e))
         })?;
 
@@ -150,6 +161,8 @@ impl SshManager {
             SshError::ConnectionFailed(format!("Failed to create SSH session: {}", e))
         })?;
 
+        // Set handshake & auth timeout (15 seconds) so it doesn't get stuck indefinitely
+        session.set_timeout(15000);
         session.set_tcp_stream(tcp.try_clone()?);
         session.handshake().map_err(|e| {
             SshError::ConnectionFailed(format!("SSH handshake failed: {}", e))

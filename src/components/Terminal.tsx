@@ -846,8 +846,10 @@ export function TerminalComponent({
       // Ctrl+Shift+V or Cmd+V for Paste
       if (((e.ctrlKey && e.shiftKey) || e.metaKey) && e.code === "KeyV" && e.type === "keydown") {
         navigator.clipboard.readText().then((text) => {
-          sendData(text);
-        });
+          if (text) {
+            terminal.paste(text);
+          }
+        }).catch(console.error);
         return false;
       }
       return true;
