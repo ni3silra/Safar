@@ -173,14 +173,9 @@ impl TelnetManager {
                 .build()
                 .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
 
-            let mut tls_stream = connector
+            let tls_stream = connector
                 .connect(&config.host, stream)
                 .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
-                
-            let service_cmd = format!("{}\r", config.service_name.clone().unwrap_or_else(|| "TACL".to_string()));
-            tls_stream.write_all(service_cmd.as_bytes()).map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
-            tls_stream.flush().map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
-            log_hex(&app_handle, &session_id, "SEND", service_cmd.as_bytes(), "Initial TLS Service Name");
             
             NetStream::Tls(tls_stream)
         } else {
@@ -207,14 +202,12 @@ impl TelnetManager {
         let running_clone = running.clone();
         let stream_writer = stream_arc.clone();
         let app_handle_clone = app_handle.clone();
-        let _service_name_to_send = config.service_name.clone().unwrap_or_else(|| "TACL".to_string());
+        let config_clone = config.clone();
         let term_type_to_send = config.term_type.clone().unwrap_or_else(|| "TN6530-8".to_string());
 
         // Spawn background reader & Telnet negotiation thread
         thread::spawn(move || {
             let mut read_buf = [0u8; 4096];
-            let _service_sent = false;
-            let mut last_term_reply = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
             // Option negotiation state tracking (prevent infinite loops)
             let mut will_ttype_sent = false; // Initialized to false, always acknowledge server's DO
@@ -235,6 +228,8 @@ impl TelnetManager {
             let mut carry: Vec<u8> = Vec::new();
 
             // Startup: Fully passive mode. We wait for the server to initiate.
+            let mut service_selected = false;
+            let mut terminal_type_sent = false;
             while *running_clone.read() {
                 let read_res = {
                     let mut guard = stream_writer.write();
@@ -426,41 +421,72 @@ impl TelnetManager {
                         }
 
                         if !clean_data.is_empty() {
+                            // 1. Decode incoming bytes for sequence scanning
                             let data_str = decode_terminal_bytes(&clean_data);
-                            let lower_data = data_str.to_lowercase();
+                            let lower = data_str.to_lowercase();
 
-                            /*
-                            // Auto-enter Service Name (or confirm default TACL service)
-                            if !service_sent && (lower_data.contains("enter choice") || lower_data.contains("telserv service:")) {
-                                service_sent = true;
-                                // Brief sleep to allow pending IAC SB TTYPE negotiation to clear the wire first
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                                let mut guard = stream_writer.write();
-                                let service_cmd = "\r\n"; // Send CRLF to confirm the selected default service
-                                let _ = guard.write_all(service_cmd.as_bytes());
-                                let _ = guard.flush();
-                                log_hex(&app_handle_clone, &session_id_clone, "SEND", service_cmd.as_bytes(), "Confirm Default Service");
-                            }
-                            */
-
-                            // Auto-answer Terminal Type if TELSERV or TACL prompts in conversational stream
-                            if lower_data.contains("terminal type?")
-                                || lower_data.contains("terminal type:")
-                                || lower_data.contains("terminal type [")
-                                || lower_data.contains("terminal type (")
-                                || lower_data.contains("enter terminal type")
-                                || lower_data.contains("term = ")
-                                || lower_data.contains("terminal [6530]")
-                                || lower_data.contains("terminal [tn6530")
+                            // 2. Milestone 1: Handle TELSERV Service Selection (Executed exactly once)
+                            if !service_selected
+                                && (lower.contains("telserv service")
+                                    || lower.contains("enter choice")
+                                    || lower.contains("service:"))
                             {
-                                if last_term_reply.elapsed() > std::time::Duration::from_millis(1000) {
-                                    last_term_reply = std::time::Instant::now();
+                                // Select explicit service name or fall back cleanly to default selection
+                                let choice = if config_clone.service_name
+                                    .as_deref()
+                                    .unwrap_or("")
+                                    .eq_ignore_ascii_case("TACL")
+                                {
+                                    "TACL\r"
+                                } else {
+                                    "\r"
+                                };
+
+                                // Thread-safe writing and logging block
+                                {
                                     let mut guard = stream_writer.write();
-                                    let term_cmd = format!("{}\r\n", term_type_to_send);
+                                    let _ = guard.write_all(choice.as_bytes());
+                                    let _ = guard.flush();
+                                }
+
+                                log_hex(
+                                    &app_handle_clone,
+                                    &session_id_clone,
+                                    "SEND",
+                                    choice.as_bytes(),
+                                    "TELSERV service select",
+                                );
+
+                                service_selected = true;
+                                continue; // Drop out early to prevent text parsing side-effects
+                            }
+
+                            // 3. Milestone 2: Conversational Terminal-Type Selection (Executed exactly once)
+                            if !terminal_type_sent
+                                && (lower.contains("terminal type?")
+                                    || lower.contains("terminal type:")
+                                    || lower.contains("terminal type [")
+                                    || lower.contains("enter terminal type")
+                                    || lower.contains("term = "))
+                            {
+                                let term_cmd = format!("{}\r\n", term_type_to_send);
+
+                                {
+                                    let mut guard = stream_writer.write();
                                     let _ = guard.write_all(term_cmd.as_bytes());
                                     let _ = guard.flush();
-                                    log_hex(&app_handle_clone, &session_id_clone, "SEND", term_cmd.as_bytes(), &format!("Conversational Terminal-Type {}", term_type_to_send));
                                 }
+
+                                log_hex(
+                                    &app_handle_clone,
+                                    &session_id_clone,
+                                    "SEND",
+                                    term_cmd.as_bytes(),
+                                    &format!("Conversational Terminal-Type {}", term_type_to_send),
+                                );
+
+                                terminal_type_sent = true;
+                                continue; // Avoid pushing prompt tokens into terminal cell emitters
                             }
 
                             // Emit clean data to frontend xterm
