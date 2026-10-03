@@ -17,6 +17,20 @@ use uuid::Uuid;
 // ============================================
 // TELNET CONSTANTS (RFC 854 & RFC 1041)
 // ============================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionState {
+    WaitingForBanner,
+    SelectingService,
+    WaitingForShellPrompt,
+    NegotiatingTerminal,
+    LiveSession,
+}
+
+fn send_bytes(stream: &mut NetStream, data: &[u8]) -> std::io::Result<()> {
+    stream.write_all(data)?;
+    stream.flush()
+}
 const IAC: u8 = 255;  // Interpret As Command
 const DONT: u8 = 254;
 const DO: u8 = 253;
@@ -170,6 +184,7 @@ impl TelnetManager {
         let net_stream = if config.ssl_encryption.unwrap_or(false) {
             let connector = native_tls::TlsConnector::builder()
                 .danger_accept_invalid_certs(true)
+                .danger_accept_invalid_hostnames(true)
                 .build()
                 .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
 
@@ -227,9 +242,10 @@ impl TelnetManager {
             // on screen) and a truncated DO/WILL leaked a 0xFF byte into the output.
             let mut carry: Vec<u8> = Vec::new();
 
+            let mut state = SessionState::WaitingForBanner;
+            let mut prompt_buffer = String::new();
+
             // Startup: Fully passive mode. We wait for the server to initiate.
-            let mut service_selected = false;
-            let mut terminal_type_sent = false;
             while *running_clone.read() {
                 let read_res = {
                     let mut guard = stream_writer.write();
@@ -290,9 +306,7 @@ impl TelnetManager {
                                                 },
                                             };
                                             if !response.is_empty() {
-                                                let mut guard = stream_writer.write();
-                                                let _ = guard.write_all(&response);
-                                                let _ = guard.flush();
+                                                send_bytes(&mut *stream_writer.write(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -317,9 +331,7 @@ impl TelnetManager {
                                                 response = vec![IAC, WONT, opt];
                                             }
                                             if !response.is_empty() {
-                                                let mut guard = stream_writer.write();
-                                                let _ = guard.write_all(&response);
-                                                let _ = guard.flush();
+                                                send_bytes(&mut *stream_writer.write(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -338,9 +350,7 @@ impl TelnetManager {
                                                 },
                                             };
                                             if !response.is_empty() {
-                                                let mut guard = stream_writer.write();
-                                                let _ = guard.write_all(&response);
-                                                let _ = guard.flush();
+                                                send_bytes(&mut *stream_writer.write(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -362,9 +372,7 @@ impl TelnetManager {
                                                 response = vec![IAC, DONT, opt];
                                             }
                                             if !response.is_empty() {
-                                                let mut guard = stream_writer.write();
-                                                let _ = guard.write_all(&response);
-                                                let _ = guard.flush();
+                                                send_bytes(&mut *stream_writer.write(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -387,9 +395,7 @@ impl TelnetManager {
                                                     let mut sub_resp = vec![IAC, SB, OPT_TERMINAL_TYPE, 0]; // 0 = IS
                                                     sub_resp.extend_from_slice(term_type_to_send.as_bytes());
                                                     sub_resp.extend_from_slice(&[IAC, SE]);
-                                                    let mut guard = stream_writer.write();
-                                                    let _ = guard.write_all(&sub_resp);
-                                                    let _ = guard.flush();
+                                                    send_bytes(&mut *stream_writer.write(), &sub_resp);
                                                     log_hex(&app_handle_clone, &session_id_clone, "SEND", &sub_resp, &format!("RFC Terminal-Type {}", term_type_to_send));
                                                 }
                                             }
@@ -423,70 +429,64 @@ impl TelnetManager {
                         if !clean_data.is_empty() {
                             // 1. Decode incoming bytes for sequence scanning
                             let data_str = decode_terminal_bytes(&clean_data);
-                            let lower = data_str.to_lowercase();
+                            
+                            if state != SessionState::LiveSession {
+                                prompt_buffer.push_str(&data_str);
+                                let lower = prompt_buffer.to_lowercase();
 
-                            // 2. Milestone 1: Handle TELSERV Service Selection (Executed exactly once)
-                            if !service_selected
-                                && (lower.contains("telserv service")
-                                    || lower.contains("enter choice")
-                                    || lower.contains("service:"))
-                            {
-                                // Select explicit service name or fall back cleanly to default selection
-                                let choice = if config_clone.service_name
-                                    .as_deref()
-                                    .unwrap_or("")
-                                    .eq_ignore_ascii_case("TACL")
-                                {
-                                    "TACL\r"
-                                } else {
-                                    "\r"
-                                };
+                                match state {
+                                    SessionState::WaitingForBanner => {
+                                        if lower.contains("telserv service")
+                                            || lower.contains("enter choice")
+                                            || lower.contains("service:")
+                                        {
+                                            state = SessionState::SelectingService;
+                                        }
+                                    }
+                                    SessionState::SelectingService => {
+                                        let choice = if config_clone.service_name
+                                            .as_deref()
+                                            .unwrap_or("TACL")
+                                            .eq_ignore_ascii_case("TACL")
+                                        {
+                                            "TACL\r"
+                                        } else {
+                                            "\r"
+                                        };
 
-                                // Thread-safe writing and logging block
-                                {
-                                    let mut guard = stream_writer.write();
-                                    let _ = guard.write_all(choice.as_bytes());
-                                    let _ = guard.flush();
+                                        let _ = send_bytes(&mut *stream_writer.write(), choice.as_bytes());
+                                        log_hex(&app_handle_clone, &session_id_clone, "SEND", choice.as_bytes(), "TELSERV service select");
+
+                                        prompt_buffer.clear();
+                                        state = SessionState::WaitingForShellPrompt;
+                                        continue;
+                                    }
+                                    SessionState::WaitingForShellPrompt => {
+                                        if lower.contains("terminal type?")
+                                            || lower.contains("terminal type:")
+                                            || lower.contains("terminal type [")
+                                            || lower.contains("enter terminal type")
+                                            || lower.contains("term = ")
+                                        {
+                                            state = SessionState::NegotiatingTerminal;
+                                        }
+                                    }
+                                    SessionState::NegotiatingTerminal => {
+                                        let term_cmd = format!("{}\r\n", term_type_to_send);
+                                        let _ = send_bytes(&mut *stream_writer.write(), term_cmd.as_bytes());
+                                        log_hex(&app_handle_clone, &session_id_clone, "SEND", term_cmd.as_bytes(), &format!("Conversational Terminal-Type {}", term_type_to_send));
+
+                                        prompt_buffer.clear();
+                                        state = SessionState::LiveSession;
+                                        continue;
+                                    }
+                                    SessionState::LiveSession => {}
                                 }
 
-                                log_hex(
-                                    &app_handle_clone,
-                                    &session_id_clone,
-                                    "SEND",
-                                    choice.as_bytes(),
-                                    "TELSERV service select",
-                                );
-
-                                service_selected = true;
-                                continue; // Drop out early to prevent text parsing side-effects
-                            }
-
-                            // 3. Milestone 2: Conversational Terminal-Type Selection (Executed exactly once)
-                            if !terminal_type_sent
-                                && (lower.contains("terminal type?")
-                                    || lower.contains("terminal type:")
-                                    || lower.contains("terminal type [")
-                                    || lower.contains("enter terminal type")
-                                    || lower.contains("term = "))
-                            {
-                                let term_cmd = format!("{}\r\n", term_type_to_send);
-
-                                {
-                                    let mut guard = stream_writer.write();
-                                    let _ = guard.write_all(term_cmd.as_bytes());
-                                    let _ = guard.flush();
+                                if state != SessionState::LiveSession {
+                                    // Skip emitting bootstrap prompts to the terminal display
+                                    continue;
                                 }
-
-                                log_hex(
-                                    &app_handle_clone,
-                                    &session_id_clone,
-                                    "SEND",
-                                    term_cmd.as_bytes(),
-                                    &format!("Conversational Terminal-Type {}", term_type_to_send),
-                                );
-
-                                terminal_type_sent = true;
-                                continue; // Avoid pushing prompt tokens into terminal cell emitters
                             }
 
                             // Emit clean data to frontend xterm
