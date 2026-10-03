@@ -153,7 +153,7 @@ impl TelnetManager {
         // Spawn background reader & Telnet negotiation thread
         thread::spawn(move || {
             let mut read_buf = [0u8; 4096];
-            let mut service_sent = false;
+            let _service_sent = false;
             let mut last_term_reply = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
             // Option negotiation state tracking (prevent infinite loops)
@@ -174,15 +174,7 @@ impl TelnetManager {
             // on screen) and a truncated DO/WILL leaked a 0xFF byte into the output.
             let mut carry: Vec<u8> = Vec::new();
 
-            // Offer TERMINAL-TYPE to TELSERV on startup
-            {
-                let init_bytes = vec![IAC, WILL, OPT_TERMINAL_TYPE];
-                let mut guard = stream_writer.write();
-                let _ = guard.write_all(&init_bytes);
-                let _ = guard.flush();
-                log_hex(&app_handle_clone, &session_id_clone, "SEND", &init_bytes, "Initial Telnet WILL TTYPE");
-            }
-
+            // Startup: Fully passive mode. We wait for the server to initiate.
             while *running_clone.read() {
                 let read_res = stream_reader.read(&mut read_buf);
 
@@ -374,6 +366,7 @@ impl TelnetManager {
                             let data_str = decode_terminal_bytes(&clean_data);
                             let lower_data = data_str.to_lowercase();
 
+                            /*
                             // Auto-enter Service Name (or confirm default TACL service)
                             if !service_sent && (lower_data.contains("enter choice") || lower_data.contains("telserv service:")) {
                                 service_sent = true;
@@ -385,6 +378,7 @@ impl TelnetManager {
                                 let _ = guard.flush();
                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", service_cmd.as_bytes(), "Confirm Default Service");
                             }
+                            */
 
                             // Auto-answer Terminal Type if TELSERV or TACL prompts in conversational stream
                             if lower_data.contains("terminal type?")
