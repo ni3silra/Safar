@@ -159,6 +159,8 @@ impl TelnetManager {
             // Option negotiation state tracking (prevent infinite loops)
             let mut will_ttype_sent = true; // Sent proactively
             let mut will_sga_sent = true;   // Sent proactively
+            let mut will_binary_sent = false;
+            let mut will_echo_sent = false;
             
             let mut do_sga_sent = false;
             let mut do_echo_sent = false;
@@ -242,9 +244,8 @@ impl TelnetManager {
                                             let response = match opt {
                                                 OPT_TERMINAL_TYPE => { if will_ttype_sent { vec![] } else { will_ttype_sent = true; vec![IAC, WILL, opt] } },
                                                 OPT_SUPPRESS_GO_AHEAD => { if will_sga_sent { vec![] } else { will_sga_sent = true; vec![IAC, WILL, opt] } },
-                                                // DO ECHO is refused: this client never echoes input locally. Agreeing
-                                                // (WILL ECHO) tells the host *we* echo, so it stops echoing and typed
-                                                // characters never appear on screen.
+                                                OPT_BINARY => { if will_binary_sent { vec![] } else { will_binary_sent = true; vec![IAC, WILL, opt] } },
+                                                OPT_ECHO => { if will_echo_sent { vec![] } else { will_echo_sent = true; vec![IAC, WILL, opt] } },
                                                 _ => {
                                                     if rejected_dos.contains(&opt) { vec![] } else { rejected_dos.push(opt); vec![IAC, WONT, opt] }
                                                 },
@@ -268,6 +269,12 @@ impl TelnetManager {
                                                 response = vec![IAC, WONT, opt];
                                             } else if opt == OPT_SUPPRESS_GO_AHEAD && will_sga_sent {
                                                 will_sga_sent = false;
+                                                response = vec![IAC, WONT, opt];
+                                            } else if opt == OPT_BINARY && will_binary_sent {
+                                                will_binary_sent = false;
+                                                response = vec![IAC, WONT, opt];
+                                            } else if opt == OPT_ECHO && will_echo_sent {
+                                                will_echo_sent = false;
                                                 response = vec![IAC, WONT, opt];
                                             }
                                             if !response.is_empty() {
@@ -334,15 +341,18 @@ impl TelnetManager {
                                         if j + 1 < incoming.len() {
                                             let opt = incoming[i + 2];
                                             if opt == OPT_TERMINAL_TYPE {
-                                                // Host sent: IAC SB TERMINAL-TYPE SEND IAC SE (request terminal type)
-                                                // RFC 1091 / RFC 854: Reply: IAC SB TERMINAL-TYPE IS "..." IAC SE
-                                                let mut sub_resp = vec![IAC, SB, OPT_TERMINAL_TYPE, 0]; // 0 = IS
-                                                sub_resp.extend_from_slice(term_type_to_send.as_bytes());
-                                                sub_resp.extend_from_slice(&[IAC, SE]);
-                                                let mut guard = stream_writer.write();
-                                                let _ = guard.write_all(&sub_resp);
-                                                let _ = guard.flush();
-                                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes (RFC Terminal-Type {}): {:?}", sub_resp.len(), term_type_to_send, sub_resp) });
+                                                // Only reply if the command is SEND (01)
+                                                if i + 3 < incoming.len() && incoming[i + 3] == 1 {
+                                                    // Host sent: IAC SB TERMINAL-TYPE SEND IAC SE (request terminal type)
+                                                    // RFC 1091 / RFC 854: Reply: IAC SB TERMINAL-TYPE IS "..." IAC SE
+                                                    let mut sub_resp = vec![IAC, SB, OPT_TERMINAL_TYPE, 0]; // 0 = IS
+                                                    sub_resp.extend_from_slice(term_type_to_send.as_bytes());
+                                                    sub_resp.extend_from_slice(&[IAC, SE]);
+                                                    let mut guard = stream_writer.write();
+                                                    let _ = guard.write_all(&sub_resp);
+                                                    let _ = guard.flush();
+                                                    let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes (RFC Terminal-Type {}): {:?}", sub_resp.len(), term_type_to_send, sub_resp) });
+                                                }
                                             }
                                             i = j + 2;
                                             continue;
