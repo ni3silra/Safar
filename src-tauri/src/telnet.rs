@@ -165,6 +165,8 @@ impl TelnetManager {
         let _ = stream.set_nodelay(true);
         let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
 
+        let session_id = Uuid::new_v4().to_string();
+
         let net_stream = if config.ssl_encryption.unwrap_or(false) {
             let connector = native_tls::TlsConnector::builder()
                 .danger_accept_invalid_certs(true)
@@ -178,13 +180,13 @@ impl TelnetManager {
             let service_cmd = format!("{}\r", config.service_name.clone().unwrap_or_else(|| "TACL".to_string()));
             tls_stream.write_all(service_cmd.as_bytes()).map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
             tls_stream.flush().map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+            log_hex(&app_handle, &session_id, "SEND", service_cmd.as_bytes(), "Initial TLS Service Name");
             
             NetStream::Tls(tls_stream)
         } else {
             NetStream::Plain(stream)
         };
 
-        let session_id = Uuid::new_v4().to_string();
         let running = Arc::new(RwLock::new(true));
         let cols = Arc::new(AtomicU32::new(80));
         let rows = Arc::new(AtomicU32::new(24));
