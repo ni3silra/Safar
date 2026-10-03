@@ -183,13 +183,7 @@ impl TelnetManager {
                 let mut guard = stream_writer.write();
                 let _ = guard.write_all(&init_bytes);
                 let _ = guard.flush();
-                let _ = app_handle_clone.emit(
-                    "terminal-log",
-                    TerminalLogPayload {
-                        session_id: session_id_clone.clone(),
-                        message: format!("Sent {} bytes (Initial Telnet WILL SGA/TTYPE): {:?}", init_bytes.len(), init_bytes),
-                    }
-                );
+                log_hex(&app_handle_clone, &session_id_clone, "SEND", &init_bytes, "Initial Telnet WILL SGA/TTYPE");
             }
 
             while *running_clone.read() {
@@ -198,6 +192,7 @@ impl TelnetManager {
                 match read_res {
                     Ok(0) => {
                         // EOF - Server disconnected
+                        log_event(&app_handle_clone, &session_id_clone, "Socket closed by remote host (TCP FIN)");
                         let _ = app_handle_clone.emit(
                             "terminal-data",
                             TerminalDataPayload {
@@ -208,13 +203,7 @@ impl TelnetManager {
                         break;
                     }
                     Ok(n) => {
-                        let _ = app_handle_clone.emit(
-                            "terminal-log",
-                            TerminalLogPayload {
-                                session_id: session_id_clone.clone(),
-                                message: format!("Received {} bytes: {:?} (String: {:?})", n, &read_buf[..n], String::from_utf8_lossy(&read_buf[..n])),
-                            }
-                        );
+                        log_hex(&app_handle_clone, &session_id_clone, "RECV", &read_buf[..n], "");
 
                         let mut buf = std::mem::take(&mut carry);
                         buf.extend_from_slice(&read_buf[..n]);
@@ -254,7 +243,7 @@ impl TelnetManager {
                                                 let mut guard = stream_writer.write();
                                                 let _ = guard.write_all(&response);
                                                 let _ = guard.flush();
-                                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                                log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
                                             continue;
@@ -281,7 +270,7 @@ impl TelnetManager {
                                                 let mut guard = stream_writer.write();
                                                 let _ = guard.write_all(&response);
                                                 let _ = guard.flush();
-                                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                                log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
                                             continue;
@@ -302,7 +291,7 @@ impl TelnetManager {
                                                 let mut guard = stream_writer.write();
                                                 let _ = guard.write_all(&response);
                                                 let _ = guard.flush();
-                                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                                log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
                                             continue;
@@ -326,7 +315,7 @@ impl TelnetManager {
                                                 let mut guard = stream_writer.write();
                                                 let _ = guard.write_all(&response);
                                                 let _ = guard.flush();
-                                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                                log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
                                             continue;
@@ -351,7 +340,7 @@ impl TelnetManager {
                                                     let mut guard = stream_writer.write();
                                                     let _ = guard.write_all(&sub_resp);
                                                     let _ = guard.flush();
-                                                    let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes (RFC Terminal-Type {}): {:?}", sub_resp.len(), term_type_to_send, sub_resp) });
+                                                    log_hex(&app_handle_clone, &session_id_clone, "SEND", &sub_resp, &format!("RFC Terminal-Type {}", term_type_to_send));
                                                 }
                                             }
                                             i = j + 2;
@@ -392,7 +381,7 @@ impl TelnetManager {
                                 let service_cmd = format!("{}\r", service_name_to_send);
                                 let _ = guard.write_all(service_cmd.as_bytes());
                                 let _ = guard.flush();
-                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes (Service Name): {:?}", service_cmd.as_bytes().len(), service_cmd.as_bytes()) });
+                                log_hex(&app_handle_clone, &session_id_clone, "SEND", service_cmd.as_bytes(), "Service Name");
                             }
 
                             // Auto-answer Terminal Type if TELSERV or TACL prompts in conversational stream
@@ -411,7 +400,7 @@ impl TelnetManager {
                                     let term_cmd = format!("{}\r", term_type_to_send);
                                     let _ = guard.write_all(term_cmd.as_bytes());
                                     let _ = guard.flush();
-                                    let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes (Conversational Terminal-Type {}): {:?}", term_cmd.as_bytes().len(), term_type_to_send, term_cmd.as_bytes()) });
+                                    log_hex(&app_handle_clone, &session_id_clone, "SEND", term_cmd.as_bytes(), &format!("Conversational Terminal-Type {}", term_type_to_send));
                                 }
                             }
 
@@ -432,6 +421,7 @@ impl TelnetManager {
                     Err(e) => {
                         // Socket error or connection lost
                         println!("Telnet socket error: {:?}", e);
+                        log_event(&app_handle_clone, &session_id_clone, &format!("Socket error: {:?}", e));
                         let _ = app_handle_clone.emit(
                             "terminal-data",
                             TerminalDataPayload {
@@ -469,7 +459,7 @@ impl TelnetManager {
         let bytes = encode_terminal_input(data);
         stream.write_all(&bytes)?;
         stream.flush()?;
-        let _ = session.app_handle.emit("terminal-log", TerminalLogPayload { session_id: session_id.to_string(), message: format!("Sent {} bytes: {:?}", bytes.len(), bytes) });
+        log_hex(&session.app_handle, session_id, "SEND", &bytes, "User Input");
         Ok(())
     }
 
@@ -607,3 +597,40 @@ fn decode_single_byte(b: u8) -> char {
     }
 }
 
+
+
+fn log_hex(app: &AppHandle, session_id: &str, direction: &str, bytes: &[u8], extra: &str) {
+    let now = chrono::Local::now();
+    let time_str = now.format("%H:%M:%S.%3f").to_string();
+    
+    let mut hex_str = String::with_capacity(bytes.len() * 3);
+    let mut ascii_str = String::with_capacity(bytes.len());
+    
+    for &b in bytes {
+        hex_str.push_str(&format!("{:02X} ", b));
+        if b >= 32 && b <= 126 {
+            ascii_str.push(b as char);
+        } else {
+            ascii_str.push('.');
+        }
+    }
+    
+    let extra_str = if extra.is_empty() { String::new() } else { format!(" [{}]", extra) };
+    let msg = format!("[{}] {} | Len: {} | Hex: {:<20} | ASCII: {}{}", 
+        direction, time_str, bytes.len(), hex_str.trim_end(), ascii_str, extra_str);
+        
+    let _ = app.emit("terminal-log", TerminalLogPayload {
+        session_id: session_id.to_string(),
+        message: msg,
+    });
+}
+
+fn log_event(app: &AppHandle, session_id: &str, event: &str) {
+    let now = chrono::Local::now();
+    let time_str = now.format("%H:%M:%S.%3f").to_string();
+    let msg = format!("[CLOSED] {} | {}", time_str, event);
+    let _ = app.emit("terminal-log", TerminalLogPayload {
+        session_id: session_id.to_string(),
+        message: msg,
+    });
+}
