@@ -147,7 +147,7 @@ impl TelnetManager {
         let running_clone = running.clone();
         let stream_writer = stream_arc.clone();
         let app_handle_clone = app_handle.clone();
-        let service_name_to_send = config.service_name.clone().unwrap_or_else(|| "TACL".to_string());
+        let _service_name_to_send = config.service_name.clone().unwrap_or_else(|| "TACL".to_string());
         let term_type_to_send = config.term_type.clone().unwrap_or_else(|| "TN6530-8".to_string());
 
         // Spawn background reader & Telnet negotiation thread
@@ -157,8 +157,8 @@ impl TelnetManager {
             let mut last_term_reply = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
             // Option negotiation state tracking (prevent infinite loops)
-            let mut will_ttype_sent = false; // Passive mode: wait for DO TTYPE
-            let mut will_sga_sent = false;   // Passive mode: wait for DO SGA
+            let mut will_ttype_sent = false; // Initialized to false, always acknowledge server's DO
+            let mut will_sga_sent = false;  // Passive mode: wait for DO SGA
             let mut will_binary_sent = false;
             let mut will_echo_sent = false;
             
@@ -174,19 +174,14 @@ impl TelnetManager {
             // on screen) and a truncated DO/WILL leaked a 0xFF byte into the output.
             let mut carry: Vec<u8> = Vec::new();
 
-            /*
-            // Proactively send WILL SGA and WILL TTYPE as required by some NonStop hosts
+            // Offer TERMINAL-TYPE to TELSERV on startup
             {
-                let init_bytes = vec![
-                    IAC, WILL, OPT_SUPPRESS_GO_AHEAD,
-                    IAC, WILL, OPT_TERMINAL_TYPE
-                ];
+                let init_bytes = vec![IAC, WILL, OPT_TERMINAL_TYPE];
                 let mut guard = stream_writer.write();
                 let _ = guard.write_all(&init_bytes);
                 let _ = guard.flush();
-                log_hex(&app_handle_clone, &session_id_clone, "SEND", &init_bytes, "Initial Telnet WILL SGA/TTYPE");
+                log_hex(&app_handle_clone, &session_id_clone, "SEND", &init_bytes, "Initial Telnet WILL TTYPE");
             }
-            */
 
             while *running_clone.read() {
                 let read_res = stream_reader.read(&mut read_buf);
@@ -233,7 +228,10 @@ impl TelnetManager {
                                         if i + 2 < incoming.len() {
                                             let opt = incoming[i + 2];
                                             let response = match opt {
-                                                OPT_TERMINAL_TYPE => { if will_ttype_sent { vec![] } else { will_ttype_sent = true; vec![IAC, WILL, opt] } },
+                                                OPT_TERMINAL_TYPE => { 
+                                                    will_ttype_sent = true; 
+                                                    vec![IAC, WILL, opt] 
+                                                },
                                                 OPT_SUPPRESS_GO_AHEAD => { if will_sga_sent { vec![] } else { will_sga_sent = true; vec![IAC, WILL, opt] } },
                                                 OPT_BINARY => { if will_binary_sent { vec![] } else { will_binary_sent = true; vec![IAC, WILL, opt] } },
                                                 OPT_ECHO => { if will_echo_sent { vec![] } else { will_echo_sent = true; vec![IAC, WILL, opt] } },
@@ -376,14 +374,16 @@ impl TelnetManager {
                             let data_str = decode_terminal_bytes(&clean_data);
                             let lower_data = data_str.to_lowercase();
 
-                            // Auto-enter Service Name (e.g. "TACL") on TELSERV prompt
-                            if !service_sent && lower_data.contains("enter choice") {
+                            // Auto-enter Service Name (or confirm default TACL service)
+                            if !service_sent && (lower_data.contains("enter choice") || lower_data.contains("telserv service:")) {
                                 service_sent = true;
+                                // Brief sleep to allow pending IAC SB TTYPE negotiation to clear the wire first
+                                std::thread::sleep(std::time::Duration::from_millis(100));
                                 let mut guard = stream_writer.write();
-                                let service_cmd = format!("{}\r\n", service_name_to_send);
+                                let service_cmd = "\r\n"; // Send CRLF to confirm the selected default service
                                 let _ = guard.write_all(service_cmd.as_bytes());
                                 let _ = guard.flush();
-                                log_hex(&app_handle_clone, &session_id_clone, "SEND", service_cmd.as_bytes(), "Service Name");
+                                log_hex(&app_handle_clone, &session_id_clone, "SEND", service_cmd.as_bytes(), "Confirm Default Service");
                             }
 
                             // Auto-answer Terminal Type if TELSERV or TACL prompts in conversational stream
@@ -509,13 +509,25 @@ impl TelnetManager {
 /// (previously non-ASCII like 'ä' went out as 2 UTF-8 bytes). Chars outside Latin-1 become '?'.
 /// A literal 0xFF byte is doubled (IAC IAC) as required by RFC 854.
 pub fn encode_terminal_input(data: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len());
-    for ch in data.chars() {
-        let code = ch as u32;
-        let b = if code <= 0xFF { code as u8 } else { b'?' };
-        out.push(b);
-        if b == IAC {
-            out.push(IAC);
+    let mut out = Vec::with_capacity(data.len() * 2);
+    let mut chars = data.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\r' {
+            out.push(b'\r');
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            out.push(b'\n'); // RFC 854: CR MUST be followed by LF or NUL
+        } else if ch == '\n' {
+            out.push(b'\r');
+            out.push(b'\n');
+        } else {
+            let code = ch as u32;
+            let b = if code <= 0xFF { code as u8 } else { b'?' };
+            out.push(b);
+            if b == IAC {
+                out.push(IAC);
+            }
         }
     }
     out
