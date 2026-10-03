@@ -155,6 +155,18 @@ impl TelnetManager {
             let mut service_sent = false;
             let mut last_term_reply = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
+            // Option negotiation state tracking (prevent infinite loops)
+            let mut will_ttype_sent = true; // Sent proactively
+            let mut will_sga_sent = true;   // Sent proactively
+            let mut will_echo_sent = false;
+            
+            let mut do_sga_sent = false;
+            let mut do_echo_sent = false;
+            let mut do_binary_sent = false;
+
+            let mut rejected_dos = Vec::new();
+            let mut rejected_wills = Vec::new();
+
             // Proactively send WILL SGA and WILL TTYPE as required by some NonStop hosts
             {
                 let init_bytes = vec![
@@ -179,6 +191,13 @@ impl TelnetManager {
                 match read_res {
                     Ok(0) => {
                         // EOF - Server disconnected
+                        let _ = app_handle_clone.emit(
+                            "terminal-data",
+                            TerminalDataPayload {
+                                session_id: session_id_clone.clone(),
+                                data: "\r\n[Connection closed by remote host]\r\n".to_string(),
+                            },
+                        );
                         break;
                     }
                     Ok(n) => {
@@ -208,16 +227,19 @@ impl TelnetManager {
                                         if i + 2 < incoming.len() {
                                             let opt = incoming[i + 2];
                                             let response = match opt {
-                                                OPT_TERMINAL_TYPE => vec![IAC, WILL, OPT_TERMINAL_TYPE],
-                                                OPT_NAWS => vec![IAC, WONT, OPT_NAWS], // Disabled for HP NonStop compatibility
-                                                OPT_SUPPRESS_GO_AHEAD => vec![IAC, WILL, OPT_SUPPRESS_GO_AHEAD],
-                                                OPT_ECHO => vec![IAC, WILL, OPT_ECHO],
-                                                _ => vec![IAC, WONT, opt],
+                                                OPT_TERMINAL_TYPE => { if will_ttype_sent { vec![] } else { will_ttype_sent = true; vec![IAC, WILL, opt] } },
+                                                OPT_SUPPRESS_GO_AHEAD => { if will_sga_sent { vec![] } else { will_sga_sent = true; vec![IAC, WILL, opt] } },
+                                                OPT_ECHO => { if will_echo_sent { vec![] } else { will_echo_sent = true; vec![IAC, WILL, opt] } },
+                                                _ => {
+                                                    if rejected_dos.contains(&opt) { vec![] } else { rejected_dos.push(opt); vec![IAC, WONT, opt] }
+                                                },
                                             };
-                                            let mut guard = stream_writer.write();
-                                            let _ = guard.write_all(&response);
-                                            let _ = guard.flush();
-                                            let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                            if !response.is_empty() {
+                                                let mut guard = stream_writer.write();
+                                                let _ = guard.write_all(&response);
+                                                let _ = guard.flush();
+                                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                            }
                                             i += 3;
                                             continue;
                                         }
@@ -225,11 +247,23 @@ impl TelnetManager {
                                     DONT => {
                                         if i + 2 < incoming.len() {
                                             let opt = incoming[i + 2];
-                                            let response = vec![IAC, WONT, opt];
-                                            let mut guard = stream_writer.write();
-                                            let _ = guard.write_all(&response);
-                                            let _ = guard.flush();
-                                            let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                            let mut response = vec![];
+                                            if opt == OPT_TERMINAL_TYPE && will_ttype_sent {
+                                                will_ttype_sent = false;
+                                                response = vec![IAC, WONT, opt];
+                                            } else if opt == OPT_SUPPRESS_GO_AHEAD && will_sga_sent {
+                                                will_sga_sent = false;
+                                                response = vec![IAC, WONT, opt];
+                                            } else if opt == OPT_ECHO && will_echo_sent {
+                                                will_echo_sent = false;
+                                                response = vec![IAC, WONT, opt];
+                                            }
+                                            if !response.is_empty() {
+                                                let mut guard = stream_writer.write();
+                                                let _ = guard.write_all(&response);
+                                                let _ = guard.flush();
+                                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                            }
                                             i += 3;
                                             continue;
                                         }
@@ -238,13 +272,19 @@ impl TelnetManager {
                                         if i + 2 < incoming.len() {
                                             let opt = incoming[i + 2];
                                             let response = match opt {
-                                                OPT_SUPPRESS_GO_AHEAD | OPT_ECHO | OPT_BINARY => vec![IAC, DO, opt],
-                                                _ => vec![IAC, DONT, opt],
+                                                OPT_SUPPRESS_GO_AHEAD => { if do_sga_sent { vec![] } else { do_sga_sent = true; vec![IAC, DO, opt] } },
+                                                OPT_ECHO => { if do_echo_sent { vec![] } else { do_echo_sent = true; vec![IAC, DO, opt] } },
+                                                OPT_BINARY => { if do_binary_sent { vec![] } else { do_binary_sent = true; vec![IAC, DO, opt] } },
+                                                _ => {
+                                                    if rejected_wills.contains(&opt) { vec![] } else { rejected_wills.push(opt); vec![IAC, DONT, opt] }
+                                                },
                                             };
-                                            let mut guard = stream_writer.write();
-                                            let _ = guard.write_all(&response);
-                                            let _ = guard.flush();
-                                            let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                            if !response.is_empty() {
+                                                let mut guard = stream_writer.write();
+                                                let _ = guard.write_all(&response);
+                                                let _ = guard.flush();
+                                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                            }
                                             i += 3;
                                             continue;
                                         }
@@ -252,11 +292,23 @@ impl TelnetManager {
                                     WONT => {
                                         if i + 2 < incoming.len() {
                                             let opt = incoming[i + 2];
-                                            let response = vec![IAC, DONT, opt];
-                                            let mut guard = stream_writer.write();
-                                            let _ = guard.write_all(&response);
-                                            let _ = guard.flush();
-                                            let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                            let mut response = vec![];
+                                            if opt == OPT_SUPPRESS_GO_AHEAD && do_sga_sent {
+                                                do_sga_sent = false;
+                                                response = vec![IAC, DONT, opt];
+                                            } else if opt == OPT_ECHO && do_echo_sent {
+                                                do_echo_sent = false;
+                                                response = vec![IAC, DONT, opt];
+                                            } else if opt == OPT_BINARY && do_binary_sent {
+                                                do_binary_sent = false;
+                                                response = vec![IAC, DONT, opt];
+                                            }
+                                            if !response.is_empty() {
+                                                let mut guard = stream_writer.write();
+                                                let _ = guard.write_all(&response);
+                                                let _ = guard.flush();
+                                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", response.len(), response) });
+                                            }
                                             i += 3;
                                             continue;
                                         }
@@ -311,7 +363,7 @@ impl TelnetManager {
                             if !service_sent && lower_data.contains("enter choice") {
                                 service_sent = true;
                                 let mut guard = stream_writer.write();
-                                let service_cmd = format!("{}\r\n", service_name_to_send);
+                                let service_cmd = format!("{}\r", service_name_to_send);
                                 let _ = guard.write_all(service_cmd.as_bytes());
                                 let _ = guard.flush();
                                 let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes (Service Name): {:?}", service_cmd.as_bytes().len(), service_cmd.as_bytes()) });
@@ -330,7 +382,7 @@ impl TelnetManager {
                                 if last_term_reply.elapsed() > std::time::Duration::from_millis(1000) {
                                     last_term_reply = std::time::Instant::now();
                                     let mut guard = stream_writer.write();
-                                    let term_cmd = format!("{}\r\n", term_type_to_send);
+                                    let term_cmd = format!("{}\r", term_type_to_send);
                                     let _ = guard.write_all(term_cmd.as_bytes());
                                     let _ = guard.flush();
                                     let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes (Conversational Terminal-Type {}): {:?}", term_cmd.as_bytes().len(), term_type_to_send, term_cmd.as_bytes()) });
@@ -354,6 +406,13 @@ impl TelnetManager {
                     Err(e) => {
                         // Socket error or connection lost
                         println!("Telnet socket error: {:?}", e);
+                        let _ = app_handle_clone.emit(
+                            "terminal-data",
+                            TerminalDataPayload {
+                                session_id: session_id_clone.clone(),
+                                data: format!("\r\n[Connection error: {:?}]\r\n", e),
+                            },
+                        );
                         break;
                     }
                 }
