@@ -188,7 +188,7 @@ impl TelnetManager {
                             "terminal-log",
                             TerminalLogPayload {
                                 session_id: session_id_clone.clone(),
-                                message: format!("Received {} bytes: {:?}", n, incoming),
+                                message: format!("Received {} bytes: {:?} (String: {:?})", n, incoming, String::from_utf8_lossy(incoming)),
                             }
                         );
 
@@ -303,19 +303,21 @@ impl TelnetManager {
 
                         if !clean_data.is_empty() {
                             let data_str = decode_terminal_bytes(&clean_data);
+                            let lower_data = data_str.to_lowercase();
+                            
+                            let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Decoded clean string: {:?}", data_str) });
 
                             // Auto-enter Service Name (e.g. "TACL") on TELSERV prompt
-                            if !service_sent && (data_str.contains("Enter Choice>") || data_str.contains("Enter choice>")) {
+                            if !service_sent && lower_data.contains("enter choice") {
                                 service_sent = true;
                                 let mut guard = stream_writer.write();
-                                let service_cmd = format!("{}\r", service_name_to_send);
+                                let service_cmd = format!("{}\r\n", service_name_to_send);
                                 let _ = guard.write_all(service_cmd.as_bytes());
                                 let _ = guard.flush();
-                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes: {:?}", service_cmd.as_bytes().len(), service_cmd.as_bytes()) });
+                                let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes (Service Name): {:?}", service_cmd.as_bytes().len(), service_cmd.as_bytes()) });
                             }
 
                             // Auto-answer Terminal Type if TELSERV or TACL prompts in conversational stream
-                            let lower_data = data_str.to_lowercase();
                             if lower_data.contains("terminal type?")
                                 || lower_data.contains("terminal type:")
                                 || lower_data.contains("terminal type [")
@@ -328,7 +330,7 @@ impl TelnetManager {
                                 if last_term_reply.elapsed() > std::time::Duration::from_millis(1000) {
                                     last_term_reply = std::time::Instant::now();
                                     let mut guard = stream_writer.write();
-                                    let term_cmd = format!("{}\r", term_type_to_send);
+                                    let term_cmd = format!("{}\r\n", term_type_to_send);
                                     let _ = guard.write_all(term_cmd.as_bytes());
                                     let _ = guard.flush();
                                     let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Sent {} bytes (Conversational Terminal-Type {}): {:?}", term_cmd.as_bytes().len(), term_type_to_send, term_cmd.as_bytes()) });

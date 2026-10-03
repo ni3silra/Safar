@@ -239,18 +239,22 @@ export function Workspace({
                             icon={<Icons.Terminal style={{ width: 12, height: 12 }} />}
                             label="Terminal"
                         />
-                        <WorkspaceTabButton
-                            active={derivedActiveSession.activeView === "files"}
-                            onClick={() => updateSessionView(derivedActiveSession.id, "files")}
-                            icon={<Icons.Folder style={{ width: 12, height: 12 }} />}
-                            label="Files"
-                        />
-                        <WorkspaceTabButton
-                            active={derivedActiveSession.activeView === "tunnels"}
-                            onClick={() => updateSessionView(derivedActiveSession.id, "tunnels")}
-                            icon={<Icons.Zap style={{ width: 12, height: 12 }} />}
-                            label="Tunnels"
-                        />
+                        {derivedActiveSession.protocol !== "telnet" && (
+                            <>
+                                <WorkspaceTabButton
+                                    active={derivedActiveSession.activeView === "files"}
+                                    onClick={() => updateSessionView(derivedActiveSession.id, "files")}
+                                    icon={<Icons.Folder style={{ width: 12, height: 12 }} />}
+                                    label="Files"
+                                />
+                                <WorkspaceTabButton
+                                    active={derivedActiveSession.activeView === "tunnels"}
+                                    onClick={() => updateSessionView(derivedActiveSession.id, "tunnels")}
+                                    icon={<Icons.Zap style={{ width: 12, height: 12 }} />}
+                                    label="Tunnels"
+                                />
+                            </>
+                        )}
                         <WorkspaceTabButton
                             active={derivedActiveSession.activeView === "logs"}
                             onClick={() => updateSessionView(derivedActiveSession.id, "logs")}
@@ -311,18 +315,22 @@ export function Workspace({
                                     onTitleChange={(title) => updateSessionTitle(session.id, title)}
                                 />
                             </div>
-                            <div style={{
-                                display: session.activeView === "files" ? "block" : "none",
-                                height: "100%"
-                            }}>
-                                <FileBrowser sessionId={session.id} />
-                            </div>
-                            <div style={{
-                                display: session.activeView === "tunnels" ? "block" : "none",
-                                height: "100%"
-                            }}>
-                                <TunnelManager sessionId={session.id} />
-                            </div>
+                            {session.protocol !== "telnet" && (
+                                <>
+                                    <div style={{
+                                        display: session.activeView === "files" ? "block" : "none",
+                                        height: "100%"
+                                    }}>
+                                        <FileBrowser sessionId={session.id} />
+                                    </div>
+                                    <div style={{
+                                        display: session.activeView === "tunnels" ? "block" : "none",
+                                        height: "100%"
+                                    }}>
+                                        <TunnelManager sessionId={session.id} />
+                                    </div>
+                                </>
+                            )}
                             <div style={{
                                 display: session.activeView === "logs" ? "block" : "none",
                                 height: "100%"
