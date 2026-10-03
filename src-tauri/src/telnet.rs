@@ -157,8 +157,8 @@ impl TelnetManager {
             let mut last_term_reply = std::time::Instant::now() - std::time::Duration::from_secs(10);
 
             // Option negotiation state tracking (prevent infinite loops)
-            let mut will_ttype_sent = true; // Sent proactively
-            let mut will_sga_sent = true;   // Sent proactively
+            let mut will_ttype_sent = false; // Passive mode: wait for DO TTYPE
+            let mut will_sga_sent = false;   // Passive mode: wait for DO SGA
             let mut will_binary_sent = false;
             let mut will_echo_sent = false;
             
@@ -174,6 +174,7 @@ impl TelnetManager {
             // on screen) and a truncated DO/WILL leaked a 0xFF byte into the output.
             let mut carry: Vec<u8> = Vec::new();
 
+            /*
             // Proactively send WILL SGA and WILL TTYPE as required by some NonStop hosts
             {
                 let init_bytes = vec![
@@ -185,6 +186,7 @@ impl TelnetManager {
                 let _ = guard.flush();
                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &init_bytes, "Initial Telnet WILL SGA/TTYPE");
             }
+            */
 
             while *running_clone.read() {
                 let read_res = stream_reader.read(&mut read_buf);
@@ -378,7 +380,7 @@ impl TelnetManager {
                             if !service_sent && lower_data.contains("enter choice") {
                                 service_sent = true;
                                 let mut guard = stream_writer.write();
-                                let service_cmd = format!("{}\r", service_name_to_send);
+                                let service_cmd = format!("{}\r\n", service_name_to_send);
                                 let _ = guard.write_all(service_cmd.as_bytes());
                                 let _ = guard.flush();
                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", service_cmd.as_bytes(), "Service Name");
@@ -397,7 +399,7 @@ impl TelnetManager {
                                 if last_term_reply.elapsed() > std::time::Duration::from_millis(1000) {
                                     last_term_reply = std::time::Instant::now();
                                     let mut guard = stream_writer.write();
-                                    let term_cmd = format!("{}\r", term_type_to_send);
+                                    let term_cmd = format!("{}\r\n", term_type_to_send);
                                     let _ = guard.write_all(term_cmd.as_bytes());
                                     let _ = guard.flush();
                                     log_hex(&app_handle_clone, &session_id_clone, "SEND", term_cmd.as_bytes(), &format!("Conversational Terminal-Type {}", term_type_to_send));
