@@ -537,21 +537,37 @@ export function TerminalComponent({
   const onDisconnectRef = useRef(_onDisconnect);        // Stable ref so sleep handler doesn't stale-close
   useEffect(() => { onDisconnectRef.current = _onDisconnect; }, [_onDisconnect]);
 
-  // Send data to SSH/Telnet server
+  // Send data to SSH/Telnet server.
+  // Keystrokes are queued and sent strictly one invoke at a time. Previously every key fired its
+  // own un-awaited invoke(); under fast typing those IPC requests could be handled out of order
+  // (or pile up behind other IPC traffic), so characters/backspaces reached the host scrambled.
+  // While one send is in flight, further keystrokes are coalesced into the next send.
+  const sendQueueRef = useRef("");
+  const sendInFlightRef = useRef(false);
   const sendData = useCallback(
-    async (data: string) => {
-      try {
-        if (protocol === "telnet") {
-          await invoke("telnet_send", { sessionId, data });
-        } else {
-          await invoke("ssh_send", { sessionId, data });
+    (data: string) => {
+      sendQueueRef.current += data;
+      if (sendInFlightRef.current) return;
+      sendInFlightRef.current = true;
+      const command = protocol === "telnet" ? "telnet_send" : "ssh_send";
+      (async () => {
+        try {
+          while (sendQueueRef.current) {
+            const chunk = sendQueueRef.current;
+            sendQueueRef.current = "";
+            try {
+              await invoke(command, { sessionId, data: chunk });
+            } catch (error) {
+              // Error shown in terminal output
+              if (xtermRef.current) {
+                xtermRef.current.write(`\r\n\x1b[31mError: ${error}\x1b[0m\r\n`);
+              }
+            }
+          }
+        } finally {
+          sendInFlightRef.current = false;
         }
-      } catch (error) {
-        // Error shown in terminal output
-        if (xtermRef.current) {
-          xtermRef.current.write(`\r\n\x1b[31mError: ${error}\x1b[0m\r\n`);
-        }
-      }
+      })();
     },
     [sessionId, protocol]
   );
@@ -743,14 +759,17 @@ export function TerminalComponent({
         // In 6530 conversational mode, default to ^H (0x08) for Tandem TACL/Guardian
         if (is6530Ref.current) {
           const bsCode = currentBackspaceMode === "ctrl-?" ? "\x7f" : "\x08";
+          historyBufferRef.current = historyBufferRef.current.slice(0, -1);
           sendData(bsCode);
           return false;
         }
 
         if (currentBackspaceMode === "ctrl-h") {
+          historyBufferRef.current = historyBufferRef.current.slice(0, -1);
           sendData("\x08"); // ^H
           return false;
         } else if (currentBackspaceMode === "ctrl-?") {
+          historyBufferRef.current = historyBufferRef.current.slice(0, -1);
           sendData("\x7f"); // ^?
           return false;
         }
@@ -1102,8 +1121,11 @@ export function TerminalComponent({
           }
 
           // Auto-answer Terminal Type if host prompts in conversational stream (e.g. "Terminal type?", "terminal type:", "Enter terminal type:")
+          // Skipped for Telnet: the Rust backend (telnet.rs) already answers these prompts, and
+          // answering here too sent a second "TN6530-8\r" that landed in TACL as typed input.
           const lowerText = (translated.data || "").toLowerCase();
           if (
+            protocol !== "telnet" && (
             lowerText.includes("terminal type?") ||
             lowerText.includes("terminal type:") ||
             lowerText.includes("terminal type [") ||
@@ -1111,7 +1133,7 @@ export function TerminalComponent({
             lowerText.includes("enter terminal type") ||
             lowerText.includes("term = ") ||
             lowerText.includes("terminal [6530]") ||
-            lowerText.includes("terminal [tn6530")
+            lowerText.includes("terminal [tn6530"))
           ) {
             const now = Date.now();
             if (now - lastTermTypePromptReplyRef.current > 1000) {
@@ -1156,10 +1178,11 @@ export function TerminalComponent({
           // If host prompts for terminal type in standard session
           const lowerNon6530 = incomingData.toLowerCase();
           if (
+            protocol !== "telnet" && (
             lowerNon6530.includes("terminal type?") ||
             lowerNon6530.includes("terminal type:") ||
             lowerNon6530.includes("enter terminal type") ||
-            lowerNon6530.includes("terminal type [")
+            lowerNon6530.includes("terminal type ["))
           ) {
             const now = Date.now();
             if (now - lastTermTypePromptReplyRef.current > 1000) {
@@ -1199,7 +1222,7 @@ export function TerminalComponent({
           const { cols, rows } = xtermRef.current;
           // Only resize if cols/rows are valid (>0)
           if (cols > 0 && rows > 0) {
-            invoke("ssh_resize", { sessionId, cols, rows }).catch(console.error);
+            invoke(protocol === "telnet" ? "telnet_resize" : "ssh_resize", { sessionId, cols, rows }).catch(console.error);
           }
           terminal.focus();
         }

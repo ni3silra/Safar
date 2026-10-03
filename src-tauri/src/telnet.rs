@@ -30,6 +30,7 @@ const OPT_BINARY: u8 = 0;
 const OPT_ECHO: u8 = 1;
 const OPT_SUPPRESS_GO_AHEAD: u8 = 3;
 const OPT_TERMINAL_TYPE: u8 = 24;
+#[allow(dead_code)] // Used by the NAWS code in resize(), currently disabled for HP NonStop
 const OPT_NAWS: u8 = 31; // Negotiate About Window Size
 
 // ============================================
@@ -158,7 +159,6 @@ impl TelnetManager {
             // Option negotiation state tracking (prevent infinite loops)
             let mut will_ttype_sent = true; // Sent proactively
             let mut will_sga_sent = true;   // Sent proactively
-            let mut will_echo_sent = false;
             
             let mut do_sga_sent = false;
             let mut do_echo_sent = false;
@@ -166,6 +166,11 @@ impl TelnetManager {
 
             let mut rejected_dos = Vec::new();
             let mut rejected_wills = Vec::new();
+
+            // Bytes of an IAC sequence that was split across two TCP reads.
+            // Without this, the tail of a split sequence was treated as text (stray chars
+            // on screen) and a truncated DO/WILL leaked a 0xFF byte into the output.
+            let mut carry: Vec<u8> = Vec::new();
 
             // Proactively send WILL SGA and WILL TTYPE as required by some NonStop hosts
             {
@@ -201,15 +206,17 @@ impl TelnetManager {
                         break;
                     }
                     Ok(n) => {
-                        let incoming = &read_buf[..n];
-                        
                         let _ = app_handle_clone.emit(
                             "terminal-log",
                             TerminalLogPayload {
                                 session_id: session_id_clone.clone(),
-                                message: format!("Received {} bytes: {:?} (String: {:?})", n, incoming, String::from_utf8_lossy(incoming)),
+                                message: format!("Received {} bytes: {:?} (String: {:?})", n, &read_buf[..n], String::from_utf8_lossy(&read_buf[..n])),
                             }
                         );
+
+                        let mut buf = std::mem::take(&mut carry);
+                        buf.extend_from_slice(&read_buf[..n]);
+                        let incoming = &buf[..];
 
                         let mut clean_data = Vec::new();
                         let mut i = 0;
@@ -217,7 +224,13 @@ impl TelnetManager {
                         // Process incoming bytes, handling Telnet IAC negotiation
                         while i < incoming.len() {
                             if incoming[i] == IAC {
-                                if i + 1 >= incoming.len() {
+                                // Incomplete IAC sequence at end of this read: keep it for the next read
+                                let needed = match incoming.get(i + 1) {
+                                    Some(&DO) | Some(&DONT) | Some(&WILL) | Some(&WONT) => 3,
+                                    _ => 2,
+                                };
+                                if i + needed > incoming.len() {
+                                    carry = incoming[i..].to_vec();
                                     break;
                                 }
                                 let cmd = incoming[i + 1];
@@ -229,7 +242,9 @@ impl TelnetManager {
                                             let response = match opt {
                                                 OPT_TERMINAL_TYPE => { if will_ttype_sent { vec![] } else { will_ttype_sent = true; vec![IAC, WILL, opt] } },
                                                 OPT_SUPPRESS_GO_AHEAD => { if will_sga_sent { vec![] } else { will_sga_sent = true; vec![IAC, WILL, opt] } },
-                                                OPT_ECHO => { if will_echo_sent { vec![] } else { will_echo_sent = true; vec![IAC, WILL, opt] } },
+                                                // DO ECHO is refused: this client never echoes input locally. Agreeing
+                                                // (WILL ECHO) tells the host *we* echo, so it stops echoing and typed
+                                                // characters never appear on screen.
                                                 _ => {
                                                     if rejected_dos.contains(&opt) { vec![] } else { rejected_dos.push(opt); vec![IAC, WONT, opt] }
                                                 },
@@ -253,9 +268,6 @@ impl TelnetManager {
                                                 response = vec![IAC, WONT, opt];
                                             } else if opt == OPT_SUPPRESS_GO_AHEAD && will_sga_sent {
                                                 will_sga_sent = false;
-                                                response = vec![IAC, WONT, opt];
-                                            } else if opt == OPT_ECHO && will_echo_sent {
-                                                will_echo_sent = false;
                                                 response = vec![IAC, WONT, opt];
                                             }
                                             if !response.is_empty() {
@@ -335,6 +347,12 @@ impl TelnetManager {
                                             i = j + 2;
                                             continue;
                                         }
+                                        // Subnegotiation not terminated yet: wait for the rest
+                                        // (cap protects against a malformed stream growing forever)
+                                        if incoming.len() - i < 4096 {
+                                            carry = incoming[i..].to_vec();
+                                        }
+                                        break;
                                     }
                                     IAC => {
                                         // Escaped 255 byte
@@ -356,8 +374,6 @@ impl TelnetManager {
                         if !clean_data.is_empty() {
                             let data_str = decode_terminal_bytes(&clean_data);
                             let lower_data = data_str.to_lowercase();
-                            
-                            let _ = app_handle_clone.emit("terminal-log", TerminalLogPayload { session_id: session_id_clone.clone(), message: format!("Decoded clean string: {:?}", data_str) });
 
                             // Auto-enter Service Name (e.g. "TACL") on TELSERV prompt
                             if !service_sent && lower_data.contains("enter choice") {
@@ -440,9 +456,10 @@ impl TelnetManager {
             .ok_or_else(|| TelnetError::SessionNotFound(session_id.to_string()))?;
 
         let mut stream = session.stream.write();
-        stream.write_all(data.as_bytes())?;
+        let bytes = encode_terminal_input(data);
+        stream.write_all(&bytes)?;
         stream.flush()?;
-        let _ = session.app_handle.emit("terminal-log", TerminalLogPayload { session_id: session_id.to_string(), message: format!("Sent {} bytes: {:?}", data.as_bytes().len(), data.as_bytes()) });
+        let _ = session.app_handle.emit("terminal-log", TerminalLogPayload { session_id: session_id.to_string(), message: format!("Sent {} bytes: {:?}", bytes.len(), bytes) });
         Ok(())
     }
 
@@ -483,6 +500,23 @@ impl TelnetManager {
         */
         Ok(())
     }
+}
+
+/// Encodes user input for the Telnet wire, mirroring `decode_terminal_bytes`.
+/// NonStop hosts are 8-bit (ISO-8859-1), so each char U+0000..U+00FF is sent as one byte
+/// (previously non-ASCII like 'ä' went out as 2 UTF-8 bytes). Chars outside Latin-1 become '?'.
+/// A literal 0xFF byte is doubled (IAC IAC) as required by RFC 854.
+pub fn encode_terminal_input(data: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    for ch in data.chars() {
+        let code = ch as u32;
+        let b = if code <= 0xFF { code as u8 } else { b'?' };
+        out.push(b);
+        if b == IAC {
+            out.push(IAC);
+        }
+    }
+    out
 }
 
 /// Decodes incoming terminal bytes into a UTF-8 String without character loss.
