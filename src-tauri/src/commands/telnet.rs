@@ -12,6 +12,7 @@ pub struct TelnetConnectParams {
     pub username: Option<String>,
     pub password: Option<String>,
     pub term_type: Option<String>,
+    pub ssl_encryption: Option<bool>,
 }
 
 /// Connect to HP NonStop TELSERV / Telnet server
@@ -28,6 +29,7 @@ pub fn telnet_connect(
         username: params.username,
         password: params.password,
         term_type: params.term_type,
+        ssl_encryption: params.ssl_encryption,
     };
 
     match state.telnet_manager.connect(app, config) {

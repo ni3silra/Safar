@@ -57,6 +57,7 @@ pub struct TelnetConfig {
     pub username: Option<String>,
     pub password: Option<String>,
     pub term_type: Option<String>,     // "6530"
+    pub ssl_encryption: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,8 +80,48 @@ struct TerminalLogPayload {
     message: String,
 }
 
+
+pub enum NetStream {
+    Plain(TcpStream),
+    Tls(native_tls::TlsStream<TcpStream>),
+}
+
+impl Read for NetStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            NetStream::Plain(s) => s.read(buf),
+            NetStream::Tls(s) => s.read(buf),
+        }
+    }
+}
+
+impl Write for NetStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            NetStream::Plain(s) => s.write(buf),
+            NetStream::Tls(s) => s.write(buf),
+        }
+    }
+    
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            NetStream::Plain(s) => s.flush(),
+            NetStream::Tls(s) => s.flush(),
+        }
+    }
+}
+
+impl NetStream {
+    pub fn shutdown(&self, how: std::net::Shutdown) -> std::io::Result<()> {
+        match self {
+            NetStream::Plain(s) => s.shutdown(how),
+            NetStream::Tls(s) => s.get_ref().shutdown(how),
+        }
+    }
+}
+
 pub struct TelnetSession {
-    pub stream: Arc<RwLock<TcpStream>>,
+    pub stream: Arc<RwLock<NetStream>>,
     #[allow(dead_code)]
     pub config: TelnetConfig,
     pub running: Arc<RwLock<bool>>,
@@ -124,14 +165,31 @@ impl TelnetManager {
         let _ = stream.set_nodelay(true);
         let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
 
-        let mut stream_reader = stream.try_clone().map_err(|e| TelnetError::ConnectionFailed(format!("Failed to clone stream: {}", e)))?;
+        let net_stream = if config.ssl_encryption.unwrap_or(false) {
+            let connector = native_tls::TlsConnector::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+                .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+
+            let mut tls_stream = connector
+                .connect(&config.host, stream)
+                .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+                
+            let service_cmd = format!("{}\r", config.service_name.clone().unwrap_or_else(|| "TACL".to_string()));
+            tls_stream.write_all(service_cmd.as_bytes()).map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+            tls_stream.flush().map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+            
+            NetStream::Tls(tls_stream)
+        } else {
+            NetStream::Plain(stream)
+        };
 
         let session_id = Uuid::new_v4().to_string();
         let running = Arc::new(RwLock::new(true));
         let cols = Arc::new(AtomicU32::new(80));
         let rows = Arc::new(AtomicU32::new(24));
 
-        let stream_arc = Arc::new(RwLock::new(stream));
+        let stream_arc = Arc::new(RwLock::new(net_stream));
         let session = TelnetSession {
             stream: stream_arc.clone(),
             config: config.clone(),
@@ -176,7 +234,10 @@ impl TelnetManager {
 
             // Startup: Fully passive mode. We wait for the server to initiate.
             while *running_clone.read() {
-                let read_res = stream_reader.read(&mut read_buf);
+                let read_res = {
+                    let mut guard = stream_writer.write();
+                    guard.read(&mut read_buf)
+                };
 
                 match read_res {
                     Ok(0) => {
