@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -25,6 +25,11 @@ enum SessionState {
     WaitingForShellPrompt,
     NegotiatingTerminal,
     LiveSession,
+}
+
+
+fn read_bytes(stream: &mut NetStream, buf: &mut [u8]) -> std::io::Result<usize> {
+    stream.read(buf)
 }
 
 fn send_bytes(stream: &mut NetStream, data: &[u8]) -> std::io::Result<()> {
@@ -135,7 +140,7 @@ impl NetStream {
 }
 
 pub struct TelnetSession {
-    pub stream: Arc<RwLock<NetStream>>,
+    pub stream: Arc<Mutex<NetStream>>,
     #[allow(dead_code)]
     pub config: TelnetConfig,
     pub running: Arc<RwLock<bool>>,
@@ -201,7 +206,7 @@ impl TelnetManager {
         let cols = Arc::new(AtomicU32::new(80));
         let rows = Arc::new(AtomicU32::new(24));
 
-        let stream_arc = Arc::new(RwLock::new(net_stream));
+        let stream_arc = Arc::new(Mutex::new(net_stream));
         let session = TelnetSession {
             stream: stream_arc.clone(),
             config: config.clone(),
@@ -248,8 +253,8 @@ impl TelnetManager {
             // Startup: Fully passive mode. We wait for the server to initiate.
             while *running_clone.read() {
                 let read_res = {
-                    let mut guard = stream_writer.write();
-                    guard.read(&mut read_buf)
+                    let mut guard = stream_writer.lock().unwrap();
+                    read_bytes(&mut *guard, &mut read_buf)
                 };
 
                 match read_res {
@@ -306,7 +311,7 @@ impl TelnetManager {
                                                 },
                                             };
                                             if !response.is_empty() {
-                                                send_bytes(&mut *stream_writer.write(), &response);
+                                                let _ = send_bytes(&mut *stream_writer.lock().unwrap(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -331,7 +336,7 @@ impl TelnetManager {
                                                 response = vec![IAC, WONT, opt];
                                             }
                                             if !response.is_empty() {
-                                                send_bytes(&mut *stream_writer.write(), &response);
+                                                let _ = send_bytes(&mut *stream_writer.lock().unwrap(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -350,7 +355,7 @@ impl TelnetManager {
                                                 },
                                             };
                                             if !response.is_empty() {
-                                                send_bytes(&mut *stream_writer.write(), &response);
+                                                let _ = send_bytes(&mut *stream_writer.lock().unwrap(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -372,7 +377,7 @@ impl TelnetManager {
                                                 response = vec![IAC, DONT, opt];
                                             }
                                             if !response.is_empty() {
-                                                send_bytes(&mut *stream_writer.write(), &response);
+                                                let _ = send_bytes(&mut *stream_writer.lock().unwrap(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -395,7 +400,7 @@ impl TelnetManager {
                                                     let mut sub_resp = vec![IAC, SB, OPT_TERMINAL_TYPE, 0]; // 0 = IS
                                                     sub_resp.extend_from_slice(term_type_to_send.as_bytes());
                                                     sub_resp.extend_from_slice(&[IAC, SE]);
-                                                    send_bytes(&mut *stream_writer.write(), &sub_resp);
+                                                    let _ = send_bytes(&mut *stream_writer.lock().unwrap(), &sub_resp);
                                                     log_hex(&app_handle_clone, &session_id_clone, "SEND", &sub_resp, &format!("RFC Terminal-Type {}", term_type_to_send));
                                                 }
                                             }
@@ -454,7 +459,7 @@ impl TelnetManager {
                                             "\r"
                                         };
 
-                                        let _ = send_bytes(&mut *stream_writer.write(), choice.as_bytes());
+                                        let _ = send_bytes(&mut *stream_writer.lock().unwrap(), choice.as_bytes());
                                         log_hex(&app_handle_clone, &session_id_clone, "SEND", choice.as_bytes(), "TELSERV service select");
 
                                         prompt_buffer.clear();
@@ -473,7 +478,7 @@ impl TelnetManager {
                                     }
                                     SessionState::NegotiatingTerminal => {
                                         let term_cmd = format!("{}\r\n", term_type_to_send);
-                                        let _ = send_bytes(&mut *stream_writer.write(), term_cmd.as_bytes());
+                                        let _ = send_bytes(&mut *stream_writer.lock().unwrap(), term_cmd.as_bytes());
                                         log_hex(&app_handle_clone, &session_id_clone, "SEND", term_cmd.as_bytes(), &format!("Conversational Terminal-Type {}", term_type_to_send));
 
                                         prompt_buffer.clear();
@@ -540,7 +545,7 @@ impl TelnetManager {
             .get(session_id)
             .ok_or_else(|| TelnetError::SessionNotFound(session_id.to_string()))?;
 
-        let mut stream = session.stream.write();
+        let mut stream = session.stream.lock().unwrap();
         let bytes = encode_terminal_input(data);
         stream.write_all(&bytes)?;
         stream.flush()?;
@@ -553,7 +558,7 @@ impl TelnetManager {
         let mut sessions = self.sessions.write();
         if let Some(session) = sessions.remove(session_id) {
             *session.running.write() = false;
-            let stream = session.stream.write();
+            let stream = session.stream.lock().unwrap();
             let _ = stream.shutdown(std::net::Shutdown::Both);
         }
         Ok(())
@@ -578,7 +583,7 @@ impl TelnetManager {
         let row_lo = (rows & 0xFF) as u8;
 
         let naws_bytes = [IAC, SB, OPT_NAWS, col_hi, col_lo, row_hi, row_lo, IAC, SE];
-        let mut stream = session.stream.write();
+        let mut stream = session.stream.lock().unwrap();
         let _ = stream.write_all(&naws_bytes);
         let _ = stream.flush();
         let _ = session.app_handle.emit("terminal-log", TerminalLogPayload { session_id: session_id.to_string(), message: format!("Sent {} bytes: {:?}", naws_bytes.len(), naws_bytes) });
