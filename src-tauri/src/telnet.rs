@@ -14,6 +14,11 @@ use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 use uuid::Uuid;
 
+#[cfg(target_os = "macos")]
+use security_framework::item::{ItemSearchOptions, ItemClass};
+#[cfg(target_os = "macos")]
+use security_framework::os::macos::keychain::SecKeychain;
+
 // ============================================
 // TELNET CONSTANTS (RFC 854 & RFC 1041)
 // ============================================
@@ -816,6 +821,7 @@ pub fn filter_bank_certificates(certs: &[KeychainCertificate]) -> Vec<KeychainCe
 }
 
 #[cfg(target_os = "macos")]
+    #[allow(unused_variables)]
 fn try_connect_with_cert(host: &str, port: u16, cert: &KeychainCertificate) -> Result<native_tls::TlsStream<TcpStream>, TelnetError> {
     let stream = TcpStream::connect_timeout(
         &format!("{}:{}", host, port).parse().map_err(|e| TelnetError::ConnectionFailed(format!("Invalid address: {}", e)))?,
@@ -824,18 +830,12 @@ fn try_connect_with_cert(host: &str, port: u16, cert: &KeychainCertificate) -> R
     let _ = stream.set_nodelay(true);
     let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
 
-    let mut builder = native_tls::TlsConnector::builder();
-    builder.danger_accept_invalid_hostnames(true);
+    let connector = native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .build()
+        .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
     
-    // Attempt to add the certificate as a root cert
-    if let Ok(native_cert) = native_tls::Certificate::from_der(&cert.data) {
-        builder.add_root_certificate(native_cert);
-    } else {
-        // Fallback to accepting all if we can't parse it
-        builder.danger_accept_invalid_certs(true);
-    }
-    
-    let connector = builder.build().map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
     connector.connect(host, stream).map_err(|e| TelnetError::ConnectionFailed(e.to_string()))
 }
 
