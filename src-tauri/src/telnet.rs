@@ -204,8 +204,6 @@ impl TelnetManager {
                         let stream = TcpStream::connect_timeout(&socket_addrs[0], Duration::from_secs(10))
                             .map_err(|e| TelnetError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e)))?;
                         let _ = stream.set_nodelay(true);
-                        let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
-
                         use openssl::ssl::{SslMethod, SslConnector, SslVerifyMode};
                         let mut builder = SslConnector::builder(SslMethod::tls())
                             .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
@@ -217,6 +215,7 @@ impl TelnetManager {
                         let tls_stream = connector
                             .connect(&config.host, stream)
                             .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+                        let _ = tls_stream.get_ref().set_read_timeout(Some(Duration::from_millis(50)));
                         NetStream::OpenSsl(tls_stream)
                     }
                 }
@@ -226,8 +225,6 @@ impl TelnetManager {
                 let stream = TcpStream::connect_timeout(&socket_addrs[0], Duration::from_secs(10))
                     .map_err(|e| TelnetError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e)))?;
                 let _ = stream.set_nodelay(true);
-                let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
-
                 let connector = native_tls::TlsConnector::builder()
                     .danger_accept_invalid_certs(true)
                     .danger_accept_invalid_hostnames(true)
@@ -236,6 +233,7 @@ impl TelnetManager {
                 let tls_stream = connector
                     .connect(&config.host, stream)
                     .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+                let _ = tls_stream.get_ref().set_read_timeout(Some(Duration::from_millis(50)));
                 NetStream::Tls(tls_stream)
             }
         } else {
@@ -843,8 +841,6 @@ fn try_connect_with_cert(host: &str, port: u16, cert: &KeychainCertificate) -> R
         Duration::from_secs(10),
     ).map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
     let _ = stream.set_nodelay(true);
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
-
     let mut builder = SslConnector::builder(SslMethod::tls())
         .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
     
@@ -856,7 +852,9 @@ fn try_connect_with_cert(host: &str, port: u16, cert: &KeychainCertificate) -> R
     let _ = builder.set_cipher_list("ALL:!ADH:!EXPORT:!SSLv2:RC4+RSA:+HIGH:+MEDIUM:+LOW");
 
     let connector = builder.build();
-    connector.connect(host, stream).map_err(|e| TelnetError::ConnectionFailed(e.to_string()))
+    let tls_stream = connector.connect(host, stream).map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+    let _ = tls_stream.get_ref().set_read_timeout(Some(Duration::from_millis(50)));
+    Ok(tls_stream)
 }
 
 #[cfg(target_os = "macos")]
