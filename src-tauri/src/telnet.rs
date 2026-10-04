@@ -102,6 +102,8 @@ struct TerminalLogPayload {
 pub enum NetStream {
     Plain(TcpStream),
     Tls(native_tls::TlsStream<TcpStream>),
+    #[cfg(target_os = "macos")]
+    OpenSsl(openssl::ssl::SslStream<TcpStream>),
 }
 
 impl Read for NetStream {
@@ -109,6 +111,8 @@ impl Read for NetStream {
         match self {
             NetStream::Plain(s) => s.read(buf),
             NetStream::Tls(s) => s.read(buf),
+            #[cfg(target_os = "macos")]
+            NetStream::OpenSsl(s) => s.read(buf),
         }
     }
 }
@@ -118,6 +122,8 @@ impl Write for NetStream {
         match self {
             NetStream::Plain(s) => s.write(buf),
             NetStream::Tls(s) => s.write(buf),
+            #[cfg(target_os = "macos")]
+            NetStream::OpenSsl(s) => s.write(buf),
         }
     }
     
@@ -125,6 +131,8 @@ impl Write for NetStream {
         match self {
             NetStream::Plain(s) => s.flush(),
             NetStream::Tls(s) => s.flush(),
+            #[cfg(target_os = "macos")]
+            NetStream::OpenSsl(s) => s.flush(),
         }
     }
 }
@@ -134,6 +142,8 @@ impl NetStream {
         match self {
             NetStream::Plain(s) => s.shutdown(how),
             NetStream::Tls(s) => s.get_ref().shutdown(how),
+            #[cfg(target_os = "macos")]
+            NetStream::OpenSsl(s) => s.get_ref().shutdown(how),
         }
     }
 }
@@ -186,25 +196,28 @@ impl TelnetManager {
                 match connect_with_smart_cert_selection(&config.host, config.port) {
                     Ok((tls_stream, cert_info)) => {
                         println!("Using Keychain certificate: {}", cert_info.label);
-                        NetStream::Tls(tls_stream)
+                        NetStream::OpenSsl(tls_stream)
                     }
                     Err(_) => {
                         println!("No Keychain certs worked, using danger mode fallback");
-                        // Connect normally with danger mode
+                        // Connect normally with danger mode via OpenSSL
                         let stream = TcpStream::connect_timeout(&socket_addrs[0], Duration::from_secs(10))
                             .map_err(|e| TelnetError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e)))?;
                         let _ = stream.set_nodelay(true);
                         let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
 
-                        let connector = native_tls::TlsConnector::builder()
-                            .danger_accept_invalid_certs(true)
-                            .danger_accept_invalid_hostnames(true)
-                            .build()
+                        use openssl::ssl::{SslMethod, SslConnector, SslVerifyMode};
+                        let mut builder = SslConnector::builder(SslMethod::tls())
                             .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+                        builder.set_verify(SslVerifyMode::NONE);
+                        let _ = builder.set_min_proto_version(None);
+                        let _ = builder.set_cipher_list("ALL:!ADH:!EXPORT:!SSLv2:RC4+RSA:+HIGH:+MEDIUM:+LOW");
+                        
+                        let connector = builder.build();
                         let tls_stream = connector
                             .connect(&config.host, stream)
                             .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
-                        NetStream::Tls(tls_stream)
+                        NetStream::OpenSsl(tls_stream)
                     }
                 }
             }
@@ -822,8 +835,9 @@ pub fn filter_bank_certificates(certs: &[KeychainCertificate]) -> Vec<KeychainCe
 }
 
 #[cfg(target_os = "macos")]
-    #[allow(unused_variables)]
-fn try_connect_with_cert(host: &str, port: u16, cert: &KeychainCertificate) -> Result<native_tls::TlsStream<TcpStream>, TelnetError> {
+#[allow(unused_variables)]
+fn try_connect_with_cert(host: &str, port: u16, cert: &KeychainCertificate) -> Result<openssl::ssl::SslStream<TcpStream>, TelnetError> {
+    use openssl::ssl::{SslMethod, SslConnector, SslVerifyMode};
     let stream = TcpStream::connect_timeout(
         &format!("{}:{}", host, port).parse().map_err(|e| TelnetError::ConnectionFailed(format!("Invalid address: {}", e)))?,
         Duration::from_secs(10),
@@ -831,17 +845,22 @@ fn try_connect_with_cert(host: &str, port: u16, cert: &KeychainCertificate) -> R
     let _ = stream.set_nodelay(true);
     let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
 
-    let connector = native_tls::TlsConnector::builder()
-        .danger_accept_invalid_certs(true)
-        .danger_accept_invalid_hostnames(true)
-        .build()
+    let mut builder = SslConnector::builder(SslMethod::tls())
         .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
     
+    // Danger mode: accept any cert
+    builder.set_verify(SslVerifyMode::NONE);
+    // Allow legacy protocols
+    let _ = builder.set_min_proto_version(None);
+    // Allow legacy enterprise ciphers that older mainframes need
+    let _ = builder.set_cipher_list("ALL:!ADH:!EXPORT:!SSLv2:RC4+RSA:+HIGH:+MEDIUM:+LOW");
+
+    let connector = builder.build();
     connector.connect(host, stream).map_err(|e| TelnetError::ConnectionFailed(e.to_string()))
 }
 
 #[cfg(target_os = "macos")]
-pub fn connect_with_smart_cert_selection(host: &str, port: u16) -> Result<(native_tls::TlsStream<TcpStream>, KeychainCertificate), TelnetError> {
+pub fn connect_with_smart_cert_selection(host: &str, port: u16) -> Result<(openssl::ssl::SslStream<TcpStream>, KeychainCertificate), TelnetError> {
     let all_certs = list_all_keychain_certificates().map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
     let bank_certs = filter_bank_certificates(&all_certs);
     
