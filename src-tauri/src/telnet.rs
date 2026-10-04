@@ -21,9 +21,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionState {
     WaitingForBanner,
-    SelectingService,
     WaitingForShellPrompt,
-    NegotiatingTerminal,
     LiveSession,
 }
 
@@ -186,7 +184,7 @@ impl TelnetManager {
 
         let session_id = Uuid::new_v4().to_string();
 
-        let net_stream = if config.ssl_encryption.unwrap_or(false) {
+        let net_stream = if config.ssl_encryption.unwrap_or(true) {
             let connector = native_tls::TlsConnector::builder()
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true)
@@ -445,26 +443,23 @@ impl TelnetManager {
                                             || lower.contains("enter choice")
                                             || lower.contains("service:")
                                         {
-                                            state = SessionState::SelectingService;
+                                            let choice = if config_clone.service_name
+                                                .as_deref()
+                                                .unwrap_or("TACL")
+                                                .eq_ignore_ascii_case("TACL")
+                                            {
+                                                "TACL\r"
+                                            } else {
+                                                "\r"
+                                            };
+
+                                            let _ = send_bytes(&mut *stream_writer.lock().unwrap(), choice.as_bytes());
+                                            log_hex(&app_handle_clone, &session_id_clone, "SEND", choice.as_bytes(), "TELSERV service select");
+
+                                            prompt_buffer.clear();
+                                            state = SessionState::WaitingForShellPrompt;
+                                            continue;
                                         }
-                                    }
-                                    SessionState::SelectingService => {
-                                        let choice = if config_clone.service_name
-                                            .as_deref()
-                                            .unwrap_or("TACL")
-                                            .eq_ignore_ascii_case("TACL")
-                                        {
-                                            "TACL\r"
-                                        } else {
-                                            "\r"
-                                        };
-
-                                        let _ = send_bytes(&mut *stream_writer.lock().unwrap(), choice.as_bytes());
-                                        log_hex(&app_handle_clone, &session_id_clone, "SEND", choice.as_bytes(), "TELSERV service select");
-
-                                        prompt_buffer.clear();
-                                        state = SessionState::WaitingForShellPrompt;
-                                        continue;
                                     }
                                     SessionState::WaitingForShellPrompt => {
                                         if lower.contains("terminal type?")
@@ -473,17 +468,19 @@ impl TelnetManager {
                                             || lower.contains("enter terminal type")
                                             || lower.contains("term = ")
                                         {
-                                            state = SessionState::NegotiatingTerminal;
-                                        }
-                                    }
-                                    SessionState::NegotiatingTerminal => {
-                                        let term_cmd = format!("{}\r\n", term_type_to_send);
-                                        let _ = send_bytes(&mut *stream_writer.lock().unwrap(), term_cmd.as_bytes());
-                                        log_hex(&app_handle_clone, &session_id_clone, "SEND", term_cmd.as_bytes(), &format!("Conversational Terminal-Type {}", term_type_to_send));
+                                            let term_cmd = format!("{}\r\n", term_type_to_send);
+                                            let _ = send_bytes(&mut *stream_writer.lock().unwrap(), term_cmd.as_bytes());
+                                            log_hex(&app_handle_clone, &session_id_clone, "SEND", term_cmd.as_bytes(), &format!("Conversational Terminal-Type {}", term_type_to_send));
 
-                                        prompt_buffer.clear();
-                                        state = SessionState::LiveSession;
-                                        continue;
+                                            prompt_buffer.clear();
+                                            state = SessionState::LiveSession;
+                                            continue;
+                                        } else if lower.contains('>') || lower.contains("tacl") || lower.contains("logon") {
+                                            // Shell prompt arrived directly without conversational prompt
+                                            prompt_buffer.clear();
+                                            state = SessionState::LiveSession;
+                                            // Do NOT continue; allow this packet to be emitted to xterm below
+                                        }
                                     }
                                     SessionState::LiveSession => {}
                                 }
