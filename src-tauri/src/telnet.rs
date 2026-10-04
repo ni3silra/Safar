@@ -184,7 +184,7 @@ impl TelnetManager {
 
         let session_id = Uuid::new_v4().to_string();
 
-        let net_stream = if config.ssl_encryption.unwrap_or(true) {
+        let net_stream = if config.ssl_encryption.unwrap_or(false) {
             let connector = native_tls::TlsConnector::builder()
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true)
