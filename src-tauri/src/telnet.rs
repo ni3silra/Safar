@@ -14,10 +14,6 @@ use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 use uuid::Uuid;
 
-#[cfg(target_os = "macos")]
-use security_framework::item::{ItemSearchOptions, ItemClass};
-#[cfg(target_os = "macos")]
-use security_framework::os::macos::keychain::SecKeychain;
 
 // ============================================
 // TELNET CONSTANTS (RFC 854 & RFC 1041)
@@ -782,21 +778,26 @@ pub struct KeychainCertificate {
 
 #[cfg(target_os = "macos")]
 pub fn list_all_keychain_certificates() -> Result<Vec<KeychainCertificate>, Box<dyn std::error::Error>> {
-    use security_framework::item::{ItemSearchOptions, ItemClass};
+    use security_framework::item::{ItemSearchOptions, ItemClass, SearchResult, Reference};
     use security_framework::os::macos::keychain::SecKeychain;
+    use security_framework::os::macos::item::ItemSearchOptionsExt;
 
     let keychain = SecKeychain::default()?;
-    let mut search = ItemSearchOptions::new(ItemClass::Certificate);
-    search.set_keychain(&keychain);
-    let items = search.search()?;
+    let mut search = ItemSearchOptions::new();
+    search.class(ItemClass::certificate());
+    search.keychains(&[keychain]);
+    search.load_refs(true);
+    search.limit(1000);
+    
+    let items = search.search().unwrap_or_default();
     
     let mut certificates = Vec::new();
     for item in items {
-        if let (Ok(label), Ok(data)) = (item.label(), item.data()) {
+        if let SearchResult::Ref(Reference::Certificate(cert)) = item {
             certificates.push(KeychainCertificate {
-                label,
+                label: cert.subject_summary(),
                 issuer: String::from("Unknown"),
-                data: data.to_vec(),
+                data: cert.to_der(),
             });
         }
     }
