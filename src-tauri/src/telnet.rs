@@ -175,31 +175,63 @@ impl TelnetManager {
         }
 
         // Connect with 10s timeout
-        let stream = TcpStream::connect_timeout(&socket_addrs[0], Duration::from_secs(10))
-            .map_err(|e| TelnetError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e)))?;
+        
+        let default_ssl = cfg!(target_os = "macos");
+        let use_ssl = config.ssl_encryption.unwrap_or(default_ssl);
+        
+        let net_stream = if use_ssl {
+            #[cfg(target_os = "macos")]
+            {
+                match connect_with_smart_cert_selection(&config.host, config.port) {
+                    Ok((tls_stream, cert_info)) => {
+                        println!("Using Keychain certificate: {}", cert_info.label);
+                        NetStream::Tls(tls_stream)
+                    }
+                    Err(_) => {
+                        println!("No Keychain certs worked, using danger mode fallback");
+                        // Connect normally with danger mode
+                        let stream = TcpStream::connect_timeout(&socket_addrs[0], Duration::from_secs(10))
+                            .map_err(|e| TelnetError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e)))?;
+                        let _ = stream.set_nodelay(true);
+                        let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
 
-        // Disable Nagle's algorithm for low-latency terminal interaction
-        let _ = stream.set_nodelay(true);
-        let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
+                        let connector = native_tls::TlsConnector::builder()
+                            .danger_accept_invalid_certs(true)
+                            .danger_accept_invalid_hostnames(true)
+                            .build()
+                            .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+                        let tls_stream = connector
+                            .connect(&config.host, stream)
+                            .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+                        NetStream::Tls(tls_stream)
+                    }
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let stream = TcpStream::connect_timeout(&socket_addrs[0], Duration::from_secs(10))
+                    .map_err(|e| TelnetError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e)))?;
+                let _ = stream.set_nodelay(true);
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
 
-        let session_id = Uuid::new_v4().to_string();
-
-        let net_stream = if config.ssl_encryption.unwrap_or(false) {
-            let connector = native_tls::TlsConnector::builder()
-                .danger_accept_invalid_certs(true)
-                .danger_accept_invalid_hostnames(true)
-                .build()
-                .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
-
-            let tls_stream = connector
-                .connect(&config.host, stream)
-                .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
-            
-            NetStream::Tls(tls_stream)
+                let connector = native_tls::TlsConnector::builder()
+                    .danger_accept_invalid_certs(true)
+                    .danger_accept_invalid_hostnames(true)
+                    .build()
+                    .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+                let tls_stream = connector
+                    .connect(&config.host, stream)
+                    .map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+                NetStream::Tls(tls_stream)
+            }
         } else {
+            let stream = TcpStream::connect_timeout(&socket_addrs[0], Duration::from_secs(10))
+                .map_err(|e| TelnetError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e)))?;
+            let _ = stream.set_nodelay(true);
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
             NetStream::Plain(stream)
         };
-
+        let session_id = Uuid::new_v4().to_string();
         let running = Arc::new(RwLock::new(true));
         let cols = Arc::new(AtomicU32::new(80));
         let rows = Arc::new(AtomicU32::new(24));
@@ -732,4 +764,108 @@ fn log_event(app: &AppHandle, session_id: &str, event: &str) {
         session_id: session_id.to_string(),
         message: msg,
     });
+}
+
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone)]
+pub struct KeychainCertificate {
+    pub label: String,
+    pub issuer: String,
+    pub data: Vec<u8>,
+}
+
+#[cfg(target_os = "macos")]
+pub fn list_all_keychain_certificates() -> Result<Vec<KeychainCertificate>, Box<dyn std::error::Error>> {
+    use security_framework::item::{ItemSearchOptions, ItemClass};
+    use security_framework::os::macos::keychain::SecKeychain;
+
+    let keychain = SecKeychain::default()?;
+    let mut search = ItemSearchOptions::new(ItemClass::Certificate);
+    search.set_keychain(&keychain);
+    let items = search.search()?;
+    
+    let mut certificates = Vec::new();
+    for item in items {
+        if let (Ok(label), Ok(data)) = (item.label(), item.data()) {
+            certificates.push(KeychainCertificate {
+                label,
+                issuer: String::from("Unknown"),
+                data: data.to_vec(),
+            });
+        }
+    }
+    Ok(certificates)
+}
+
+#[cfg(target_os = "macos")]
+pub fn filter_bank_certificates(certs: &[KeychainCertificate]) -> Vec<KeychainCertificate> {
+    certs
+        .iter()
+        .filter(|cert| {
+            let label_lower = cert.label.to_lowercase();
+            label_lower.contains("bank") ||
+            label_lower.contains("db") ||
+            label_lower.contains("deutsche") ||
+            label_lower.contains("tandem") ||
+            label_lower.contains("telnet") ||
+            label_lower.contains("telserv")
+        })
+        .cloned()
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn try_connect_with_cert(host: &str, port: u16, cert: &KeychainCertificate) -> Result<native_tls::TlsStream<TcpStream>, TelnetError> {
+    let stream = TcpStream::connect_timeout(
+        &format!("{}:{}", host, port).parse().map_err(|e| TelnetError::ConnectionFailed(format!("Invalid address: {}", e)))?,
+        Duration::from_secs(10),
+    ).map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+    let _ = stream.set_nodelay(true);
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
+
+    let mut builder = native_tls::TlsConnector::builder();
+    builder.danger_accept_invalid_hostnames(true);
+    
+    // Attempt to add the certificate as a root cert
+    if let Ok(native_cert) = native_tls::Certificate::from_der(&cert.data) {
+        builder.add_root_certificate(native_cert);
+    } else {
+        // Fallback to accepting all if we can't parse it
+        builder.danger_accept_invalid_certs(true);
+    }
+    
+    let connector = builder.build().map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+    connector.connect(host, stream).map_err(|e| TelnetError::ConnectionFailed(e.to_string()))
+}
+
+#[cfg(target_os = "macos")]
+pub fn connect_with_smart_cert_selection(host: &str, port: u16) -> Result<(native_tls::TlsStream<TcpStream>, KeychainCertificate), TelnetError> {
+    let all_certs = list_all_keychain_certificates().map_err(|e| TelnetError::ConnectionFailed(e.to_string()))?;
+    let bank_certs = filter_bank_certificates(&all_certs);
+    
+    println!("Found {} bank certificate(s) out of {}", bank_certs.len(), all_certs.len());
+    
+    // Try bank certs first
+    for cert in &bank_certs {
+        println!("[PRIORITY] Trying: {}", cert.label);
+        if let Ok(tls_stream) = try_connect_with_cert(host, port, cert) {
+            println!("SUCCESS: Connected with {}", cert.label);
+            return Ok((tls_stream, cert.clone()));
+        }
+    }
+    
+    // Try all others
+    for cert in &all_certs {
+        if bank_certs.iter().any(|bc| bc.label == cert.label) {
+            continue;
+        }
+        println!("[FALLBACK] Trying: {}", cert.label);
+        if let Ok(tls_stream) = try_connect_with_cert(host, port, cert) {
+            println!("SUCCESS: Connected with {}", cert.label);
+            return Ok((tls_stream, cert.clone()));
+        }
+    }
+    
+    Err(TelnetError::ConnectionFailed("No certificates worked".to_string()))
 }
