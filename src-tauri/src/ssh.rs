@@ -778,10 +778,49 @@ impl SshManager {
     {
         // Use a dedicated SFTP-only SSH session to avoid lock contention with terminal thread
         let sftp_session = self.open_sftp_session(session_id)?;
+
+        let mut local_file = std::fs::File::create(local_path).map_err(SshError::IoError)?;
+
+        // Try SCP first (much faster for large files than libssh2 SFTP)
+        let mut try_scp = || -> Result<(), SshError> {
+            let (mut remote_file, stat) = sftp_session.scp_recv(std::path::Path::new(remote_path)).map_err(SshError::Ssh2Error)?;
+            let total_size = stat.size();
+            
+            use std::io::{Read, Write};
+            let mut buffer = [0u8; 65536]; 
+            let mut transferred: u64 = 0;
+            let mut last_progress_time = std::time::Instant::now();
+
+            loop {
+                let n = remote_file.read(&mut buffer).map_err(SshError::IoError)?;
+                if n == 0 { break; }
+                local_file.write_all(&buffer[..n]).map_err(SshError::IoError)?;
+                transferred += n as u64;
+                
+                if last_progress_time.elapsed().as_millis() > 100 {
+                    progress(transferred, total_size);
+                    last_progress_time = std::time::Instant::now();
+                }
+            }
+            
+            let _ = remote_file.send_eof();
+            let _ = remote_file.wait_eof();
+            let _ = remote_file.close();
+            let _ = remote_file.wait_close();
+            
+            progress(transferred, total_size);
+            Ok(())
+        };
+
+        if try_scp().is_ok() {
+            return Ok(());
+        }
+
+        // Fallback to SFTP
+        let _ = local_file.set_len(0); // Truncate if SCP wrote partial data
         let sftp = sftp_session.sftp().map_err(SshError::Ssh2Error)?;
 
         let mut remote_file = sftp.open(std::path::Path::new(remote_path)).map_err(SshError::Ssh2Error)?;
-        let mut local_file = std::fs::File::create(local_path).map_err(SshError::IoError)?;
 
         let stat = remote_file.stat().map_err(SshError::Ssh2Error)?;
         let total_size = stat.size.unwrap_or(0);
@@ -814,12 +853,49 @@ impl SshManager {
     {
         // Use a dedicated SFTP-only SSH session to avoid lock contention with terminal thread
         let sftp_session = self.open_sftp_session(session_id)?;
-        let sftp = sftp_session.sftp().map_err(SshError::Ssh2Error)?;
 
         let mut local_file = std::fs::File::open(local_path).map_err(SshError::IoError)?;
-        let mut remote_file = sftp.create(std::path::Path::new(remote_path)).map_err(SshError::Ssh2Error)?;
-
         let total_size = local_file.metadata().map(|m| m.len()).unwrap_or(0);
+
+        // Try SCP first (much faster for large files than libssh2 SFTP)
+        let mut try_scp = || -> Result<(), SshError> {
+            let mut remote_file = sftp_session.scp_send(std::path::Path::new(remote_path), 0o644, total_size, None).map_err(SshError::Ssh2Error)?;
+            use std::io::{Read, Write};
+            let mut buffer = [0u8; 65536]; 
+            let mut transferred: u64 = 0;
+            let mut last_progress_time = std::time::Instant::now();
+
+            loop {
+                let n = local_file.read(&mut buffer).map_err(SshError::IoError)?;
+                if n == 0 { break; }
+                remote_file.write_all(&buffer[..n]).map_err(SshError::IoError)?;
+                transferred += n as u64;
+                
+                if last_progress_time.elapsed().as_millis() > 100 {
+                    progress(transferred, total_size);
+                    last_progress_time = std::time::Instant::now();
+                }
+            }
+            
+            let _ = remote_file.send_eof();
+            let _ = remote_file.wait_eof();
+            let _ = remote_file.close();
+            let _ = remote_file.wait_close();
+            
+            progress(transferred, total_size);
+            Ok(())
+        };
+
+        if try_scp().is_ok() {
+            return Ok(());
+        }
+
+        // Fallback to SFTP
+        use std::io::Seek;
+        let _ = local_file.seek(std::io::SeekFrom::Start(0));
+
+        let sftp = sftp_session.sftp().map_err(SshError::Ssh2Error)?;
+        let mut remote_file = sftp.create(std::path::Path::new(remote_path)).map_err(SshError::Ssh2Error)?;
 
         use std::io::{Read, Write};
         let mut buffer = [0u8; 32768]; // 32 KB chunks
