@@ -236,3 +236,35 @@
     font-size: var(--text-xs);
     color: var(--text-muted);
 }
+
+/* ============================================
+   GUARDIAN MONITOR
+   ============================================ */
+
+/* Pulsing dot for active monitoring */
+@keyframes guardianPulse {
+    0%, 100% {
+        opacity: 1;
+        box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.6);
+    }
+    50% {
+        opacity: 0.85;
+        box-shadow: 0 0 0 6px rgba(63, 185, 80, 0);
+    }
+}
+
+.guardian-pulse {
+    animation: guardianPulse 1.8s ease-in-out infinite;
+}
+
+/* Stat card hover effect */
+.guardian-card:hover {
+    border-color: var(--safar-blue);
+    box-shadow: 0 0 12px rgba(88, 166, 255, 0.08);
+    transform: translateY(-1px);
+}
+
+.guardian-monitor .input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

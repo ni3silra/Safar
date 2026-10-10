@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { toast } from 'sonner';
 import { Session, ConnectionResult, CommandResponse, SavedSession, LogEntry } from "../types";
 
@@ -14,6 +15,9 @@ export interface ConnectConfig {
     termType?: string;
     remoteCommand?: string;
     backspaceMode?: string;
+    protocol?: "ssh" | "telnet";
+    serviceName?: string;
+    isNonStop?: boolean;
     savedSessionId?: string | null; // If set, updates this existing session instead of creating a new one
 }
 
@@ -28,6 +32,16 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
     const [connectionStatus, setConnectionStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
     const [statusMessage, setStatusMessage] = useState("Disconnected");
+
+    useEffect(() => {
+        const unlisten = listen<{session_id: string, message: string}>("terminal-log", (event) => {
+            addLog(event.payload.session_id, event.payload.message, "info", "SYSTEM");
+        });
+
+        return () => {
+            unlisten.then(f => f());
+        };
+    }, [addLog]);
 
     const derivedActiveSession = activeSessions.find(s => s.id === activeSessionId);
 
@@ -62,10 +76,10 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
             try {
                 const savedSession = await saveSession({
                     id: config.savedSessionId || "", // Use existing id to UPDATE rather than CREATE
-                    name: config.sessionName || `${config.username}@${config.host}`,
+                    name: config.sessionName || `${config.username || 'TACL'}@${config.host}`,
                     host: config.host,
                     port: config.port,
-                    username: config.username,
+                    username: config.username || "TACL",
                     auth_type: config.privateKeyPath ? "privatekey" : "password",
                     private_key_path: config.privateKeyPath || undefined,
                     is_favorite: addToFav || false,
@@ -73,6 +87,9 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
                     term_type: config.termType,
                     remote_command: config.remoteCommand,
                     password: config.password, // Save password if provided
+                    protocol: config.protocol || "ssh",
+                    service_name: config.serviceName,
+                    is_nonstop: config.isNonStop,
                 } as SavedSession);
 
                 savedSessionId = savedSession?.id;
@@ -82,41 +99,69 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
         }
 
         try {
-            const response = await invoke<CommandResponse<ConnectionResult>>("ssh_connect", {
-                params: {
-                    host: config.host,
-                    port: config.port,
-                    username: config.username,
-                    password: config.password || null,
-                    private_key_path: config.privateKeyPath || null,
-                    session_name: config.sessionName || `${config.username}@${config.host}`,
-                    term_type: config.termType || null,
-                    remote_command: config.remoteCommand || null,
-                    backspace_mode: config.backspaceMode || null,
-                },
-            });
+            const isTelnet = config.protocol === "telnet";
+            let response: CommandResponse<ConnectionResult>;
 
+            if (isTelnet) {
+                const telnetRes = await invoke<CommandResponse<any>>("telnet_connect", {
+                    params: {
+                        host: config.host,
+                        port: config.port,
+                        service_name: config.serviceName || "TACL",
+                        username: config.username || null,
+                        password: config.password || null,
+                        term_type: config.termType || "TN6530-8",
+                    },
+                });
 
+                response = {
+                    success: telnetRes.success,
+                    data: telnetRes.data ? {
+                        session_id: telnetRes.data.session_id,
+                        host: telnetRes.data.host,
+                        username: config.username || "TACL",
+                        banner: `TELSERV Service: ${telnetRes.data.service_name}`,
+                    } : null,
+                    error: telnetRes.error,
+                };
+            } else {
+                response = await invoke<CommandResponse<ConnectionResult>>("ssh_connect", {
+                    params: {
+                        host: config.host,
+                        port: config.port,
+                        username: config.username,
+                        password: config.password || null,
+                        private_key_path: config.privateKeyPath || null,
+                        session_name: config.sessionName || `${config.username}@${config.host}`,
+                        term_type: config.termType || (config.isNonStop ? "TN6530-8" : null),
+                        remote_command: config.remoteCommand || null,
+                        backspace_mode: config.backspaceMode || null,
+                    },
+                });
+            }
 
             if (response.success && response.data) {
                 const newSession: Session = {
                     id: response.data.session_id,
-                    name: config.sessionName || `${config.username}@${config.host}`,
+                    name: config.sessionName || (isTelnet ? `NonStop TACL (${config.host})` : `${config.username}@${config.host}`),
                     host: config.host,
                     port: config.port,
-                    username: config.username,
+                    username: config.username || (isTelnet ? "TACL" : ""),
                     connected: true,
                     activeView: "terminal",
                     backspaceMode: config.backspaceMode,
-                    termType: config.termType,
+                    termType: config.termType || (config.isNonStop || isTelnet ? "TN6530-8" : undefined),
+                    protocol: config.protocol || "ssh",
+                    serviceName: config.serviceName,
+                    isNonStop: config.isNonStop,
                 };
                 setActiveSessions((prev) => [...prev, newSession]);
                 setActiveSessionId(newSession.id);
                 setConnectionStatus("connected");
-                setStatusMessage(`Connected to ${config.username}@${config.host}`);
+                setStatusMessage(`Connected to ${newSession.name}`);
 
-                addLog(newSession.id, `Connected to ${response.data.host}`, "success", "SSH");
-                if (response.data.banner) addLog(newSession.id, `Banner: ${response.data.banner}`, "info", "SSH");
+                addLog(newSession.id, `Connected to ${response.data.host} (${isTelnet ? 'TN6530 Telnet' : 'SSH'})`, "success", isTelnet ? "SYSTEM" : "SSH");
+                if (response.data.banner) addLog(newSession.id, `Banner: ${response.data.banner}`, "info", isTelnet ? "SYSTEM" : "SSH");
 
                 if (savedSessionId) {
                     addToRecent(savedSessionId);
@@ -180,7 +225,12 @@ export function useTerminalConnection({ addLog, saveSession, addToRecent }: UseT
 
     const disconnect = async (sessionId: string) => {
         try {
-            await invoke<CommandResponse<void>>("ssh_disconnect", { sessionId });
+            const sess = activeSessions.find((s) => s.id === sessionId);
+            if (sess?.protocol === "telnet") {
+                await invoke<CommandResponse<void>>("telnet_disconnect", { sessionId });
+            } else {
+                await invoke<CommandResponse<void>>("ssh_disconnect", { sessionId });
+            }
             setActiveSessions((prev) => prev.filter((s) => s.id !== sessionId));
             if (activeSessionId === sessionId) {
                 setActiveSessionId(null);
