@@ -789,14 +789,20 @@ impl SshManager {
         use std::io::{Read, Write};
         let mut buffer = [0u8; 32768]; // 32 KB chunks – safe across server SFTP window sizes
         let mut transferred: u64 = 0;
+        let mut last_progress_time = std::time::Instant::now();
 
         loop {
             let n = remote_file.read(&mut buffer).map_err(SshError::IoError)?;
             if n == 0 { break; }
             local_file.write_all(&buffer[..n]).map_err(SshError::IoError)?;
             transferred += n as u64;
-            progress(transferred, total_size);
+            
+            if last_progress_time.elapsed().as_millis() > 100 {
+                progress(transferred, total_size);
+                last_progress_time = std::time::Instant::now();
+            }
         }
+        progress(transferred, total_size);
 
         Ok(())
     }
@@ -818,14 +824,20 @@ impl SshManager {
         use std::io::{Read, Write};
         let mut buffer = [0u8; 32768]; // 32 KB chunks
         let mut transferred: u64 = 0;
+        let mut last_progress_time = std::time::Instant::now();
 
         loop {
             let n = local_file.read(&mut buffer).map_err(SshError::IoError)?;
             if n == 0 { break; }
             remote_file.write_all(&buffer[..n]).map_err(SshError::IoError)?;
             transferred += n as u64;
-            progress(transferred, total_size);
+            
+            if last_progress_time.elapsed().as_millis() > 100 {
+                progress(transferred, total_size);
+                last_progress_time = std::time::Instant::now();
+            }
         }
+        progress(transferred, total_size);
 
         Ok(())
     }
