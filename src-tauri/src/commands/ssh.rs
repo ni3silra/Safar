@@ -321,6 +321,20 @@ pub fn ssh_sftp_write_text(
     }
 }
 
+/// Remove a remote file or directory
+#[tauri::command(async)]
+pub fn ssh_sftp_remove(
+    state: State<AppState>,
+    session_id: String,
+    remote_path: String,
+    is_dir: bool,
+) -> CommandResponse<()> {
+    match state.ssh_manager.sftp_remove(&session_id, &remote_path, is_dir) {
+        Ok(()) => CommandResponse::ok(()),
+        Err(e) => CommandResponse::err(e.to_string()),
+    }
+}
+
 /// Start a local port forward
 #[tauri::command]
 pub fn ssh_forward_local(

@@ -976,6 +976,53 @@ impl SshManager {
         Ok(())
     }
 
+    /// Delete a remote file or directory
+    pub fn sftp_remove(&self, session_id: &str, remote_path: &str, is_dir: bool) -> Result<(), SshError> {
+        let sessions = self.sessions.read();
+        let session_arc = sessions
+            .get(session_id)
+            .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
+
+        let session = session_arc.read();
+
+        // Temporarily set blocking mode for SFTP
+        session.session.set_blocking(true);
+
+        let sftp = match session.session.sftp() {
+            Ok(s) => s,
+            Err(e) => {
+                session.session.set_blocking(false);
+                return Err(SshError::Ssh2Error(e));
+            }
+        };
+
+        let path = std::path::Path::new(remote_path);
+        let res = if is_dir {
+            fn rm_dir_recursive(sftp: &ssh2::Sftp, p: &std::path::Path) -> Result<(), ssh2::Error> {
+                if let Ok(entries) = sftp.readdir(p) {
+                    for (child_path, child_stat) in entries {
+                        let fname = child_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                        if fname == "." || fname == ".." {
+                            continue;
+                        }
+                        if child_stat.is_dir() {
+                            let _ = rm_dir_recursive(sftp, &child_path);
+                        } else {
+                            let _ = sftp.unlink(&child_path);
+                        }
+                    }
+                }
+                sftp.rmdir(p)
+            }
+            rm_dir_recursive(&sftp, path).map_err(SshError::Ssh2Error)
+        } else {
+            sftp.unlink(path).map_err(SshError::Ssh2Error)
+        };
+
+        session.session.set_blocking(false);
+        res
+    }
+
     /// Start a local port forward
     pub fn start_local_forward(
         &self,

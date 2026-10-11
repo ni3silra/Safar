@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
+import { toast } from "sonner";
 import { FileEntry, CommandResponse, SortField, SortDirection } from "../types";
 
 export function useFileBrowser(sessionId: string) {
@@ -174,6 +175,31 @@ export function useFileBrowser(sessionId: string) {
         }
     };
 
+    const handleDelete = async (file: FileEntry) => {
+        const fullPath = currentPath === "." || currentPath === "/"
+            ? (currentPath === "/" ? `/${file.name}` : file.name)
+            : `${currentPath}/${file.name}`;
+        
+        try {
+            const response = await invoke<CommandResponse<void>>("ssh_sftp_remove", {
+                sessionId,
+                remotePath: fullPath,
+                isDir: file.is_dir
+            });
+            if (response.success) {
+                toast.success(`Deleted ${file.is_dir ? "folder" : "file"} "${file.name}"`);
+                loadFiles(currentPath, false);
+            } else {
+                const errMsg = response.error || "Failed to delete";
+                toast.error(`Delete failed: ${errMsg}`);
+                setError(errMsg);
+            }
+        } catch (err) {
+            toast.error(`Delete failed: ${err}`);
+            setError(String(err));
+        }
+    };
+
     return {
         currentPath,
         tempPath,
@@ -200,6 +226,7 @@ export function useFileBrowser(sessionId: string) {
         handleUp,
         handleDownload,
         handleUpload,
+        handleDelete,
         removeVisitedPath
     };
 }

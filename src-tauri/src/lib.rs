@@ -123,6 +123,7 @@ pub fn run() {
             ssh_sftp_write,
             ssh_sftp_read_text,
             ssh_sftp_write_text,
+            ssh_sftp_remove,
             ssh_stop_forward,
             ssh_forward_local,
             ssh_list_tunnels,
