@@ -530,6 +530,7 @@ export function TerminalComponent({
   const isBlockModeRef = useRef(false); // Ref for closure sync
   const historyBufferRef = useRef(""); // Generic command buffer for history
   const hpNsUserRef = useRef(""); // Tracks potential HP NS dynamic username
+  const lastReportedTitleRef = useRef(""); // Deduplicate title changes to prevent React re-render thrashing
   const lastTermTypePromptReplyRef = useRef(0); // Rate-limit prompt replies to avoid loops
 
   // Disconnect State (only triggers when the connection is truly closed by the server or dropped)
@@ -728,7 +729,8 @@ export function TerminalComponent({
 
     // Native OS Window Title Tracking
     terminal.onTitleChange((title) => {
-      if (onTitleChange && title) {
+      if (onTitleChange && title && title !== lastReportedTitleRef.current) {
+        lastReportedTitleRef.current = title;
         onTitleChange(title);
       }
     });
@@ -1121,23 +1123,24 @@ export function TerminalComponent({
           }
 
           // Auto-answer Terminal Type if host prompts in conversational stream (e.g. "Terminal type?", "terminal type:", "Enter terminal type:")
-          // Skipped for Telnet: the Rust backend (telnet.rs) already answers these prompts, and
-          // answering here too sent a second "TN6530-8\r" that landed in TACL as typed input.
-          const lowerText = (translated.data || "").toLowerCase();
+          // Handshake negotiation only, skipped for Telnet or on large data bursts (>512 bytes)
           if (
-            protocol !== "telnet" && (
-            lowerText.includes("terminal type?") ||
-            lowerText.includes("terminal type:") ||
-            lowerText.includes("terminal type [") ||
-            lowerText.includes("terminal type (") ||
-            lowerText.includes("enter terminal type") ||
-            lowerText.includes("term = ") ||
-            lowerText.includes("terminal [6530]") ||
-            lowerText.includes("terminal [tn6530"))
+            protocol !== "telnet" &&
+            lastTermTypePromptReplyRef.current === 0 &&
+            (translated.data?.length || 0) < 512
           ) {
-            const now = Date.now();
-            if (now - lastTermTypePromptReplyRef.current > 1000) {
-              lastTermTypePromptReplyRef.current = now;
+            const lowerText = (translated.data || "").toLowerCase();
+            if (
+              lowerText.includes("terminal type?") ||
+              lowerText.includes("terminal type:") ||
+              lowerText.includes("terminal type [") ||
+              lowerText.includes("terminal type (") ||
+              lowerText.includes("enter terminal type") ||
+              lowerText.includes("term = ") ||
+              lowerText.includes("terminal [6530]") ||
+              lowerText.includes("terminal [tn6530")
+            ) {
+              lastTermTypePromptReplyRef.current = Date.now();
               sendData("TN6530-8\r");
             }
           }
@@ -1169,24 +1172,27 @@ export function TerminalComponent({
           }
 
           // --- Execute HP NS Heuristic Sync on Prompts ---
-          if (hpNsUserRef.current && onTitleChange) {
+          if (hpNsUserRef.current && onTitleChange && hpNsUserRef.current !== lastReportedTitleRef.current) {
             if (incomingData.includes(">") || incomingData.includes("$") || incomingData.includes("#")) {
+              lastReportedTitleRef.current = hpNsUserRef.current;
               onTitleChange(hpNsUserRef.current);
             }
           }
 
-          // If host prompts for terminal type in standard session
-          const lowerNon6530 = incomingData.toLowerCase();
+          // If host prompts for terminal type in standard session (handshake only, ignore large data packets)
           if (
-            protocol !== "telnet" && (
-            lowerNon6530.includes("terminal type?") ||
-            lowerNon6530.includes("terminal type:") ||
-            lowerNon6530.includes("enter terminal type") ||
-            lowerNon6530.includes("terminal type ["))
+            protocol !== "telnet" &&
+            lastTermTypePromptReplyRef.current === 0 &&
+            incomingData.length < 512
           ) {
-            const now = Date.now();
-            if (now - lastTermTypePromptReplyRef.current > 1000) {
-              lastTermTypePromptReplyRef.current = now;
+            const lowerNon6530 = incomingData.toLowerCase();
+            if (
+              lowerNon6530.includes("terminal type?") ||
+              lowerNon6530.includes("terminal type:") ||
+              lowerNon6530.includes("enter terminal type") ||
+              lowerNon6530.includes("terminal type [")
+            ) {
+              lastTermTypePromptReplyRef.current = Date.now();
               sendData("TN6530-8\r");
             }
           }
@@ -1204,13 +1210,22 @@ export function TerminalComponent({
       }
     });
 
-    const handleResize = () => safeFit();
+    let resizeFrameId: number | null = null;
+    const throttledFit = () => {
+      if (resizeFrameId !== null) return;
+      resizeFrameId = requestAnimationFrame(() => {
+        resizeFrameId = null;
+        safeFit();
+      });
+    };
+
+    const handleResize = () => throttledFit();
     window.addEventListener("resize", handleResize);
 
     // ResizeObserver watches the container element for layout shifts (sidebar toggle, split panes)
     let resizeObserver: ResizeObserver | null = null;
     if (terminalRef.current && typeof ResizeObserver !== "undefined") {
-      resizeObserver = new ResizeObserver(() => safeFit());
+      resizeObserver = new ResizeObserver(() => throttledFit());
       resizeObserver.observe(terminalRef.current);
     }
 
@@ -1231,6 +1246,7 @@ export function TerminalComponent({
 
     return () => {
       isMounted = false;
+      if (resizeFrameId !== null) cancelAnimationFrame(resizeFrameId);
       window.removeEventListener("resize", handleResize);
       if (resizeObserver) resizeObserver.disconnect();
       if (unlisten) unlisten();
