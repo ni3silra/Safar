@@ -739,13 +739,26 @@ impl SshManager {
         };
 
         let addr = format!("{}:{}", config.host, config.port);
-        let tcp = TcpStream::connect(&addr).map_err(|e| {
+        let socket_addrs: Vec<std::net::SocketAddr> = addr
+            .to_socket_addrs()
+            .map_err(|e| SshError::ConnectionFailed(format!("Failed to resolve {}: {}", addr, e)))?
+            .collect();
+
+        if socket_addrs.is_empty() {
+            return Err(SshError::ConnectionFailed(format!("Could not resolve host: {}", config.host)));
+        }
+
+        let tcp = TcpStream::connect_timeout(&socket_addrs[0], Duration::from_secs(15)).map_err(|e| {
             SshError::ConnectionFailed(format!("SFTP sub-connection failed to {}: {}", addr, e))
         })?;
+
+        // Disable Nagle's algorithm for immediate packet dispatch across WAN/VPN links
+        let _ = tcp.set_nodelay(true);
 
         let mut sftp_session = Session::new().map_err(|e| {
             SshError::ConnectionFailed(format!("SFTP session create failed: {}", e))
         })?;
+        sftp_session.set_timeout(30000); // 30s timeout prevents indefinite hanging
         sftp_session.set_tcp_stream(tcp);
         sftp_session.handshake().map_err(|e| {
             SshError::ConnectionFailed(format!("SFTP SSH handshake failed: {}", e))
@@ -780,7 +793,6 @@ impl SshManager {
         let sftp_session = self.open_sftp_session(session_id)?;
 
         let mut local_file = std::fs::File::create(local_path).map_err(SshError::IoError)?;
-
         let sftp = sftp_session.sftp().map_err(SshError::Ssh2Error)?;
 
         let mut remote_file = sftp.open(std::path::Path::new(remote_path)).map_err(SshError::Ssh2Error)?;
@@ -788,8 +800,9 @@ impl SshManager {
         let stat = remote_file.stat().map_err(SshError::Ssh2Error)?;
         let total_size = stat.size.unwrap_or(0);
 
-        use std::io::{Read, Write};
-        let mut buffer = [0u8; 32768]; // 32 KB chunks – safe across server SFTP window sizes
+        // 128 KB chunk buffer - matched to HP NonStop SFTP socket buffers (SOCKETRCVBUF)
+        // and enables libssh2 read-ahead pipelining to overcome network latency reliably.
+        let mut buffer = vec![0u8; 131072];
         let mut transferred: u64 = 0;
         let mut last_progress_time = std::time::Instant::now();
 
@@ -823,8 +836,9 @@ impl SshManager {
         let sftp = sftp_session.sftp().map_err(SshError::Ssh2Error)?;
         let mut remote_file = sftp.create(std::path::Path::new(remote_path)).map_err(SshError::Ssh2Error)?;
 
-        use std::io::{Read, Write};
-        let mut buffer = [0u8; 32768]; // 32 KB chunks
+        // 128 KB chunk buffer - matched to HP NonStop SFTP socket buffers (SOCKETRCVBUF)
+        // and enables libssh2 write-ahead pipelining to overcome network latency reliably.
+        let mut buffer = vec![0u8; 131072];
         let mut transferred: u64 = 0;
         let mut last_progress_time = std::time::Instant::now();
 
@@ -839,6 +853,7 @@ impl SshManager {
                 last_progress_time = std::time::Instant::now();
             }
         }
+        let _ = remote_file.flush();
         progress(transferred, total_size);
 
         Ok(())
