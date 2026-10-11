@@ -800,9 +800,10 @@ impl SshManager {
         let stat = remote_file.stat().map_err(SshError::Ssh2Error)?;
         let total_size = stat.size.unwrap_or(0);
 
-        // 128 KB chunk buffer - matched to HP NonStop SFTP socket buffers (SOCKETRCVBUF)
-        // and enables libssh2 read-ahead pipelining to overcome network latency reliably.
-        let mut buffer = vec![0u8; 131072];
+        // 1 MB (1,048,576 bytes) chunk buffer - maximum feasible buffer within the standard 2 MB SSH channel window.
+        // Libssh2 transparently pipelines up to 32 parallel 32 KB in-flight packets, saturating high-latency
+        // WAN/VPN links to HP NonStop while strictly respecting SFTP protocol packet limits.
+        let mut buffer = vec![0u8; 1048576];
         let mut transferred: u64 = 0;
         let mut last_progress_time = std::time::Instant::now();
 
@@ -836,9 +837,10 @@ impl SshManager {
         let sftp = sftp_session.sftp().map_err(SshError::Ssh2Error)?;
         let mut remote_file = sftp.create(std::path::Path::new(remote_path)).map_err(SshError::Ssh2Error)?;
 
-        // 128 KB chunk buffer - matched to HP NonStop SFTP socket buffers (SOCKETRCVBUF)
-        // and enables libssh2 write-ahead pipelining to overcome network latency reliably.
-        let mut buffer = vec![0u8; 131072];
+        // 1 MB (1,048,576 bytes) chunk buffer - maximum feasible buffer within the standard 2 MB SSH channel window.
+        // Libssh2 transparently pipelines up to 32 parallel 32 KB in-flight packets, saturating high-latency
+        // WAN/VPN links to HP NonStop while strictly respecting SFTP protocol packet limits.
+        let mut buffer = vec![0u8; 1048576];
         let mut transferred: u64 = 0;
         let mut last_progress_time = std::time::Instant::now();
 
