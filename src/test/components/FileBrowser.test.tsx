@@ -109,7 +109,7 @@ describe('FileBrowser', () => {
         expect(screen.getByText(/Are you sure you want to delete "file1.txt"/)).toBeInTheDocument();
 
         // Click Delete inside modal
-        const modal = modalHeading.closest('.modal')!;
+        const modal = modalHeading.closest<HTMLElement>('.modal')!;
         const modalDeleteBtn = within(modal).getByRole('button', { name: 'Delete' });
         fireEvent.click(modalDeleteBtn);
 
