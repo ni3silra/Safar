@@ -74,6 +74,15 @@ pub fn ssh_resize(
     }
 }
 
+/// Send an internal keepalive heartbeat to keep the SSH connection alive
+#[tauri::command]
+pub fn ssh_keepalive(state: State<AppState>, session_id: String) -> CommandResponse<()> {
+    match state.ssh_manager.send_keepalive(&session_id) {
+        Ok(()) => CommandResponse::ok(()),
+        Err(e) => CommandResponse::err(e.to_string()),
+    }
+}
+
 /// Disconnect from an SSH session
 #[tauri::command]
 pub fn ssh_disconnect(state: State<AppState>, session_id: String) -> CommandResponse<()> {
@@ -108,6 +117,15 @@ pub fn ssh_list_sessions(state: State<AppState>) -> CommandResponse<Vec<SessionI
 pub fn ssh_get_performance(state: State<AppState>, session_id: String) -> CommandResponse<String> {
     match state.ssh_manager.get_performance(&session_id) {
         Ok(metrics) => CommandResponse::ok(metrics),
+        Err(e) => CommandResponse::err(e.to_string()),
+    }
+}
+
+/// Get process info by PID or name (for Guardian Monitor)
+#[tauri::command]
+pub fn ssh_get_process_info(state: State<AppState>, session_id: String, pid_or_name: String) -> CommandResponse<String> {
+    match state.ssh_manager.get_process_info(&session_id, &pid_or_name) {
+        Ok(info) => CommandResponse::ok(info),
         Err(e) => CommandResponse::err(e.to_string()),
     }
 }
@@ -298,6 +316,20 @@ pub fn ssh_sftp_write_text(
     content: String,
 ) -> CommandResponse<()> {
     match state.ssh_manager.sftp_write_string(&session_id, &remote_path, &content) {
+        Ok(()) => CommandResponse::ok(()),
+        Err(e) => CommandResponse::err(e.to_string()),
+    }
+}
+
+/// Remove a remote file or directory
+#[tauri::command(async)]
+pub fn ssh_sftp_remove(
+    state: State<AppState>,
+    session_id: String,
+    remote_path: String,
+    is_dir: bool,
+) -> CommandResponse<()> {
+    match state.ssh_manager.sftp_remove(&session_id, &remote_path, is_dir) {
         Ok(()) => CommandResponse::ok(()),
         Err(e) => CommandResponse::err(e.to_string()),
     }

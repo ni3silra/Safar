@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Toaster } from 'sonner';
 // import { invoke } from "@tauri-apps/api/core";
 import "./styles/globals.css";
@@ -60,21 +60,40 @@ function App() {
   // Logs State
   const [sessionLogs, setSessionLogs] = useState<Record<string, LogEntry[]>>({});
 
-  const addLog = (sessionId: string, message: string, level: LogEntry["level"] = "info", source: LogEntry["source"] = "SSH") => {
-    setSessionLogs(prev => {
-      const current = prev[sessionId] || [];
-      return {
-        ...prev,
-        [sessionId]: [...current, {
-          id: crypto.randomUUID(),
-          timestamp: Date.now(),
-          level,
-          message,
-          source
-        }]
-      };
-    });
-  };
+  // Log entries are buffered and flushed at most every 100ms, and capped per session.
+  // Telnet emits several log lines per keystroke; updating React state for each one
+  // re-rendered the whole app on every key press and made fast typing laggy.
+  const MAX_LOGS_PER_SESSION = 2000;
+  const pendingLogsRef = useRef<Record<string, LogEntry[]>>({});
+  const logFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Stable identity (useCallback with no deps) so consumers' effects don't re-run on every render
+  const addLog = useCallback((sessionId: string, message: string, level: LogEntry["level"] = "info", source: LogEntry["source"] = "SSH") => {
+    const entry: LogEntry = {
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      level,
+      message,
+      source
+    };
+    const bucket = pendingLogsRef.current[sessionId] || (pendingLogsRef.current[sessionId] = []);
+    bucket.push(entry);
+
+    if (logFlushTimerRef.current !== null) return;
+    logFlushTimerRef.current = setTimeout(() => {
+      logFlushTimerRef.current = null;
+      const pending = pendingLogsRef.current;
+      pendingLogsRef.current = {};
+      setSessionLogs(prev => {
+        const next = { ...prev };
+        for (const [id, entries] of Object.entries(pending)) {
+          const merged = [...(prev[id] || []), ...entries];
+          next[id] = merged.length > MAX_LOGS_PER_SESSION ? merged.slice(-MAX_LOGS_PER_SESSION) : merged;
+        }
+        return next;
+      });
+    }, 100);
+  }, []);
 
   // Settings State (persisted)
   const [appSettings, setAppSettings] = useState<AppSettings>(() => {
@@ -164,14 +183,17 @@ function App() {
         term_type: config.termType,
         remote_command: config.remoteCommand,
         backspace_mode: config.backspaceMode,
+        protocol: config.protocol,
+        service_name: config.serviceName,
+        is_nonstop: config.isNonStop,
       } as SavedSession);
 
       setEditingSession(null);
       return;
     }
 
-    // Preemptive credential check: If no password/key provided, prompt immediately
-    if (!editingSession && !config.password && !config.privateKeyPath) {
+    // Preemptive credential check: If no password/key provided, prompt immediately (skip for Telnet)
+    if (!editingSession && config.protocol !== "telnet" && !config.password && !config.privateKeyPath) {
       const existingSession = sessions.find(
         (s) => s.host === config.host && s.username === config.username
       );
@@ -284,7 +306,10 @@ function App() {
             password: editingSession.password,
             termType: editingSession.term_type,
             backspaceMode: editingSession.backspace_mode,
-            remoteCommand: editingSession.remote_command
+            remoteCommand: editingSession.remote_command,
+            protocol: editingSession.protocol,
+            serviceName: editingSession.service_name,
+            isNonStop: editingSession.is_nonstop
           } : (retryConfig ? { ...retryConfig, sessionName: retryConfig.sessionName || "" } : undefined)}
         />
       )}

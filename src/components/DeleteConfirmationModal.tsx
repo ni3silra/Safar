@@ -3,10 +3,23 @@ import { Icons } from "./Icons";
 interface DeleteConfirmationModalProps {
     onClose: () => void;
     onConfirm: () => void;
-    sessionName: string;
+    title?: string;
+    description?: string;
+    itemName?: string;
+    sessionName?: string;
 }
 
-export function DeleteConfirmationModal({ onClose, onConfirm, sessionName }: DeleteConfirmationModalProps) {
+export function DeleteConfirmationModal({
+    onClose,
+    onConfirm,
+    title,
+    description,
+    itemName,
+    sessionName
+}: DeleteConfirmationModalProps) {
+    const displayTitle = title || "Delete Session?";
+    const name = itemName || sessionName || "this item";
+
     return (
         <div className="modal-backdrop" onClick={onClose} style={{ zIndex: 9999 }}>
             <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: "400px", padding: 0, overflow: "hidden" }}>
@@ -26,12 +39,18 @@ export function DeleteConfirmationModal({ onClose, onConfirm, sessionName }: Del
                     </div>
 
                     <h3 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)", marginBottom: "8px" }}>
-                        Delete Session?
+                        {displayTitle}
                     </h3>
 
                     <p style={{ fontSize: "14px", color: "var(--text-secondary)", lineHeight: "1.5" }}>
-                        Are you sure you want to delete <b>{sessionName}</b>? <br />
-                        This action cannot be undone.
+                        {description ? (
+                            description
+                        ) : (
+                            <>
+                                Are you sure you want to delete <b>{name}</b>? <br />
+                                This action cannot be undone.
+                            </>
+                        )}
                     </p>
                 </div>
 

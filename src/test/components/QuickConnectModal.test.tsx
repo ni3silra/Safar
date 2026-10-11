@@ -58,4 +58,31 @@ describe('QuickConnectModal', () => {
 
         expect(screen.getByText(/Click to select a key file/)).toBeInTheDocument();
     });
+
+    it('switches to HP NonStop (CAIL Mode) and submits Telnet configuration', async () => {
+        render(<QuickConnectModal onClose={mockOnClose} onConnect={mockOnConnect} />);
+
+        const nonStopBtn = screen.getByText('HP NonStop (CAIL Mode)');
+        fireEvent.click(nonStopBtn);
+
+        expect(screen.getByText('CAIL / TELSERV Protocol')).toBeInTheDocument();
+        expect(screen.getByText('Service Name (TELSERV)')).toBeInTheDocument();
+
+        const hostInput = screen.getByPlaceholderText(/192\.168\.1\.100/);
+        fireEvent.change(hostInput, { target: { value: 'nonstop.internal' } });
+
+        const connectBtn = screen.getByText('Connect');
+        fireEvent.click(connectBtn);
+
+        expect(mockOnConnect).toHaveBeenCalledWith(expect.objectContaining({
+            host: 'nonstop.internal',
+            port: 23,
+            protocol: 'telnet',
+            serviceName: 'TACL',
+            isNonStop: true,
+            termType: 'TN6530-8',
+            backspaceMode: 'ctrl-h',
+        }), expect.any(Boolean), expect.any(Boolean));
+    });
 });
+
