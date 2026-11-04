@@ -101,6 +101,7 @@ export interface ScreenCommand {
     | 'protectSubExit'
     | 'selectPage'
     | 'displayPage'
+    | 'setMaxPages'
     | 'bufferAddress'
     | 'cursor'
     | 'cursorOnly'
@@ -116,6 +117,12 @@ export interface ScreenCommand {
     | 'readBuffer'
     | 'readWithAddress'
     | 'readWithAddressAll'
+    | 'readCursor'
+    | 'readStatus'
+    | 'readRevision'
+    | 'readConfig'
+    | 'readColorConfig'
+    | 'enq'
     | 'char'
     | 'clear';
   row?: number;
@@ -191,13 +198,23 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           break;
         }
         const sub = data[i + 2];
-        // ESC - ? : Color / Extended Configuration Query
-        if (sub === '?') {
+        // ESC - u / ESC - v / ESC - ? : Read 6530 Color / Extended Configuration Query
+        if (sub === '?' || sub === 'u' || sub === 'v') {
           readColorConfigRequested = true;
+          screenCommands.push({ type: 'readColorConfig' });
           i += 3;
           continue;
         }
-        // ESC - q : Color Map Table (terminated by CR or fixed params)
+        // ESC - t (Set Color Configuration) / ESC - q (Set/Reset Color Map Table)
+        if (sub === 't' || sub === 'q') {
+          let j = i + 3;
+          while (j < data.length && data[j] !== '\r' && data[j] !== '\n' && data[j] !== '\x03' && data[j] !== '\x1b' && data[j] !== '\x01') {
+            j++;
+          }
+          if (j < data.length && (data[j] === '\r' || data[j] === '\n')) j++;
+          i = j;
+          continue;
+        }
         // ESC - X / ESC - Y / ESC - W : width/column format
         if (sub === 'X' || sub === 'Y' || sub === 'W' || sub === 'c' || sub === 'd') {
           i += 3;
@@ -206,6 +223,7 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
         // ESC - <params> C (Set Buffer Address Extended)
         // ESC - <params> D (Set Cursor Address Extended)
         // ESC - <params> J (Read With Address Extended)
+        // ESC - <params> K (Read With Address All Extended)
         let j = i + 2;
         while (j < data.length && ((data.charCodeAt(j) >= 0x30 && data.charCodeAt(j) <= 0x3b) || data[j] === ' ')) {
           j++;
@@ -233,9 +251,9 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           i = j + 1;
           continue;
         }
-        if (finalChar === 'J' && parts.length >= 4) {
+        if ((finalChar === 'J' || finalChar === 'K') && parts.length >= 4) {
           screenCommands.push({
-            type: 'readWithAddress',
+            type: finalChar === 'K' ? 'readWithAddressAll' : 'readWithAddress',
             row: Math.max(0, (parts[0] || 1) - 1),
             col: Math.max(0, (parts[1] || 1) - 1),
             endRow: Math.max(0, (parts[2] || 24) - 1),
@@ -271,6 +289,7 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
         const csiSeq = data.substring(i, j + 1);
         if (csiSeq === '\x1b[c' || csiSeq === '\x1b[0c' || csiSeq === '\x1b[>c' || csiSeq === '\x1b[>0c') {
           deviceAttributesRequested = true;
+          screenCommands.push({ type: 'readStatus' });
           i = j + 1;
           continue;
         }
@@ -298,7 +317,24 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           continue;
         } else {
           readSecondaryStatusRequested = true;
-          screenCommands.push({ type: 'readWithAddressAll' });
+          if (
+            i + 5 < data.length &&
+            data.charCodeAt(i + 2) >= 0x20 && data.charCodeAt(i + 2) <= 0x37 &&
+            data.charCodeAt(i + 3) >= 0x20 && data.charCodeAt(i + 3) <= 0x6f &&
+            data.charCodeAt(i + 4) >= 0x20 && data.charCodeAt(i + 4) <= 0x37 &&
+            data.charCodeAt(i + 5) >= 0x20 && data.charCodeAt(i + 5) <= 0x6f
+          ) {
+            screenCommands.push({
+              type: 'readWithAddressAll',
+              row: data.charCodeAt(i + 2) - 0x20,
+              col: data.charCodeAt(i + 3) - 0x20,
+              endRow: data.charCodeAt(i + 4) - 0x20,
+              endCol: data.charCodeAt(i + 5) - 0x20,
+            });
+            i += 6;
+            continue;
+          }
+          screenCommands.push({ type: 'readWithAddressAll', row: 0, col: 0, endRow: 23, endCol: 79 });
           i += 2;
           continue;
         }
@@ -519,8 +555,26 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
         case 'a':
         case 'Z':
           readCursorRequested = true;
+          screenCommands.push({ type: 'readCursor' });
           i += 2;
           continue;
+
+        // Set Maximum Page Number in Block Mode (ESC p <max-page>)
+        case 'p': {
+          if (i + 2 >= data.length) {
+            if (inBlockMode) {
+              pendingRemainder = data.substring(i);
+              break;
+            }
+            i += 2;
+            continue;
+          }
+          const pCode = data.charCodeAt(i + 2);
+          const maxP = pCode >= 0x30 ? pCode - 0x30 : Math.max(1, pCode - 0x20);
+          screenCommands.push({ type: 'setMaxPages', page: maxP });
+          i += 3;
+          continue;
+        }
 
         // Insert/delete character
         case 'P': result += '\x1b[1@'; i += 2; continue;
@@ -554,27 +608,31 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           continue;
         }
 
-        // Read Primary Terminal Status (ESC ^ -> SOH ? @ F B CR)
+        // Read Primary Terminal Status (ESC ^ -> SOH ? @ F B CR or SOH ? @ F B <max-page> X Y ETX LRC)
         case '^':
           readStatusRequested = true;
+          screenCommands.push({ type: 'readStatus' });
           i += 2;
           continue;
 
-        // Read Full Revision Level (ESC _ -> SOH # C00T0A00 CR)
+        // Read Full Revision Level (ESC _ -> SOH # C00T0A00 CR or ETX LRC)
         case '_':
           readRevisionRequested = true;
+          screenCommands.push({ type: 'readRevision' });
           i += 2;
           continue;
 
         // Read Model Number (ESC /)
         case '/':
           readModelRequested = true;
+          screenCommands.push({ type: 'readRevision' });
           i += 2;
           continue;
 
-        // Read Terminal Configuration (ESC ? -> SOH ! ... CR)
+        // Read Terminal Configuration (ESC ? -> SOH ! ... CR or ETX LRC)
         case '?':
           readIdRequested = true;
+          screenCommands.push({ type: 'readConfig' });
           i += 2;
           continue;
 
@@ -625,6 +683,7 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
     // ENQ (0x05) — Host enquiry
     if (data[i] === '\x05') {
       enquiryRequested = true;
+      screenCommands.push({ type: 'enq' });
       i++;
       continue;
     }
@@ -1384,6 +1443,9 @@ export function TerminalComponent({
                 }
                 screen.selectDisplayPage(cmd.page!);
                 break;
+              case 'setMaxPages':
+                screen.setMaxPages(cmd.page!);
+                break;
               case 'bufferAddress':
                 screen.setBufferAddress(cmd.row!, cmd.col!);
                 break;
@@ -1428,8 +1490,32 @@ export function TerminalComponent({
                 break;
               case 'readWithAddressAll':
                 if (isBlockModeRef.current) {
-                  sendData(screen.generateReadBufferResponse(true, 0, 0, 23, 79));
+                  sendData(screen.generateReadBufferResponse(true, cmd.row ?? 0, cmd.col ?? 0, cmd.endRow ?? 23, cmd.endCol ?? 79));
+                } else {
+                  sendData(screen.generateStatusResponse(false));
                 }
+                break;
+              case 'readCursor': {
+                const activeBuf = xtermRef.current?.buffer.active;
+                const cursorY = isBlockModeRef.current ? screen.cursorRow : (activeBuf ? activeBuf.cursorY : screen.cursorRow);
+                const cursorX = isBlockModeRef.current ? screen.cursorCol : (activeBuf ? activeBuf.cursorX : screen.cursorCol);
+                sendData(screen.generateCursorAddressResponse(isBlockModeRef.current, cursorY, cursorX));
+                break;
+              }
+              case 'readStatus':
+                sendData(screen.generateStatusResponse(isBlockModeRef.current));
+                break;
+              case 'readRevision':
+                sendData(screen.generateRevisionResponse(isBlockModeRef.current));
+                break;
+              case 'readConfig':
+                sendData(screen.generateConfigResponse(isBlockModeRef.current));
+                break;
+              case 'readColorConfig':
+                sendData(screen.generateColorConfigResponse(isBlockModeRef.current));
+                break;
+              case 'enq':
+                sendData("\x06"); // ACK
                 break;
               case 'char':
                 screen.writeServerChar(cmd.char!);
@@ -1438,54 +1524,6 @@ export function TerminalComponent({
                 screen.clearSelectedPage();
                 break;
             }
-          }
-
-          // Host requested Cursor Address (ESC a or ESC Z)
-          if (translated.readCursorRequested) {
-            const activeBuf = xtermRef.current?.buffer.active;
-            const cursorY = isBlockModeRef.current ? screen.cursorRow : (activeBuf ? activeBuf.cursorY : screen.cursorRow);
-            const cursorX = isBlockModeRef.current ? screen.cursorCol : (activeBuf ? activeBuf.cursorX : screen.cursorCol);
-            sendData(screen.generateCursorAddressResponse(isBlockModeRef.current, cursorY, cursorX));
-          }
-
-          // Host requested 6530 Primary Terminal Status (ESC ^) -> SOH ? @ F B CR (or ETX LRC)
-          if (translated.readStatusRequested) {
-            sendData(screen.generateStatusResponse(isBlockModeRef.current));
-          }
-
-          // Host requested 6530 Full Revision Level (ESC _) -> SOH # C00T0A00 CR (or ETX LRC)
-          if (translated.readRevisionRequested) {
-            sendData(screen.generateRevisionResponse(isBlockModeRef.current));
-          }
-
-          // Host requested Secondary Status in Conversational Mode (ESC ])
-          if (translated.readSecondaryStatusRequested && !isBlockModeRef.current) {
-            sendData(screen.generateStatusResponse(false));
-          }
-
-          // Host requested 6530 Model Number (ESC /)
-          if (translated.readModelRequested) {
-            sendData(screen.generateRevisionResponse(isBlockModeRef.current));
-          }
-
-          // Host requested 6530 Terminal Configuration (ESC ?) -> SOH ! ... CR (or ETX LRC)
-          if (translated.readIdRequested) {
-            sendData(screen.generateConfigResponse(isBlockModeRef.current));
-          }
-
-          // Host requested 6530 Color / Extended Configuration (ESC - ?) -> SOH e7 CR
-          if (translated.readColorConfigRequested) {
-            sendData(screen.generateColorConfigResponse(isBlockModeRef.current));
-          }
-
-          // Host sent ENQ (0x05)
-          if (translated.enquiryRequested) {
-            sendData("\x06"); // ACK
-          }
-
-          // Host requested Device Attributes (ESC [ c) in 6530 mode
-          if (translated.deviceAttributesRequested) {
-            sendData(screen.generateStatusResponse(isBlockModeRef.current));
           }
 
           // Auto-answer Terminal Type if host prompts in conversational stream (SSH only)

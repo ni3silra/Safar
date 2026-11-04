@@ -49,6 +49,7 @@ export class Screen6530 {
   pages: PageState[];
   selectedPage: number;      // I/O write/read page register (set by ESC : <page>), default 1
   displayPage: number;       // Displayed page register (set by ESC ; <page>), default 1
+  maxPages: number;          // Max allocated pages in block mode (set by ESC p <n>), default 7
   blockMode: boolean;        // true after SOH B ETX LRC or ESC W
   protectSubmode: boolean;   // true after ESC W
   keyboardLocked: boolean;   // true after ESC c or block submission; false after ESC b
@@ -58,6 +59,7 @@ export class Screen6530 {
     this.pages = [];
     this.selectedPage = 1;
     this.displayPage = 1;
+    this.maxPages = 7;
     this.blockMode = false;
     this.protectSubmode = false;
     this.keyboardLocked = false;
@@ -214,6 +216,14 @@ export class Screen6530 {
         // Displaying page 0 locks keyboard and blanks display per 6530 spec
         this.keyboardLocked = true;
       }
+    }
+  }
+
+  setMaxPages(maxPage: number): void {
+    if (maxPage >= 1 && maxPage < MAX_PAGES) {
+      this.maxPages = maxPage;
+    } else if (maxPage >= MAX_PAGES) {
+      this.maxPages = MAX_PAGES - 1;
     }
   }
 
@@ -502,10 +512,8 @@ export class Screen6530 {
     const cell = page.buffer[page.cursorRow][page.cursorCol];
 
     if (this.protectSubmode) {
-      if (cell.protected) return false;
-
       if (cell.fieldId < 0) {
-        if (page.currentFieldId >= 0) {
+        if (page.currentFieldId >= 0 && !page.currentProtected) {
           cell.fieldId = page.currentFieldId;
           cell.protected = false;
           const field = page.fields.find(f => f.id === page.currentFieldId);
@@ -517,6 +525,8 @@ export class Screen6530 {
         } else {
           return false;
         }
+      } else if (cell.protected) {
+        return false;
       }
 
       const field = page.fields.find(f => f.id === cell.fieldId);
@@ -529,10 +539,11 @@ export class Screen6530 {
     const fieldId = cell.fieldId;
     this._advanceCursorOnPage(page);
 
-    if (this.protectSubmode && page.currentFieldId === fieldId && page.cursorRow < SCREEN_ROWS && page.cursorCol < SCREEN_COLS) {
+    if (this.protectSubmode && page.currentFieldId === fieldId && !page.currentProtected && page.cursorRow < SCREEN_ROWS && page.cursorCol < SCREEN_COLS) {
       const nextCell = page.buffer[page.cursorRow][page.cursorCol];
-      if (nextCell.fieldId < 0 && !nextCell.protected) {
+      if (nextCell.fieldId < 0) {
         nextCell.fieldId = fieldId;
+        nextCell.protected = false;
         const field = page.fields.find(f => f.id === fieldId);
         if (field) {
           field.endRow = page.cursorRow;
@@ -749,14 +760,17 @@ export class Screen6530 {
   // ─── 6530 Host Query & Status Responses (Eliminates Guardian Error 180) ───
 
   // ESC ^ (Read Terminal Status)
-  // Format: SOH ? <status> <term-id> <maj-rev-level> CR (or ETX LRC in Block Mode)
+  // Format per 6530 Programmer's Guide:
+  //   Conversational Mode: SOH ? <status> <term-id> <maj-rev-level> CR (\x01?@FB\r)
+  //   Block Mode:          SOH ? <status> <term-id> <maj-rev-level> <max-page> <fields1> <fields2> ETX LRC
   generateStatusResponse(isBlockMode = this.blockMode): string {
     // status = '@' (0x40: normal ready), term-id = 'F' (6530), maj-rev = 'B' (B30/B40)
-    const body = '?@FB';
     if (isBlockMode) {
-      return Screen6530.frameBlockMessage('\x01', body);
+      const maxPageChar = String.fromCharCode(0x30 + Math.max(1, Math.min(7, this.maxPages)));
+      // 'X' (0x58) and 'Y' (0x59) encode 1561 available fields per page (standard 6530 Guide value)
+      return Screen6530.frameBlockMessage('\x01', `?@FB${maxPageChar}XY`);
     }
-    return '\x01' + body + '\r';
+    return '\x01?@FB\r';
   }
 
   // ESC _ (Read Full Revision Level)
@@ -770,18 +784,20 @@ export class Screen6530 {
   }
 
   // ESC ? (Read Terminal Configuration)
-  // Format: SOH ! <code value pairs> CR (or ETX LRC in Block Mode)
+  // Format per 6530 Programmer's Guide Table 2-4 / Table 3-5:
+  //   SOH ! <3-byte code/value pairs> CR (or ETX LRC in Block Mode)
+  //   Each parameter is a 1-byte code followed by a 2-char space-padded decimal value.
   generateConfigResponse(isBlockMode = this.blockMode): string {
-    const body = '!A1B72F0G0I1J2L0M1N0O0P0S0T0';
+    const body = '!A 1B72C 0D 0G 0H15T 0U72h00';
     if (isBlockMode) {
       return Screen6530.frameBlockMessage('\x01', body);
     }
     return '\x01' + body + '\r';
   }
 
-  // ESC - ? (Color / Extended Configuration Query)
+  // ESC - u / ESC - ? (Read 6530 Color / Extended Configuration)
   generateColorConfigResponse(isBlockMode = this.blockMode): string {
-    const body = 'e7';
+    const body = '_e7';
     if (isBlockMode) {
       return Screen6530.frameBlockMessage('\x01', body);
     }
@@ -789,8 +805,8 @@ export class Screen6530 {
   }
 
   // ESC a (Read Cursor Address)
-  // Format:
-  //   Conversational: SOH _ <row> <col> CR
+  // Format per 6530 Programmer's Guide:
+  //   Conversational: SOH _ ! <row> <col> CR  ('!' = 0x21 = Page 1)
   //   Block Mode:     SOH _ <page> <row> <col> ETX LRC
   generateCursorAddressResponse(isBlockMode = this.blockMode, row?: number, col?: number): string {
     const page = this._activeWritePage;
@@ -802,7 +818,7 @@ export class Screen6530 {
       const pageChar = String.fromCharCode(Math.max(1, this.selectedPage) + 0x20);
       return Screen6530.frameBlockMessage('\x01', `_${pageChar}${rowChar}${colChar}`);
     }
-    return `\x01_${rowChar}${colChar}\r`;
+    return `\x01_!${rowChar}${colChar}\r`;
   }
 
   // ─── Read Buffer (ESC <) and Read With Address (ESC = / ESC ] / ESC - J) ───

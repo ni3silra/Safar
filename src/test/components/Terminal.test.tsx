@@ -21,10 +21,10 @@ describe('TerminalComponent', () => {
     vi.clearAllMocks();
     // Reset window.navigator.clipboard
     Object.assign(window.navigator, {
-        clipboard: {
-            writeText: vi.fn().mockResolvedValue(undefined),
-            readText: vi.fn().mockResolvedValue('pasted text'),
-        },
+      clipboard: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+        readText: vi.fn().mockResolvedValue('pasted text'),
+      },
     });
   });
 
@@ -38,48 +38,48 @@ describe('TerminalComponent', () => {
     render(<TerminalComponent {...defaultProps} />);
 
     await waitFor(() => {
-        expect(Terminal).toHaveBeenCalled();
+      expect(Terminal).toHaveBeenCalled();
     });
 
     const terminalInstance = (Terminal as any).mock.results[0].value;
     const onDataMock = terminalInstance.onData;
-    
+
     expect(onDataMock).toHaveBeenCalled();
     const onDataCallback = onDataMock.mock.calls[0][0];
 
     onDataCallback('ls -la\r');
-    
+
     expect(invoke).toHaveBeenCalledWith('ssh_send', { sessionId: 'test-session', data: 'ls -la\r' });
   });
 
   it('writes data to terminal when terminal-data event is received', async () => {
-     let eventHandler: (event: any) => void = () => {};
-     (listen as any).mockImplementation((name: string, cb: any) => {
-         if (name === 'terminal-data') {
-             eventHandler = cb;
-         }
-         return Promise.resolve(() => {});
-     });
+    let eventHandler: (event: any) => void = () => {};
+    (listen as any).mockImplementation((name: string, cb: any) => {
+      if (name === 'terminal-data') {
+        eventHandler = cb;
+      }
+      return Promise.resolve(() => {});
+    });
 
-     render(<TerminalComponent {...defaultProps} />);
+    render(<TerminalComponent {...defaultProps} />);
 
-     await waitFor(() => {
-         expect(Terminal).toHaveBeenCalled();
-     });
+    await waitFor(() => {
+      expect(Terminal).toHaveBeenCalled();
+    });
 
-     const terminalInstance = (Terminal as any).mock.results[0].value;
-     const writeMock = terminalInstance.write;
+    const terminalInstance = (Terminal as any).mock.results[0].value;
+    const writeMock = terminalInstance.write;
 
-     eventHandler({ payload: { session_id: 'test-session', data: 'hello world' } });
+    eventHandler({ payload: { session_id: 'test-session', data: 'hello world' } });
 
-     expect(writeMock).toHaveBeenCalledWith(expect.stringContaining('hello world'));
+    expect(writeMock).toHaveBeenCalledWith(expect.stringContaining('hello world'));
   });
 
   it('clears terminal on Clear button click', async () => {
     render(<TerminalComponent {...defaultProps} />);
 
     await waitFor(() => {
-        expect(Terminal).toHaveBeenCalled();
+      expect(Terminal).toHaveBeenCalled();
     });
 
     const terminalInstance = (Terminal as any).mock.results[0].value;
@@ -119,9 +119,8 @@ describe('TerminalComponent', () => {
       'telnet_send',
       expect.objectContaining({
         sessionId: 'test-session',
-        data: expect.stringMatching(/^\x01\?@FB\x03/),
+        data: expect.stringMatching(/^\x01\?@FB7XY\x03/),
       })
     );
-  });
   });
 });

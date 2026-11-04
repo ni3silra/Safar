@@ -49,6 +49,7 @@ const OPT_BINARY: u8 = 0;
 const OPT_ECHO: u8 = 1;
 const OPT_SUPPRESS_GO_AHEAD: u8 = 3;
 const OPT_TERMINAL_TYPE: u8 = 24;
+#[allow(dead_code)]
 const OPT_EOR: u8 = 25; // Telnet End of Record (used by TELSERV for TN6530 block frames)
 #[allow(dead_code)] // Used by the NAWS code in resize(), currently disabled for HP NonStop
 const OPT_NAWS: u8 = 31; // Negotiate About Window Size

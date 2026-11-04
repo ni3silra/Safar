@@ -353,14 +353,25 @@ describe('translate6530ToAnsi Protocol Parser', () => {
     screen.enterBlockMode();
     screen.setCursor(3, 7);
 
-    // Status response in Block Mode: SOH ? @ F B ETX <LRC>
+    // Status response in Block Mode: SOH ? @ F B <max-page> X Y ETX <LRC>
     const statusBlock = screen.generateStatusResponse(true);
-    expect(statusBlock.startsWith('\x01?@FB\x03')).toBe(true);
-    expect(statusBlock.length).toBe(7);
+    expect(statusBlock.startsWith('\x01?@FB7XY\x03')).toBe(true);
+    expect(statusBlock.length).toBe(10);
+
+    // Setting max pages via ESC p 4 updates <max-page> in Block Mode status response
+    screen.setMaxPages(4);
+    expect(screen.generateStatusResponse(true).startsWith('\x01?@FB4XY\x03')).toBe(true);
 
     // Status response in Conversational Mode: SOH ? @ F B CR
     const statusConv = screen.generateStatusResponse(false);
     expect(statusConv).toBe('\x01?@FB\r');
+
+    // Cursor address response includes page byte ('!' = Page 1 in Conv Mode, selectedPage + 0x20 in Block Mode)
+    expect(screen.generateCursorAddressResponse(false, 3, 7)).toBe('\x01_!#\'\r');
+    expect(screen.generateCursorAddressResponse(true).startsWith('\x01_!#\'')).toBe(true);
+
+    // Terminal Configuration response uses 3-byte space-padded code/value pairs
+    expect(screen.generateConfigResponse(false)).toBe('\x01!A 1B72C 0D 0G 0H15T 0U72h00\r');
 
     // Block Mode Function Key / Return notification: SOH 'v' <page> <row> <col> ETX <LRC>
     const enterResp = screen.generateWriteReadResponse('\r');
