@@ -42,12 +42,14 @@ const WONT: u8 = 252;
 const WILL: u8 = 251;
 const SB: u8 = 250;   // Subnegotiation Begin
 const SE: u8 = 240;   // Subnegotiation End
+const EOR: u8 = 239;  // End of Record (RFC 885)
 
 // Telnet Options
 const OPT_BINARY: u8 = 0;
 const OPT_ECHO: u8 = 1;
 const OPT_SUPPRESS_GO_AHEAD: u8 = 3;
 const OPT_TERMINAL_TYPE: u8 = 24;
+const OPT_EOR: u8 = 25; // Telnet End of Record (used by TELSERV for TN6530 block frames)
 #[allow(dead_code)] // Used by the NAWS code in resize(), currently disabled for HP NonStop
 const OPT_NAWS: u8 = 31; // Negotiate About Window Size
 
@@ -186,7 +188,6 @@ impl TelnetManager {
         }
 
         // Connect with 10s timeout
-        
         let default_ssl = cfg!(target_os = "macos");
         let use_ssl = config.ssl_encryption.unwrap_or(default_ssl);
         
@@ -265,7 +266,16 @@ impl TelnetManager {
         let stream_writer = stream_arc.clone();
         let app_handle_clone = app_handle.clone();
         let config_clone = config.clone();
-        let term_type_to_send = config.term_type.clone().unwrap_or_else(|| "TN6530-8".to_string());
+        let raw_term = config.term_type.as_deref().unwrap_or("TN6530-8");
+        let term_type_to_send = if raw_term == "6530"
+            || raw_term.eq_ignore_ascii_case("t6530")
+            || raw_term.to_lowercase().contains("6530")
+            || raw_term.eq_ignore_ascii_case("tandem")
+        {
+            "TN6530-8".to_string()
+        } else {
+            raw_term.to_string()
+        };
 
         // Spawn background reader & Telnet negotiation thread
         thread::spawn(move || {
@@ -462,6 +472,11 @@ impl TelnetManager {
                                         i += 2;
                                         continue;
                                     }
+                                    EOR => {
+                                        // End of Record marker (RFC 885) — consume cleanly
+                                        i += 2;
+                                        continue;
+                                    }
                                     _ => {
                                         i += 2;
                                         continue;
@@ -487,14 +502,15 @@ impl TelnetManager {
                                             || lower.contains("enter choice")
                                             || lower.contains("service:")
                                         {
-                                            let choice = if config_clone.service_name
+                                            let svc = config_clone
+                                                .service_name
                                                 .as_deref()
                                                 .unwrap_or("TACL")
-                                                .eq_ignore_ascii_case("TACL")
-                                            {
-                                                "TACL\r"
+                                                .trim();
+                                            let choice = if svc.is_empty() {
+                                                "\r\n".to_string()
                                             } else {
-                                                "\r"
+                                                format!("{}\r\n", svc)
                                             };
 
                                             let _ = send_bytes(&mut *stream_writer.lock().unwrap(), choice.as_bytes());
@@ -502,7 +518,27 @@ impl TelnetManager {
 
                                             prompt_buffer.clear();
                                             state = SessionState::WaitingForShellPrompt;
-                                            continue;
+                                        } else if lower.contains("terminal type?")
+                                            || lower.contains("terminal type:")
+                                            || lower.contains("terminal type [")
+                                            || lower.contains("enter terminal type")
+                                            || lower.contains("term = ")
+                                        {
+                                            let term_cmd = format!("{}\r\n", term_type_to_send);
+                                            let _ = send_bytes(&mut *stream_writer.lock().unwrap(), term_cmd.as_bytes());
+                                            log_hex(&app_handle_clone, &session_id_clone, "SEND", term_cmd.as_bytes(), &format!("Conversational Terminal-Type {}", term_type_to_send));
+
+                                            prompt_buffer.clear();
+                                            state = SessionState::LiveSession;
+                                        } else if lower.contains('>')
+                                            || lower.contains("tacl")
+                                            || lower.contains("logon")
+                                            || lower.contains("login:")
+                                            || data_str.contains('\x1b')
+                                            || data_str.contains('\x01')
+                                        {
+                                            prompt_buffer.clear();
+                                            state = SessionState::LiveSession;
                                         }
                                     }
                                     SessionState::WaitingForShellPrompt => {
@@ -518,20 +554,18 @@ impl TelnetManager {
 
                                             prompt_buffer.clear();
                                             state = SessionState::LiveSession;
-                                            continue;
-                                        } else if lower.contains('>') || lower.contains("tacl") || lower.contains("logon") {
-                                            // Shell prompt arrived directly without conversational prompt
+                                        } else if lower.contains('>')
+                                            || lower.contains("tacl")
+                                            || lower.contains("logon")
+                                            || lower.contains("login:")
+                                            || data_str.contains('\x1b')
+                                            || data_str.contains('\x01')
+                                        {
                                             prompt_buffer.clear();
                                             state = SessionState::LiveSession;
-                                            // Do NOT continue; allow this packet to be emitted to xterm below
                                         }
                                     }
                                     SessionState::LiveSession => {}
-                                }
-
-                                if state != SessionState::LiveSession {
-                                    // Skip emitting bootstrap prompts to the terminal display
-                                    continue;
                                 }
                             }
 
@@ -637,8 +671,26 @@ impl TelnetManager {
 /// NonStop hosts are 8-bit (ISO-8859-1), so each char U+0000..U+00FF is sent as one byte
 /// (previously non-ASCII like 'ä' went out as 2 UTF-8 bytes). Chars outside Latin-1 become '?'.
 /// A literal 0xFF byte is doubled (IAC IAC) as required by RFC 854.
+/// 6530 protocol frames (starting with SOH 0x01, STX 0x02, ACK 0x06, DC2 0x12, or ESC 0x1B)
+/// are transmitted byte-for-byte without CR->CRLF expansion so LRC checksums and status replies
+/// are never corrupted on the wire.
 pub fn encode_terminal_input(data: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len() * 2);
+    let first_byte = data.chars().next().map(|c| c as u32).unwrap_or(0);
+    let is_6530_protocol_frame = matches!(first_byte, 0x01 | 0x02 | 0x06 | 0x12 | 0x1B);
+
+    if is_6530_protocol_frame {
+        for ch in data.chars() {
+            let code = ch as u32;
+            let b = if code <= 0xFF { code as u8 } else { b'?' };
+            out.push(b);
+            if b == IAC {
+                out.push(IAC);
+            }
+        }
+        return out;
+    }
+
     let mut chars = data.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '\r' {

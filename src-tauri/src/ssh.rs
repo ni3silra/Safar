@@ -367,7 +367,8 @@ impl SshManager {
 
         let mut session = session_arc.write();
         if let Some(ref mut channel) = session.channel {
-            let bytes = data.as_bytes();
+            let raw_bytes: Vec<u8> = if data.is_ascii() { data.as_bytes().to_vec() } else { data.chars().map(|ch| { let c = ch as u32; if c <= 0xFF { c as u8 } else { b'?' } }).collect() };
+            let bytes = &raw_bytes;
             let mut written = 0;
             let start = std::time::Instant::now();
 

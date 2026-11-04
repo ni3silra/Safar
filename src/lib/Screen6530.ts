@@ -1,20 +1,13 @@
-// ─── HP 6530 Screen Buffer Engine ───
-// Implements the 80×24 screen buffer with per-cell field tracking required
-// for full VT6530 block-mode protocol compliance.
-//
-// This engine tracks:
-// - Character content for each screen cell
-// - Protected vs unprotected field boundaries
-// - Field map (ordered list of unprotected fields)
-// - Cursor position
-// - Protect submode state
-//
-// Used by Terminal.tsx to support Pathway screens, DBU, and other
-// HP NonStop form-based applications that use WRITEREAD protocol.
+// ─── HP 6530 Screen Buffer & Multi-Page Engine ───
+// Implements the 80×24 multi-page screen buffer, page registers (Select Page / Display Page),
+// separate buffer vs. cursor addressing, per-cell field tracking, and LRC-framed block-mode
+// responses required for full Tandem / HP NonStop 6530 (TN6530) protocol compliance
+// (TEDIT, EDIT, Pathway, DBU, etc.).
 
 // ─── Constants ───
 export const SCREEN_ROWS = 24;
 export const SCREEN_COLS = 80;
+export const MAX_PAGES = 8; // Page 0 (blank/hidden) + Pages 1..7
 
 // Field separator used between fields in WRITEREAD response
 const FIELD_SEPARATOR = '\x1c'; // FS (0x1C) — standard 6530 field separator
@@ -25,7 +18,7 @@ export interface ScreenCell {
   protected: boolean;  // true = protected (user can't type here)
   fieldId: number;     // -1 = no field, 0+ = unprotected field index
   attribute: number;   // 6530 display attribute bitmask
-  modified: boolean;   // true if user has modified this cell
+  modified: boolean;   // true if user has modified this cell (MDT)
 }
 
 export interface Field {
@@ -35,125 +28,348 @@ export interface Field {
   endRow: number;
   endCol: number;
   length: number;
+  mdt: boolean;        // Modified Data Tag
 }
 
-// ─── Screen6530 Class ───
-export class Screen6530 {
+export interface PageState {
   buffer: ScreenCell[][];
   fields: Field[];
   cursorRow: number;
   cursorCol: number;
+  bufferRow: number;
+  bufferCol: number;
+  currentProtected: boolean;
+  currentFieldId: number;
+  currentAttribute: number;
+  nextFieldId: number;
+}
+
+// ─── Screen6530 Class ───
+export class Screen6530 {
+  pages: PageState[];
+  selectedPage: number;      // I/O write/read page register (set by ESC : <page>), default 1
+  displayPage: number;       // Displayed page register (set by ESC ; <page>), default 1
+  blockMode: boolean;        // true after SOH B ETX LRC or ESC W
   protectSubmode: boolean;   // true after ESC W
-  currentProtected: boolean; // current writing mode (protected or unprotected)
-  currentFieldId: number;    // current field being defined (-1 if protected)
-  private _nextFieldId: number;
+  keyboardLocked: boolean;   // true after ESC c or block submission; false after ESC b
+  statusLine: string;        // 25th row message/status line
 
   constructor() {
-    this.buffer = [];
-    this.fields = [];
-    this.cursorRow = 0;
-    this.cursorCol = 0;
+    this.pages = [];
+    this.selectedPage = 1;
+    this.displayPage = 1;
+    this.blockMode = false;
     this.protectSubmode = false;
-    this.currentProtected = false;
-    this.currentFieldId = -1;
-    this._nextFieldId = 0;
-    this._initBuffer();
+    this.keyboardLocked = false;
+    this.statusLine = '';
+    this._initAllPages();
   }
 
-  // ─── Buffer Initialization ───
-  private _initBuffer(): void {
-    this.buffer = [];
+  // ─── Page Helpers ───
+  private _createEmptyPage(defaultProtected = false): PageState {
+    const buffer: ScreenCell[][] = [];
     for (let r = 0; r < SCREEN_ROWS; r++) {
       const row: ScreenCell[] = [];
       for (let c = 0; c < SCREEN_COLS; c++) {
         row.push({
           char: ' ',
-          protected: false,
+          protected: defaultProtected,
           fieldId: -1,
           attribute: 0,
           modified: false,
         });
       }
-      this.buffer.push(row);
+      buffer.push(row);
+    }
+    return {
+      buffer,
+      fields: [],
+      cursorRow: 0,
+      cursorCol: 0,
+      bufferRow: 0,
+      bufferCol: 0,
+      currentProtected: defaultProtected,
+      currentFieldId: -1,
+      currentAttribute: 0,
+      nextFieldId: 0,
+    };
+  }
+
+  private _initAllPages(defaultProtected = false): void {
+    this.pages = [];
+    for (let p = 0; p < MAX_PAGES; p++) {
+      this.pages.push(this._createEmptyPage(defaultProtected));
     }
   }
 
+  private get _activeWritePage(): PageState {
+    const idx = Math.max(0, Math.min(MAX_PAGES - 1, this.selectedPage));
+    return this.pages[idx];
+  }
+
+  private get _activeDisplayPage(): PageState {
+    const idx = Math.max(0, Math.min(MAX_PAGES - 1, this.displayPage));
+    return this.pages[idx];
+  }
+
+  // ─── Backward-Compatible Getters/Setters (delegate to selected page) ───
+  get buffer(): ScreenCell[][] {
+    return this._activeWritePage.buffer;
+  }
+  set buffer(val: ScreenCell[][]) {
+    this._activeWritePage.buffer = val;
+  }
+
+  get fields(): Field[] {
+    return this._activeWritePage.fields;
+  }
+  set fields(val: Field[]) {
+    this._activeWritePage.fields = val;
+  }
+
+  get cursorRow(): number {
+    return this._activeWritePage.cursorRow;
+  }
+  set cursorRow(val: number) {
+    this._activeWritePage.cursorRow = val;
+  }
+
+  get cursorCol(): number {
+    return this._activeWritePage.cursorCol;
+  }
+  set cursorCol(val: number) {
+    this._activeWritePage.cursorCol = val;
+  }
+
+  get bufferRow(): number {
+    return this._activeWritePage.bufferRow;
+  }
+  set bufferRow(val: number) {
+    this._activeWritePage.bufferRow = val;
+  }
+
+  get bufferCol(): number {
+    return this._activeWritePage.bufferCol;
+  }
+  set bufferCol(val: number) {
+    this._activeWritePage.bufferCol = val;
+  }
+
+  get currentProtected(): boolean {
+    return this._activeWritePage.currentProtected;
+  }
+  set currentProtected(val: boolean) {
+    this._activeWritePage.currentProtected = val;
+  }
+
+  get currentFieldId(): number {
+    return this._activeWritePage.currentFieldId;
+  }
+  set currentFieldId(val: number) {
+    this._activeWritePage.currentFieldId = val;
+  }
+
+  // ─── LRC Checksum Calculation (6530 Spec) ───
+  // XOR of all bytes after SOH/STX through and including ETX (0x03).
+  static computeLRC(payloadWithEtx: string): string {
+    let lrc = 0;
+    for (let i = 0; i < payloadWithEtx.length; i++) {
+      lrc ^= payloadWithEtx.charCodeAt(i) & 0xff;
+    }
+    return String.fromCharCode(lrc);
+  }
+
+  static frameBlockMessage(startChar: string, bodyWithoutEtx: string): string {
+    const withEtx = bodyWithoutEtx + '\x03';
+    return startChar + withEtx + Screen6530.computeLRC(withEtx);
+  }
+
   // ─── Reset ───
-  // Full reset — clear everything and return to initial state
   reset(): void {
-    this._initBuffer();
-    this.fields = [];
-    this.cursorRow = 0;
-    this.cursorCol = 0;
+    this._initAllPages(false);
+    this.selectedPage = 1;
+    this.displayPage = 1;
     this.protectSubmode = false;
-    this.currentProtected = false;
-    this.currentFieldId = -1;
-    this._nextFieldId = 0;
+    this.keyboardLocked = false;
+    this.statusLine = '';
+  }
+
+  // ─── Clear Current Selected Page (ESC I / ESC K) ───
+  clearSelectedPage(): void {
+    const defaultProt = this.protectSubmode;
+    this.pages[this.selectedPage] = this._createEmptyPage(defaultProt);
+  }
+
+  // ─── Page Register Operations (ESC : and ESC ;) ───
+  selectWritePage(page: number): void {
+    if (page >= 0 && page < MAX_PAGES) {
+      this.selectedPage = page;
+    }
+  }
+
+  selectDisplayPage(page: number): void {
+    if (page >= 0 && page < MAX_PAGES) {
+      this.displayPage = page;
+      if (page === 0) {
+        // Displaying page 0 locks keyboard and blanks display per 6530 spec
+        this.keyboardLocked = true;
+      }
+    }
+  }
+
+  // ─── Enter Block Mode (SOH B ETX LRC) ───
+  // Per 6530 Programmer's Guide:
+  // Locks keyboard, sets nonprotect submode, selects & displays Page 1,
+  // retains Page 1 data from conversational mode, clears Pages 2+, resets cursor & buffer to (0,0).
+  enterBlockMode(): void {
+    this.blockMode = true;
+    this.protectSubmode = false;
+    this.keyboardLocked = true;
+    this.selectedPage = 1;
+    this.displayPage = 1;
+
+    const page1 = this.pages[1];
+    page1.cursorRow = 0;
+    page1.cursorCol = 0;
+    page1.bufferRow = 0;
+    page1.bufferCol = 0;
+    page1.currentProtected = false;
+    page1.currentFieldId = -1;
+    page1.fields = [];
+    page1.nextFieldId = 0;
+    for (let r = 0; r < SCREEN_ROWS; r++) {
+      for (let c = 0; c < SCREEN_COLS; c++) {
+        page1.buffer[r][c].protected = false;
+        page1.buffer[r][c].fieldId = -1;
+        page1.buffer[r][c].modified = false;
+      }
+    }
+
+    for (let p = 2; p < MAX_PAGES; p++) {
+      this.pages[p] = this._createEmptyPage(false);
+    }
+  }
+
+  // ─── Enter Conversational Mode (SOH C ETX LRC) ───
+  enterConversationalMode(): void {
+    this.blockMode = false;
+    this.protectSubmode = false;
+    this.keyboardLocked = false;
+    this.selectedPage = 1;
+    this.displayPage = 1;
+    this._initAllPages(false);
   }
 
   // ─── Enter Protect Submode (ESC W) ───
-  // Per 6530 spec: clears screen, homes cursor, enters protect mode.
-  // After this, text written by the server is PROTECTED by default.
-  // ESC ( switches to unprotected (defines a field).
-  // ESC ) switches back to protected.
+  // Per 6530 spec: clears all pages to blanks (default protected), selects & displays Page 1,
+  // sets buffer & cursor addresses to (0,0), locks keyboard.
   enterProtectSubmode(): void {
-    this.reset();
+    this.blockMode = true;
     this.protectSubmode = true;
-    this.currentProtected = true; // Default to protected after ESC W
-    this.currentFieldId = -1;
+    this.keyboardLocked = true;
+    this.selectedPage = 1;
+    this.displayPage = 1;
+    this._initAllPages(true);
   }
 
   // ─── Exit Protect Submode (ESC X) ───
+  // Exits protect submode back to nonprotect submode (still in Block Mode!), clears pages.
   exitProtectSubmode(): void {
     this.protectSubmode = false;
-    this.currentProtected = false;
-    this.currentFieldId = -1;
+    this._initAllPages(false);
+  }
+
+  // ─── Start Field in Protect Submode (GS 0x1D or ESC [) ───
+  // Per 6530 Programmer's Guide Table 3-6:
+  // dataAttr bit 0 (0x01): 1 = Protected, 0 = Unprotected
+  // dataAttr bit 4 (0x10): 1 = MDT pre-set
+  startField(videoAttr: number, dataAttr: number, _extAttr = 0): void {
+    const page = this._activeWritePage;
+    this._closeCurrentField();
+
+    const isProtected = (dataAttr & 0x01) !== 0;
+    const mdtSet = (dataAttr & 0x10) !== 0;
+
+    // The field attribute position itself occupies 1 protected cell on screen
+    page.currentAttribute = videoAttr & 0x1f;
+    if (page.bufferRow < SCREEN_ROWS && page.bufferCol < SCREEN_COLS) {
+      const attrCell = page.buffer[page.bufferRow][page.bufferCol];
+      attrCell.char = ' ';
+      attrCell.protected = true;
+      attrCell.fieldId = -1;
+      attrCell.attribute = videoAttr & 0x1f;
+      attrCell.modified = false;
+    }
+    this._advanceBufferAddress();
+
+    if (isProtected) {
+      page.currentProtected = true;
+      page.currentFieldId = -1;
+    } else {
+      page.currentProtected = false;
+      const fieldId = page.nextFieldId++;
+      page.currentFieldId = fieldId;
+      page.fields.push({
+        id: fieldId,
+        startRow: page.bufferRow,
+        startCol: page.bufferCol,
+        endRow: page.bufferRow,
+        endCol: page.bufferCol,
+        length: 1,
+        mdt: mdtSet,
+      });
+      if (page.bufferRow < SCREEN_ROWS && page.bufferCol < SCREEN_COLS) {
+        const firstCell = page.buffer[page.bufferRow][page.bufferCol];
+        firstCell.fieldId = fieldId;
+        firstCell.protected = false;
+        firstCell.modified = mdtSet;
+      }
+    }
   }
 
   // ─── Start Protected Field (ESC )) ───
-  // Mark subsequent server-written text as protected
   startProtected(): void {
-    // Close any open unprotected field
     this._closeCurrentField();
     this.currentProtected = true;
     this.currentFieldId = -1;
   }
 
   // ─── Start Unprotected Field (ESC () ───
-  // Mark subsequent area as an unprotected field the user can type in
   startUnprotected(): void {
-    this.currentProtected = false;
-    // Start a new field at the current cursor position
-    const fieldId = this._nextFieldId++;
-    this.currentFieldId = fieldId;
-    this.fields.push({
+    const page = this._activeWritePage;
+    page.currentProtected = false;
+    const fieldId = page.nextFieldId++;
+    page.currentFieldId = fieldId;
+    page.fields.push({
       id: fieldId,
-      startRow: this.cursorRow,
-      startCol: this.cursorCol,
-      endRow: this.cursorRow,
-      endCol: this.cursorCol,
+      startRow: page.bufferRow,
+      startCol: page.bufferCol,
+      endRow: page.bufferRow,
+      endCol: page.bufferCol,
       length: 1,
+      mdt: false,
     });
-    // Mark the starting cell as belonging to this field
-    if (this.cursorRow < SCREEN_ROWS && this.cursorCol < SCREEN_COLS) {
-      const cell = this.buffer[this.cursorRow][this.cursorCol];
+    if (page.bufferRow < SCREEN_ROWS && page.bufferCol < SCREEN_COLS) {
+      const cell = page.buffer[page.bufferRow][page.bufferCol];
       cell.fieldId = fieldId;
       cell.protected = false;
     }
   }
 
-  // ─── Close Current Unprotected Field ───
   private _closeCurrentField(): void {
-    if (this.currentFieldId >= 0) {
-      const field = this.fields.find(f => f.id === this.currentFieldId);
+    const page = this._activeWritePage;
+    if (page.currentFieldId >= 0) {
+      const field = page.fields.find(f => f.id === page.currentFieldId);
       if (field) {
-        // If cursor moved past start position, end position is one BEFORE current cursor
-        if (this.cursorRow > field.startRow || (this.cursorRow === field.startRow && this.cursorCol > field.startCol)) {
-          if (this.cursorCol > 0) {
-            field.endRow = this.cursorRow;
-            field.endCol = this.cursorCol - 1;
-          } else if (this.cursorRow > 0) {
-            field.endRow = this.cursorRow - 1;
+        if (
+          page.bufferRow > field.startRow ||
+          (page.bufferRow === field.startRow && page.bufferCol > field.startCol)
+        ) {
+          if (page.bufferCol > 0) {
+            field.endRow = page.bufferRow;
+            field.endCol = page.bufferCol - 1;
+          } else if (page.bufferRow > 0) {
+            field.endRow = page.bufferRow - 1;
             field.endCol = SCREEN_COLS - 1;
           }
         }
@@ -162,129 +378,166 @@ export class Screen6530 {
     }
   }
 
-  // ─── Calculate Field Length ───
   private _calculateFieldLength(field: Field): number {
     if (field.startRow === field.endRow) {
       return field.endCol - field.startCol + 1;
     }
-    // Multi-row field
-    let len = SCREEN_COLS - field.startCol; // first partial row
-    len += (field.endRow - field.startRow - 1) * SCREEN_COLS; // full middle rows
-    len += field.endCol + 1; // last partial row
+    let len = SCREEN_COLS - field.startCol;
+    len += (field.endRow - field.startRow - 1) * SCREEN_COLS;
+    len += field.endCol + 1;
     return Math.max(0, len);
   }
 
-  // ─── Set Cursor Position ───
-  // Supports both absolute (row >= 0, col >= 0) and relative movement:
-  //   row=-1 = up, row=-2 = down, col=-1 = right, col=-2 = left
-  //   -99 = no change on that axis
-  setCursor(row: number, col: number): void {
-    if (row === -99 && col === -99) return; // no-op
-
-    // Handle relative movement
-    if (row < 0 || col < 0) {
-      if (row === -1) this.cursorRow = Math.max(0, this.cursorRow - 1);           // up
-      else if (row === -2) this.cursorRow = Math.min(SCREEN_ROWS - 1, this.cursorRow + 1); // down
-      
-      if (col === -1) this.cursorCol = Math.min(SCREEN_COLS - 1, this.cursorCol + 1);      // right
-      else if (col === -2) this.cursorCol = Math.max(0, this.cursorCol - 1);     // left
-      return;
-    }
-
-    // Absolute positioning
-    this.cursorRow = Math.max(0, Math.min(SCREEN_ROWS - 1, row));
-    this.cursorCol = Math.max(0, Math.min(SCREEN_COLS - 1, col));
+  // ─── Set Buffer Address (DC1 <row> <col> or ESC - C) ───
+  setBufferAddress(row: number, col: number): void {
+    const page = this._activeWritePage;
+    this._closeCurrentField();
+    page.bufferRow = Math.max(0, Math.min(SCREEN_ROWS - 1, row));
+    page.bufferCol = Math.max(0, Math.min(SCREEN_COLS - 1, col));
   }
 
-  // ─── Write Character (Server Writing to Screen) ───
-  // Used when the server sends text to populate the form.
-  // Marks cells as protected or unprotected based on current mode.
+  // ─── Set Cursor Position (DC3 <row> <col> or ESC = <row> <col>) ───
+  setCursor(row: number, col: number): void {
+    if (row === -99 && col === -99) return;
+    const page = this._activeWritePage;
+
+    if (row < 0 || col < 0) {
+      if (row === -1) page.cursorRow = Math.max(0, page.cursorRow - 1);
+      else if (row === -2) page.cursorRow = Math.min(SCREEN_ROWS - 1, page.cursorRow + 1);
+
+      if (col === -1) page.cursorCol = Math.min(SCREEN_COLS - 1, page.cursorCol + 1);
+      else if (col === -2) page.cursorCol = Math.max(0, page.cursorCol - 1);
+
+      page.bufferRow = page.cursorRow;
+      page.bufferCol = page.cursorCol;
+      return;
+    }
+
+    page.cursorRow = Math.max(0, Math.min(SCREEN_ROWS - 1, row));
+    page.cursorCol = Math.max(0, Math.min(SCREEN_COLS - 1, col));
+    page.bufferRow = page.cursorRow;
+    page.bufferCol = page.cursorCol;
+  }
+
+  // ─── Set Video Attribute (ESC 6 / ESC 7) ───
+  setVideoAttribute(attr: number): void {
+    this._activeWritePage.currentAttribute = attr & 0x1f;
+  }
+
+  // ─── Set Cursor Address Only (DC3 in Block Mode — does not move Buffer Address) ───
+  setCursorOnly(row: number, col: number): void {
+    const page = this._activeWritePage;
+    page.cursorRow = Math.max(0, Math.min(SCREEN_ROWS - 1, row));
+    page.cursorCol = Math.max(0, Math.min(SCREEN_COLS - 1, col));
+  }
+
+  // ─── Write Character (Server Writing to Selected Page) ───
   writeServerChar(ch: string): void {
-    if (this.cursorRow >= SCREEN_ROWS) return;
+    const page = this._activeWritePage;
+    if (page.bufferRow >= SCREEN_ROWS) return;
 
-    // Handle CR (0x0D) — return cursor to column 0
     if (ch === '\r') {
-      this.cursorCol = 0;
+      page.bufferCol = 0;
+      page.cursorCol = 0;
       return;
     }
-    // Handle LF (0x0A) — move cursor down one row
     if (ch === '\n') {
-      this.cursorRow = Math.min(SCREEN_ROWS - 1, this.cursorRow + 1);
+      page.bufferRow = Math.min(SCREEN_ROWS - 1, page.bufferRow + 1);
+      page.cursorRow = page.bufferRow;
       return;
     }
-    // Handle BS (0x08) — move cursor left
     if (ch === '\b') {
-      if (this.cursorCol > 0) this.cursorCol--;
+      if (page.bufferCol > 0) page.bufferCol--;
+      page.cursorCol = page.bufferCol;
       return;
     }
-    // Handle TAB (0x09) — advance to next tab stop (every 8 columns)
     if (ch === '\t') {
-      this.cursorCol = Math.min(SCREEN_COLS - 1, (Math.floor(this.cursorCol / 8) + 1) * 8);
+      page.bufferCol = Math.min(SCREEN_COLS - 1, (Math.floor(page.bufferCol / 8) + 1) * 8);
+      page.cursorCol = page.bufferCol;
+      return;
+    }
+    if (ch.charCodeAt(0) < 0x20) {
       return;
     }
 
-    const cell = this.buffer[this.cursorRow][this.cursorCol];
+    const cell = page.buffer[page.bufferRow][page.bufferCol];
     cell.char = ch;
-    cell.protected = this.currentProtected;
-    cell.fieldId = this.currentFieldId;
+    cell.protected = page.currentProtected;
+    cell.fieldId = page.currentFieldId;
+    cell.attribute = page.currentAttribute;
     cell.modified = false;
 
-    // Update field boundaries if in an unprotected field
-    if (this.currentFieldId >= 0) {
-      const field = this.fields.find(f => f.id === this.currentFieldId);
+    if (page.currentFieldId >= 0) {
+      const field = page.fields.find(f => f.id === page.currentFieldId);
       if (field) {
-        field.endRow = this.cursorRow;
-        field.endCol = this.cursorCol;
+        field.endRow = page.bufferRow;
+        field.endCol = page.bufferCol;
         field.length = this._calculateFieldLength(field);
       }
     }
 
-    // Advance cursor
-    this._advanceCursor();
+    this._advanceBufferAddress();
   }
 
-  // ─── Write Character (User Input) ───
-  // Used when the user types in an unprotected field.
-  // Returns false if the cursor is in a protected area (reject the keystroke).
-  writeUserChar(ch: string): boolean {
-    if (this.cursorRow >= SCREEN_ROWS) return false;
-
-    const cell = this.buffer[this.cursorRow][this.cursorCol];
-
-    // Reject if in protected area
-    if (cell.protected) return false;
-
-    // Check if we're in a valid field
-    if (cell.fieldId < 0 && this.protectSubmode) {
-      if (this.currentFieldId >= 0) {
-        cell.fieldId = this.currentFieldId;
-        cell.protected = false;
-        const field = this.fields.find(f => f.id === this.currentFieldId);
-        if (field) {
-          field.endRow = this.cursorRow;
-          field.endCol = this.cursorCol;
-          field.length = this._calculateFieldLength(field);
-        }
-      } else {
-        return false;
+  private _advanceBufferAddress(): void {
+    const page = this._activeWritePage;
+    page.bufferCol++;
+    if (page.bufferCol >= SCREEN_COLS) {
+      page.bufferCol = 0;
+      page.bufferRow++;
+      if (page.bufferRow >= SCREEN_ROWS) {
+        page.bufferRow = SCREEN_ROWS - 1;
       }
+    }
+    if (!this.blockMode) {
+      page.cursorRow = page.bufferRow;
+      page.cursorCol = page.bufferCol;
+    }
+  }
+
+  // ─── Write Character (User Input on Displayed Page) ───
+  writeUserChar(ch: string): boolean {
+    const page = this._activeDisplayPage;
+    if (page.cursorRow >= SCREEN_ROWS) return false;
+
+    const cell = page.buffer[page.cursorRow][page.cursorCol];
+
+    if (this.protectSubmode) {
+      if (cell.protected) return false;
+
+      if (cell.fieldId < 0) {
+        if (page.currentFieldId >= 0) {
+          cell.fieldId = page.currentFieldId;
+          cell.protected = false;
+          const field = page.fields.find(f => f.id === page.currentFieldId);
+          if (field) {
+            field.endRow = page.cursorRow;
+            field.endCol = page.cursorCol;
+            field.length = this._calculateFieldLength(field);
+          }
+        } else {
+          return false;
+        }
+      }
+
+      const field = page.fields.find(f => f.id === cell.fieldId);
+      if (field) field.mdt = true;
     }
 
     cell.char = ch;
     cell.modified = true;
 
-    // Advance cursor, but stop at field boundary
     const fieldId = cell.fieldId;
-    this._advanceCursor();
+    this._advanceCursorOnPage(page);
 
-    if (this.currentFieldId === fieldId && this.cursorRow < SCREEN_ROWS && this.cursorCol < SCREEN_COLS) {
-      const nextCell = this.buffer[this.cursorRow][this.cursorCol];
+    if (this.protectSubmode && page.currentFieldId === fieldId && page.cursorRow < SCREEN_ROWS && page.cursorCol < SCREEN_COLS) {
+      const nextCell = page.buffer[page.cursorRow][page.cursorCol];
       if (nextCell.fieldId < 0 && !nextCell.protected) {
         nextCell.fieldId = fieldId;
-        const field = this.fields.find(f => f.id === fieldId);
+        const field = page.fields.find(f => f.id === fieldId);
         if (field) {
-          field.endRow = this.cursorRow;
-          field.endCol = this.cursorCol;
+          field.endRow = page.cursorRow;
+          field.endCol = page.cursorCol;
           field.length = this._calculateFieldLength(field);
         }
       }
@@ -294,24 +547,21 @@ export class Screen6530 {
   }
 
   // ─── Delete Character at Cursor (Backspace) ───
-  // Returns false if not allowed (protected area)
   deleteCharAtCursor(): boolean {
-    // Move cursor back one position
-    if (this.cursorCol > 0) {
-      this.cursorCol--;
-    } else if (this.cursorRow > 0) {
-      this.cursorRow--;
-      this.cursorCol = SCREEN_COLS - 1;
+    const page = this._activeDisplayPage;
+    if (page.cursorCol > 0) {
+      page.cursorCol--;
+    } else if (page.cursorRow > 0) {
+      page.cursorRow--;
+      page.cursorCol = SCREEN_COLS - 1;
     } else {
-      return false; // At home position
+      return false;
     }
 
-    const cell = this.buffer[this.cursorRow][this.cursorCol];
+    const cell = page.buffer[page.cursorRow][page.cursorCol];
 
-    // Don't delete from protected area
-    if (cell.protected || (this.protectSubmode && cell.fieldId < 0)) {
-      // Restore cursor position
-      this._advanceCursor();
+    if (this.protectSubmode && (cell.protected || cell.fieldId < 0)) {
+      this._advanceCursorOnPage(page);
       return false;
     }
 
@@ -320,84 +570,112 @@ export class Screen6530 {
     return true;
   }
 
-  // ─── Advance Cursor ───
-  private _advanceCursor(): void {
-    this.cursorCol++;
-    if (this.cursorCol >= SCREEN_COLS) {
-      this.cursorCol = 0;
-      this.cursorRow++;
-      if (this.cursorRow >= SCREEN_ROWS) {
-        this.cursorRow = SCREEN_ROWS - 1; // Stay at last row
+  private _advanceCursorOnPage(page: PageState): void {
+    page.cursorCol++;
+    if (page.cursorCol >= SCREEN_COLS) {
+      page.cursorCol = 0;
+      page.cursorRow++;
+      if (page.cursorRow >= SCREEN_ROWS) {
+        page.cursorRow = SCREEN_ROWS - 1;
       }
     }
   }
 
-  // ─── Tab to Next Unprotected Field ───
-  // Returns the new cursor position, or null if no fields available
-  tabToNextField(): { row: number; col: number } | null {
-    if (this.fields.length === 0) return null;
+  // ─── Erase Operations on Selected Page ───
+  eraseToEndOfPage(): void {
+    const page = this._activeWritePage;
+    for (let r = page.bufferRow; r < SCREEN_ROWS; r++) {
+      const startC = r === page.bufferRow ? page.bufferCol : 0;
+      for (let c = startC; c < SCREEN_COLS; c++) {
+        if (!this.protectSubmode || !page.buffer[r][c].protected) {
+          page.buffer[r][c].char = ' ';
+          page.buffer[r][c].modified = false;
+        }
+      }
+    }
+  }
 
-    // Find the current field the cursor is in (or nearest one after)
+  eraseToEndOfLine(): void {
+    const page = this._activeWritePage;
+    if (page.bufferRow >= SCREEN_ROWS) return;
+    for (let c = page.bufferCol; c < SCREEN_COLS; c++) {
+      if (!this.protectSubmode || !page.buffer[page.bufferRow][c].protected) {
+        page.buffer[page.bufferRow][c].char = ' ';
+        page.buffer[page.bufferRow][c].modified = false;
+      }
+    }
+  }
+
+  resetModifiedDataTags(): void {
+    const page = this._activeWritePage;
+    for (const f of page.fields) {
+      f.mdt = false;
+    }
+    for (let r = 0; r < SCREEN_ROWS; r++) {
+      for (let c = 0; c < SCREEN_COLS; c++) {
+        page.buffer[r][c].modified = false;
+      }
+    }
+  }
+
+  // ─── Tab Navigation ───
+  tabToNextField(): { row: number; col: number } | null {
+    const page = this._activeDisplayPage;
+    if (page.fields.length === 0) {
+      page.cursorCol = Math.min(SCREEN_COLS - 1, (Math.floor(page.cursorCol / 8) + 1) * 8);
+      return { row: page.cursorRow, col: page.cursorCol };
+    }
+
     let currentIdx = -1;
-    for (let i = 0; i < this.fields.length; i++) {
-      const f = this.fields[i];
-      if (this._posInField(this.cursorRow, this.cursorCol, f)) {
+    for (let i = 0; i < page.fields.length; i++) {
+      if (this._posInField(page.cursorRow, page.cursorCol, page.fields[i])) {
         currentIdx = i;
         break;
       }
     }
 
-    // Move to the next field (wrap around)
     let nextIdx: number;
     if (currentIdx >= 0) {
-      nextIdx = (currentIdx + 1) % this.fields.length;
+      nextIdx = (currentIdx + 1) % page.fields.length;
     } else {
-      // Not in any field — find the first field after the cursor
       nextIdx = 0;
-      for (let i = 0; i < this.fields.length; i++) {
-        const f = this.fields[i];
-        if (f.startRow > this.cursorRow || 
-            (f.startRow === this.cursorRow && f.startCol > this.cursorCol)) {
+      for (let i = 0; i < page.fields.length; i++) {
+        const f = page.fields[i];
+        if (f.startRow > page.cursorRow || (f.startRow === page.cursorRow && f.startCol > page.cursorCol)) {
           nextIdx = i;
           break;
         }
       }
     }
 
-    const nextField = this.fields[nextIdx];
-    this.cursorRow = nextField.startRow;
-    this.cursorCol = nextField.startCol;
-
-    return { row: this.cursorRow, col: this.cursorCol };
+    const nextField = page.fields[nextIdx];
+    page.cursorRow = nextField.startRow;
+    page.cursorCol = nextField.startCol;
+    return { row: page.cursorRow, col: page.cursorCol };
   }
 
-  // ─── Shift-Tab to Previous Unprotected Field ───
   tabToPrevField(): { row: number; col: number } | null {
-    if (this.fields.length === 0) return null;
+    const page = this._activeDisplayPage;
+    if (page.fields.length === 0) {
+      page.cursorCol = Math.max(0, (Math.ceil(page.cursorCol / 8) - 1) * 8);
+      return { row: page.cursorRow, col: page.cursorCol };
+    }
 
     let currentIdx = -1;
-    for (let i = 0; i < this.fields.length; i++) {
-      if (this._posInField(this.cursorRow, this.cursorCol, this.fields[i])) {
+    for (let i = 0; i < page.fields.length; i++) {
+      if (this._posInField(page.cursorRow, page.cursorCol, page.fields[i])) {
         currentIdx = i;
         break;
       }
     }
 
-    let prevIdx: number;
-    if (currentIdx > 0) {
-      prevIdx = currentIdx - 1;
-    } else {
-      prevIdx = this.fields.length - 1; // Wrap to last field
-    }
-
-    const prevField = this.fields[prevIdx];
-    this.cursorRow = prevField.startRow;
-    this.cursorCol = prevField.startCol;
-
-    return { row: this.cursorRow, col: this.cursorCol };
+    const prevIdx = currentIdx > 0 ? currentIdx - 1 : page.fields.length - 1;
+    const prevField = page.fields[prevIdx];
+    page.cursorRow = prevField.startRow;
+    page.cursorCol = prevField.startCol;
+    return { row: page.cursorRow, col: page.cursorCol };
   }
 
-  // ─── Check if position is inside a field ───
   private _posInField(row: number, col: number, field: Field): boolean {
     const pos = row * SCREEN_COLS + col;
     const start = field.startRow * SCREEN_COLS + field.startCol;
@@ -405,55 +683,49 @@ export class Screen6530 {
     return pos >= start && pos <= end;
   }
 
-  // ─── Collect All Unprotected Field Data ───
-  // Returns the content of all unprotected fields, separated by FS (0x1C)
+  // ─── Collect Field Data ───
   collectFieldData(): string {
-    if (this.fields.length === 0) return '';
+    const page = this._activeDisplayPage;
+    if (page.fields.length === 0) return '';
 
     const fieldContents: string[] = [];
-
-    for (const field of this.fields) {
+    for (const field of page.fields) {
       let content = '';
       let row = field.startRow;
       let col = field.startCol;
 
       while (row < SCREEN_ROWS) {
-        const cell = this.buffer[row][col];
+        const cell = page.buffer[row][col];
         if (cell.fieldId === field.id) {
           content += cell.char;
         } else if (row > field.endRow || (row === field.endRow && col > field.endCol)) {
           break;
         }
-        
         col++;
         if (col >= SCREEN_COLS) {
           col = 0;
           row++;
         }
       }
-
-      // Trim trailing spaces from each field (6530 convention)
       fieldContents.push(content.replace(/\s+$/, ''));
     }
 
     return fieldContents.join(FIELD_SEPARATOR);
   }
 
-  // ─── Collect ONLY Modified Field Data ───
-  // More efficient — only sends fields that were changed by the user
   collectModifiedFieldData(): string {
-    if (this.fields.length === 0) return '';
+    const page = this._activeDisplayPage;
+    if (page.fields.length === 0) return '';
 
     const parts: string[] = [];
-
-    for (const field of this.fields) {
-      let hasModified = false;
+    for (const field of page.fields) {
+      let hasModified = field.mdt;
       let content = '';
       let row = field.startRow;
       let col = field.startCol;
 
       while (row < SCREEN_ROWS) {
-        const cell = this.buffer[row][col];
+        const cell = page.buffer[row][col];
         if (cell.fieldId === field.id) {
           content += cell.char;
           if (cell.modified) hasModified = true;
@@ -475,112 +747,298 @@ export class Screen6530 {
     return parts.join(FIELD_SEPARATOR);
   }
 
-  // ─── Generate WRITEREAD Response ───
-  // Per 6530 spec, the response format is:
-  //   If Enter: DC2 (0x12) + cursor_row + cursor_col + field_data + CR
-  //   If Function Key (F1-F16): SOH (0x01) + key_code + cursor_row + cursor_col + field_data + CR
-  // Cursor position bytes are space-offset (pos + 0x20)
-  // Field data is separated by FS (0x1C) between fields
-  generateWriteReadResponse(triggerKey?: string): string {
-    const cursorRow = String.fromCharCode(this.cursorRow + 0x20);
-    const cursorCol = String.fromCharCode(this.cursorCol + 0x20);
-    const fieldData = this.collectFieldData();
+  // ─── 6530 Host Query & Status Responses (Eliminates Guardian Error 180) ───
 
-    let prefix = '\x12'; // DC2 default for Enter submission
+  // ESC ^ (Read Terminal Status)
+  // Format: SOH ? <status> <term-id> <maj-rev-level> CR (or ETX LRC in Block Mode)
+  generateStatusResponse(isBlockMode = this.blockMode): string {
+    // status = '@' (0x40: normal ready), term-id = 'F' (6530), maj-rev = 'B' (B30/B40)
+    const body = '?@FB';
+    if (isBlockMode) {
+      return Screen6530.frameBlockMessage('\x01', body);
+    }
+    return '\x01' + body + '\r';
+  }
+
+  // ESC _ (Read Full Revision Level)
+  // Format: SOH # <rev-level> T0 <device-rev-level> CR (or ETX LRC in Block Mode)
+  generateRevisionResponse(isBlockMode = this.blockMode): string {
+    const body = '#C00T0A00';
+    if (isBlockMode) {
+      return Screen6530.frameBlockMessage('\x01', body);
+    }
+    return '\x01' + body + '\r';
+  }
+
+  // ESC ? (Read Terminal Configuration)
+  // Format: SOH ! <code value pairs> CR (or ETX LRC in Block Mode)
+  generateConfigResponse(isBlockMode = this.blockMode): string {
+    const body = '!A1B72F0G0I1J2L0M1N0O0P0S0T0';
+    if (isBlockMode) {
+      return Screen6530.frameBlockMessage('\x01', body);
+    }
+    return '\x01' + body + '\r';
+  }
+
+  // ESC - ? (Color / Extended Configuration Query)
+  generateColorConfigResponse(isBlockMode = this.blockMode): string {
+    const body = 'e7';
+    if (isBlockMode) {
+      return Screen6530.frameBlockMessage('\x01', body);
+    }
+    return '\x01' + body + '\r';
+  }
+
+  // ESC a (Read Cursor Address)
+  // Format:
+  //   Conversational: SOH _ <row> <col> CR
+  //   Block Mode:     SOH _ <page> <row> <col> ETX LRC
+  generateCursorAddressResponse(isBlockMode = this.blockMode, row?: number, col?: number): string {
+    const page = this._activeWritePage;
+    const r = Math.min(SCREEN_ROWS - 1, Math.max(0, row ?? page.cursorRow));
+    const c = Math.min(SCREEN_COLS - 1, Math.max(0, col ?? page.cursorCol));
+    const rowChar = String.fromCharCode(r + 0x20);
+    const colChar = String.fromCharCode(c + 0x20);
+    if (isBlockMode) {
+      const pageChar = String.fromCharCode(Math.max(1, this.selectedPage) + 0x20);
+      return Screen6530.frameBlockMessage('\x01', `_${pageChar}${rowChar}${colChar}`);
+    }
+    return `\x01_${rowChar}${colChar}\r`;
+  }
+
+  // ─── Read Buffer (ESC <) and Read With Address (ESC = / ESC ] / ESC - J) ───
+  // Reads from selectedPage between (startRow, startCol) and (endRow, endCol).
+  generateReadBufferResponse(
+    withAddress: boolean,
+    startRow = 0,
+    startCol = 0,
+    endRow = SCREEN_ROWS - 1,
+    endCol = SCREEN_COLS - 1
+  ): string {
+    const page = this._activeWritePage;
+    const sRow = Math.max(0, Math.min(SCREEN_ROWS - 1, startRow));
+    const sCol = Math.max(0, Math.min(SCREEN_COLS - 1, startCol));
+    const eRow = Math.max(0, Math.min(SCREEN_ROWS - 1, endRow));
+    const eCol = Math.max(0, Math.min(SCREEN_COLS - 1, endCol));
+
+    if (eRow < sRow || (eRow === sRow && eCol < sCol)) {
+      return Screen6530.frameBlockMessage('\x02', '');
+    }
+
+    if (this.protectSubmode && page.fields.length > 0) {
+      // Protect Submode: transmit modified fields (with DC1 row col address if withAddress)
+      let body = '';
+      for (const field of page.fields) {
+        const fStart = field.startRow * SCREEN_COLS + field.startCol;
+        const rStart = sRow * SCREEN_COLS + sCol;
+        const rEnd = eRow * SCREEN_COLS + eCol;
+        if (fStart < rStart || fStart > rEnd) continue;
+
+        let hasMod = field.mdt;
+        let content = '';
+        let r = field.startRow;
+        let c = field.startCol;
+        while (r < SCREEN_ROWS) {
+          const cell = page.buffer[r][c];
+          if (cell.fieldId === field.id) {
+            content += cell.char;
+            if (cell.modified) hasMod = true;
+          } else if (r > field.endRow || (r === field.endRow && c > field.endCol)) {
+            break;
+          }
+          c++;
+          if (c >= SCREEN_COLS) {
+            c = 0;
+            r++;
+          }
+        }
+
+        if (hasMod) {
+          const trimmed = withAddress ? content : content.replace(/\s+$/, '');
+          if (withAddress) {
+            const rChar = String.fromCharCode(field.startRow + 0x20);
+            const cChar = String.fromCharCode(field.startCol + 0x20);
+            body += `\x11${rChar}${cChar}${trimmed}`;
+          } else {
+            if (body.length > 0) body += FIELD_SEPARATOR;
+            body += trimmed;
+          }
+        }
+      }
+      return Screen6530.frameBlockMessage('\x02', body);
+    }
+
+    // Non-protect submode (used by TEDIT / EDIT!):
+    // Transmit lines/characters in range [sRow..eRow, sCol..eCol].
+    const lines: string[] = [];
+    for (let r = sRow; r <= eRow; r++) {
+      const cStart = r === sRow ? sCol : 0;
+      const cEnd = r === eRow ? eCol : SCREEN_COLS - 1;
+      let line = '';
+      for (let c = cStart; c <= cEnd; c++) {
+        line += page.buffer[r][c].char;
+      }
+      if (!withAddress) {
+        line = line.replace(/\s+$/, '');
+      }
+      lines.push(line);
+    }
+
+    let body = '';
+    if (withAddress) {
+      const rChar = String.fromCharCode(sRow + 0x20);
+      const cChar = String.fromCharCode(sCol + 0x20);
+      body = `\x11${rChar}${cChar}${lines.join('')}`;
+    } else {
+      body = lines.join('\r');
+    }
+    return Screen6530.frameBlockMessage('\x02', body);
+  }
+
+  // ─── Generate Block Mode Function Key / Enter Response ───
+  // Per 6530 Programmer's Guide Table 3-11:
+  // When a function key (or Enter in block mode) is pressed:
+  //   SOH <keycode> <page> <cursor_row> <cursor_col> [field_data] ETX LRC
+  // Also preserves compatibility with legacy WRITEREAD callers when not in blockMode.
+  generateWriteReadResponse(triggerKey?: string): string {
+    const page = this._activeDisplayPage;
+    const cursorRow = String.fromCharCode(page.cursorRow + 0x20);
+    const cursorCol = String.fromCharCode(page.cursorCol + 0x20);
+    const pageChar = String.fromCharCode(Math.max(1, this.displayPage) + 0x20);
+
+    let keyChar = 'v'; // 'v' is standard 6530 Return/Enter keycode in Table 3-11
+    let isEnter = true;
     if (triggerKey) {
-      // Check if triggerKey specifies an F-key sequence or code
-      let keyChar = '';
       if (triggerKey.startsWith('\x1b') && triggerKey.length >= 2) {
         keyChar = triggerKey[1];
+        isEnter = false;
       } else if (triggerKey.startsWith('\x01') && triggerKey.length >= 2) {
         keyChar = triggerKey[1];
+        isEnter = false;
       } else if (triggerKey.length === 1 && triggerKey !== '\r' && triggerKey !== '\n') {
         keyChar = triggerKey;
-      }
-
-      if (keyChar && ((keyChar >= 'a' && keyChar <= 'w') || (keyChar >= 'A' && keyChar <= 'W'))) {
-        prefix = '\x01' + keyChar;
+        isEnter = false;
       }
     }
 
+    // In 6530 Block Mode (both Nonprotect Submode for TEDIT/EDIT and Protect Submode for Pathway/forms):
+    // Always send standard 6530 Block Function Key notification: SOH <keycode> <page> <row> <col> ETX <LRC>
+    // The host will then issue ESC < (Read Buffer) or ESC = / ESC ] (Read With Address) to read data.
+    if (this.blockMode) {
+      this.keyboardLocked = true;
+      return Screen6530.frameBlockMessage('\x01', `${keyChar}${pageChar}${cursorRow}${cursorCol}`);
+    }
+
+    const fieldData = this.collectFieldData();
+    const prefix = isEnter ? '\x12' : '\x01' + keyChar;
     const response = prefix + cursorRow + cursorCol + fieldData + '\r';
 
-    // Clear modified flags after sending
     this._clearModifiedFlags();
-
     return response;
+  }
+
+  // ─── Render Active Display Page to ANSI for xterm.js ───
+  renderDisplayPageToAnsi(): string {
+    if (this.displayPage === 0) {
+      return '\x1b[0m\x1b[2J\x1b[H';
+    }
+    const page = this._activeDisplayPage;
+    let out = '\x1b[0m\x1b[2J\x1b[H';
+    let lastAttr = 0;
+
+    for (let r = 0; r < SCREEN_ROWS; r++) {
+      out += `\x1b[${r + 1};1H`;
+      for (let c = 0; c < SCREEN_COLS; c++) {
+        const cell = page.buffer[r][c];
+        const attr = cell.attribute | (cell.protected && this.protectSubmode ? 0x08 : 0);
+        if (attr !== lastAttr) {
+          const parts: string[] = ['0'];
+          if (attr & 0x01) parts.push('4');
+          if (attr & 0x02) parts.push('5');
+          if (attr & 0x08) parts.push('2');
+          if (attr & 0x10) parts.push('8');
+          out += `\x1b[${parts.join(';')}m`;
+          lastAttr = attr;
+        }
+        out += cell.char || ' ';
+      }
+    }
+    out += `\x1b[0m\x1b[${page.cursorRow + 1};${page.cursorCol + 1}H`;
+    return out;
   }
 
   // ─── Local Cursor Movement in Block Mode ───
   moveCursorLeft(): { row: number; col: number } | null {
-    if (this.cursorCol > 0) {
-      this.cursorCol--;
-    } else if (this.cursorRow > 0) {
-      this.cursorRow--;
-      this.cursorCol = SCREEN_COLS - 1;
+    const page = this._activeDisplayPage;
+    if (page.cursorCol > 0) {
+      page.cursorCol--;
+    } else if (page.cursorRow > 0) {
+      page.cursorRow--;
+      page.cursorCol = SCREEN_COLS - 1;
     } else {
       return null;
     }
-    return { row: this.cursorRow, col: this.cursorCol };
+    return { row: page.cursorRow, col: page.cursorCol };
   }
 
   moveCursorRight(): { row: number; col: number } | null {
-    if (this.cursorCol < SCREEN_COLS - 1) {
-      this.cursorCol++;
-    } else if (this.cursorRow < SCREEN_ROWS - 1) {
-      this.cursorRow++;
-      this.cursorCol = 0;
+    const page = this._activeDisplayPage;
+    if (page.cursorCol < SCREEN_COLS - 1) {
+      page.cursorCol++;
+    } else if (page.cursorRow < SCREEN_ROWS - 1) {
+      page.cursorRow++;
+      page.cursorCol = 0;
     } else {
       return null;
     }
-    return { row: this.cursorRow, col: this.cursorCol };
+    return { row: page.cursorRow, col: page.cursorCol };
   }
 
   moveCursorUp(): { row: number; col: number } | null {
-    if (this.cursorRow > 0) {
-      this.cursorRow--;
-      return { row: this.cursorRow, col: this.cursorCol };
+    const page = this._activeDisplayPage;
+    if (page.cursorRow > 0) {
+      page.cursorRow--;
+      return { row: page.cursorRow, col: page.cursorCol };
     }
     return null;
   }
 
   moveCursorDown(): { row: number; col: number } | null {
-    if (this.cursorRow < SCREEN_ROWS - 1) {
-      this.cursorRow++;
-      return { row: this.cursorRow, col: this.cursorCol };
+    const page = this._activeDisplayPage;
+    if (page.cursorRow < SCREEN_ROWS - 1) {
+      page.cursorRow++;
+      return { row: page.cursorRow, col: page.cursorCol };
     }
     return null;
   }
 
   homeCursor(): { row: number; col: number } | null {
-    if (this.fields.length > 0) {
-      this.cursorRow = this.fields[0].startRow;
-      this.cursorCol = this.fields[0].startCol;
+    const page = this._activeDisplayPage;
+    if (page.fields.length > 0) {
+      page.cursorRow = page.fields[0].startRow;
+      page.cursorCol = page.fields[0].startCol;
     } else {
-      this.cursorRow = 0;
-      this.cursorCol = 0;
+      page.cursorRow = 0;
+      page.cursorCol = 0;
     }
-    return { row: this.cursorRow, col: this.cursorCol };
+    return { row: page.cursorRow, col: page.cursorCol };
   }
 
-  // ─── Clear Modified Flags ───
-  // After a WRITEREAD response, clear all modified flags
-  // so the next response only sends newly-changed data
   private _clearModifiedFlags(): void {
+    const page = this._activeDisplayPage;
     for (let r = 0; r < SCREEN_ROWS; r++) {
       for (let c = 0; c < SCREEN_COLS; c++) {
-        this.buffer[r][c].modified = false;
+        page.buffer[r][c].modified = false;
       }
     }
   }
 
-  // ─── Clear Unprotected Fields Only ───
-  // Clears all unprotected cells to spaces (keeps protected text intact)
   clearUnprotected(): void {
+    const page = this._activeWritePage;
     for (let r = 0; r < SCREEN_ROWS; r++) {
       for (let c = 0; c < SCREEN_COLS; c++) {
-        const cell = this.buffer[r][c];
-        if (!cell.protected && cell.fieldId >= 0) {
+        const cell = page.buffer[r][c];
+        if (!cell.protected && (!this.protectSubmode || cell.fieldId >= 0)) {
           cell.char = ' ';
           cell.modified = false;
         }
@@ -588,43 +1046,40 @@ export class Screen6530 {
     }
   }
 
-  // ─── Get Field at Cursor ───
-  // Returns the field the cursor is currently in, or null
   getFieldAtCursor(): Field | null {
-    for (const field of this.fields) {
-      if (this._posInField(this.cursorRow, this.cursorCol, field)) {
+    const page = this._activeDisplayPage;
+    for (const field of page.fields) {
+      if (this._posInField(page.cursorRow, page.cursorCol, field)) {
         return field;
       }
     }
     return null;
   }
 
-  // ─── Is Cursor in Protected Area? ───
   isCursorProtected(): boolean {
-    if (this.cursorRow >= SCREEN_ROWS || this.cursorCol >= SCREEN_COLS) return true;
-    const cell = this.buffer[this.cursorRow][this.cursorCol];
+    const page = this._activeDisplayPage;
+    if (page.cursorRow >= SCREEN_ROWS || page.cursorCol >= SCREEN_COLS) return true;
+    const cell = page.buffer[page.cursorRow][page.cursorCol];
     return cell.protected || (this.protectSubmode && cell.fieldId < 0);
   }
 
-  // ─── Get Screen Content as String (Debug) ───
   toString(): string {
+    const page = this._activeDisplayPage;
     let output = '';
     for (let r = 0; r < SCREEN_ROWS; r++) {
       for (let c = 0; c < SCREEN_COLS; c++) {
-        output += this.buffer[r][c].char;
+        output += page.buffer[r][c].char;
       }
       output += '\n';
     }
     return output;
   }
 
-  // ─── Get Field Count ───
   get fieldCount(): number {
-    return this.fields.length;
+    return this._activeDisplayPage.fields.length;
   }
 
-  // ─── Has Protect Submode Fields? ───
   get hasFields(): boolean {
-    return this.protectSubmode && this.fields.length > 0;
+    return this.protectSubmode && this._activeDisplayPage.fields.length > 0;
   }
 }
