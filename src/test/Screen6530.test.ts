@@ -311,4 +311,60 @@ describe('translate6530ToAnsi Protocol Parser', () => {
     const res = translate6530ToAnsi(inputWithNuls);
     expect(res.data).toBe('AB\x1b[1;1HC');
   });
+
+  it('supports 6530 multi-page registers (ESC : write page, ESC ; display page) and page-specific buffers', () => {
+    const screen = new Screen6530();
+    screen.enterBlockMode();
+
+    // Write to Page 2 while displaying Page 1 (TEDIT/Pathway off-screen build pattern)
+    screen.selectWritePage(2);
+    screen.setBufferAddress(0, 0);
+    for (const ch of 'PAGE2 DATA') screen.writeServerChar(ch);
+
+    // Page 1 buffer should remain untouched
+    screen.selectWritePage(1);
+    expect(screen.pages[1].buffer[0][0].char).toBe(' ');
+    expect(screen.pages[2].buffer[0][0].char).toBe('P');
+
+    // Switch display page to Page 2 and read buffer
+    screen.selectDisplayPage(2);
+    expect(screen.displayPage).toBe(2);
+    const ansi = screen.renderDisplayPageToAnsi();
+    expect(ansi).toContain('PAGE2 DATA');
+  });
+
+  it('parses Block Mode SOH B ETX LRC with DC1 buffer addressing, GS start field, DC3 cursor, and ESC : / ESC ;', () => {
+    // SOH 'B' ETX LRC ('A') + ESC : " (Page 2) + DC1 row 0 col 0 + GS vAttr dAttr + "HELLO" + DC3 row 1 col 2 + ESC ; " (Display Page 2) + ESC b + ETX LRC
+    const packet = '\x01B\x03A\x1b:"\x11  \x1d  HELLO\x13"$\x1b;"\x1bb\x03Z';
+    const res = translate6530ToAnsi(packet);
+
+    expect(res.modeSignal).toBe('block');
+    expect(res.screenCommands).toContainEqual({ type: 'enterBlockMode' });
+    expect(res.screenCommands).toContainEqual({ type: 'selectPage', page: 2 });
+    expect(res.screenCommands).toContainEqual({ type: 'bufferAddress', row: 0, col: 0 });
+    expect(res.screenCommands).toContainEqual({ type: 'startField', videoAttr: 0x20, dataAttr: 0x20 });
+    expect(res.screenCommands).toContainEqual({ type: 'cursorOnly', row: 2, col: 4 });
+    expect(res.screenCommands).toContainEqual({ type: 'displayPage', page: 2 });
+    expect(res.screenCommands).toContainEqual({ type: 'unlockKeyboard' });
+  });
+
+  it('generates LRC-framed 6530 Block Mode status, config, revision, cursor, and function key responses', () => {
+    const screen = new Screen6530();
+    screen.enterBlockMode();
+    screen.setCursor(3, 7);
+
+    // Status response in Block Mode: SOH ? @ F B ETX <LRC>
+    const statusBlock = screen.generateStatusResponse(true);
+    expect(statusBlock.startsWith('\x01?@FB\x03')).toBe(true);
+    expect(statusBlock.length).toBe(7);
+
+    // Status response in Conversational Mode: SOH ? @ F B CR
+    const statusConv = screen.generateStatusResponse(false);
+    expect(statusConv).toBe('\x01?@FB\r');
+
+    // Block Mode Function Key / Return notification: SOH 'v' <page> <row> <col> ETX <LRC>
+    const enterResp = screen.generateWriteReadResponse('\r');
+    expect(enterResp.startsWith('\x01v!#\'')).toBe(true);
+    expect(enterResp.charCodeAt(5)).toBe(0x03);
+  });
 });

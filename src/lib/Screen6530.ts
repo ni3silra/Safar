@@ -264,7 +264,6 @@ export class Screen6530 {
   // Per 6530 spec: clears all pages to blanks (default protected), selects & displays Page 1,
   // sets buffer & cursor addresses to (0,0), locks keyboard.
   enterProtectSubmode(): void {
-    this.blockMode = true;
     this.protectSubmode = true;
     this.keyboardLocked = true;
     this.selectedPage = 1;

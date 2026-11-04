@@ -90,4 +90,38 @@ describe('TerminalComponent', () => {
 
     expect(clearMock).toHaveBeenCalled();
   });
+
+  it('dynamically switches to 6530 Block Mode and answers status query over Telnet', async () => {
+    let eventHandler: (event: any) => void = () => {};
+    (listen as any).mockImplementation((name: string, cb: any) => {
+      if (name === 'terminal-data') {
+        eventHandler = cb;
+      }
+      return Promise.resolve(() => {});
+    });
+
+    render(<TerminalComponent {...defaultProps} protocol="telnet" isNonStop={true} />);
+
+    await waitFor(() => {
+      expect(Terminal).toHaveBeenCalled();
+    });
+
+    expect(screen.getByText('6530 Conv.')).toBeInTheDocument();
+
+    // Host sends SOH B ETX LRC ('A') + ESC ^ (Read Primary Status)
+    eventHandler({ payload: { session_id: 'test-session', data: '\x01B\x03A\x1b^' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('6530 Block')).toBeInTheDocument();
+    });
+
+    expect(invoke).toHaveBeenCalledWith(
+      'telnet_send',
+      expect.objectContaining({
+        sessionId: 'test-session',
+        data: expect.stringMatching(/^\x01\?@FB\x03/),
+      })
+    );
+  });
+  });
 });

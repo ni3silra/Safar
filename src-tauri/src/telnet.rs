@@ -939,3 +939,30 @@ pub fn connect_with_smart_cert_selection(host: &str, port: u16) -> Result<(opens
     
     Err(TelnetError::ConnectionFailed("No certificates worked".to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_terminal_input_preserves_6530_protocol_frames() {
+        // 6530 SOH status response: SOH ? @ F B CR -> must NOT expand \r to \r\n
+        let soh_status = "\x01?@FB\r";
+        assert_eq!(encode_terminal_input(soh_status), b"\x01?@FB\r");
+
+        // 6530 SOH Block Mode Function Key with ETX + LRC -> must preserve exact bytes including 8-bit LRC
+        let block_fkey = "\x01v!\"%\x03\u{008a}";
+        assert_eq!(encode_terminal_input(block_fkey), vec![0x01, b'v', b'!', b'"', b'%', 0x03, 0x8a]);
+
+        // Conversational line input -> expands bare \r to \r\n for NVT TELSERV TACL
+        let conv_cmd = "TEDIT MYFILE\r";
+        assert_eq!(encode_terminal_input(conv_cmd), b"TEDIT MYFILE\r\n");
+    }
+
+    #[test]
+    fn test_decode_terminal_bytes_preserves_latin1_and_6530_lrc() {
+        let raw = [0x01, b'B', 0x03, 0x41, 0xe4, 0xf6, 0xfc];
+        let decoded = decode_terminal_bytes(&raw);
+        assert_eq!(decoded, "\x01B\x03Aäöü");
+    }
+}

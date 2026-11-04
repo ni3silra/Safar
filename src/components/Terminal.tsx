@@ -463,6 +463,7 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           continue;
         case 'X':
           result += '\x1b[0m';
+          if (!inBlockMode) modeSignal = 'conv';
           screenCommands.push({ type: 'protectSubExit' });
           i += 2;
           continue;
@@ -489,10 +490,12 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
         // ESC c = Lock Keyboard (start of host block write — do NOT switch back to conversational mode!)
         case 'b':
           result += '\x1b[?25h';
+          if (!inBlockMode) modeSignal = 'block';
           screenCommands.push({ type: 'unlockKeyboard' });
           i += 2;
           continue;
         case 'c':
+          if (!inBlockMode) modeSignal = 'conv';
           screenCommands.push({ type: 'lockKeyboard' });
           i += 2;
           continue;
@@ -630,20 +633,22 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
     // DC1 (0x11) — Set Buffer Address in Block Mode: 0x11 <row> <col> (or WRITEREAD framing when standalone)
     if (data[i] === '\x11') {
       writeReadActive = true;
-      if (
-        i + 2 < data.length &&
-        data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37 &&
-        data.charCodeAt(i + 2) >= 0x20 && data.charCodeAt(i + 2) <= 0x6f
-      ) {
-        const row0 = data.charCodeAt(i + 1) - 0x20;
-        const col0 = data.charCodeAt(i + 2) - 0x20;
-        screenCommands.push({ type: 'bufferAddress', row: row0, col: col0 });
-        result += `\x1b[${row0 + 1};${col0 + 1}H`;
-        i += 3;
-        continue;
-      } else if (i + 2 >= data.length && i + 1 < data.length && data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37) {
-        pendingRemainder = data.substring(i);
-        break;
+      if (inBlockMode || inBlockFrame) {
+        if (
+          i + 2 < data.length &&
+          data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37 &&
+          data.charCodeAt(i + 2) >= 0x20 && data.charCodeAt(i + 2) <= 0x6f
+        ) {
+          const row0 = data.charCodeAt(i + 1) - 0x20;
+          const col0 = data.charCodeAt(i + 2) - 0x20;
+          screenCommands.push({ type: 'bufferAddress', row: row0, col: col0 });
+          result += `\x1b[${row0 + 1};${col0 + 1}H`;
+          i += 3;
+          continue;
+        } else if (i + 2 >= data.length && i + 1 < data.length && data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37) {
+          pendingRemainder = data.substring(i);
+          break;
+        }
       }
       i++;
       continue;
@@ -651,20 +656,22 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
 
     // DC3 (0x13) — Set Cursor Address in Block Mode: 0x13 <row> <col>
     if (data[i] === '\x13') {
-      if (
-        i + 2 < data.length &&
-        data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37 &&
-        data.charCodeAt(i + 2) >= 0x20 && data.charCodeAt(i + 2) <= 0x6f
-      ) {
-        const row0 = data.charCodeAt(i + 1) - 0x20;
-        const col0 = data.charCodeAt(i + 2) - 0x20;
-        screenCommands.push({ type: 'cursorOnly', row: row0, col: col0 });
-        result += `\x1b[${row0 + 1};${col0 + 1}H`;
-        i += 3;
-        continue;
-      } else if (i + 2 >= data.length && i + 1 < data.length && data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37) {
-        pendingRemainder = data.substring(i);
-        break;
+      if (inBlockMode || inBlockFrame) {
+        if (
+          i + 2 < data.length &&
+          data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37 &&
+          data.charCodeAt(i + 2) >= 0x20 && data.charCodeAt(i + 2) <= 0x6f
+        ) {
+          const row0 = data.charCodeAt(i + 1) - 0x20;
+          const col0 = data.charCodeAt(i + 2) - 0x20;
+          screenCommands.push({ type: 'cursorOnly', row: row0, col: col0 });
+          result += `\x1b[${row0 + 1};${col0 + 1}H`;
+          i += 3;
+          continue;
+        } else if (i + 2 >= data.length && i + 1 < data.length && data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37) {
+          pendingRemainder = data.substring(i);
+          break;
+        }
       }
       i++;
       continue;
@@ -691,8 +698,8 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
       continue;
     }
 
-    // ── 6530 SOH Mode Switch Commands: SOH 'B' ETX LRC / SOH 'C' ETX LRC ──
-    // Format per 6530 Programmer's Guide: 0x01 <'B'|'C'> 0x03 <LRC>
+    // ── 6530 SOH Mode Switch Commands: SOH 'B' ETX [LRC] / SOH 'C' ETX [LRC] ──
+    // Format per 6530 Programmer's Guide: 0x01 <'B'|'C'> 0x03 [<LRC>]
     if (data[i] === '\x01') {
       if (i + 1 >= data.length) {
         pendingRemainder = data.substring(i);
@@ -704,23 +711,22 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           pendingRemainder = data.substring(i);
           break;
         }
-        if (data[i + 2] === '\x03') {
-          if (i + 3 >= data.length) {
-            // Wait for the trailing LRC byte so it doesn't leak onto the screen
-            pendingRemainder = data.substring(i);
-            break;
-          }
-          inBlockMode = true;
-          inBlockFrame = true;
-          modeSignal = 'block';
-          screenCommands.push({ type: 'enterBlockMode' });
-          i += 4; // Consume SOH + 'B' + ETX + LRC
-          continue;
-        }
         inBlockMode = true;
         inBlockFrame = true;
         modeSignal = 'block';
         screenCommands.push({ type: 'enterBlockMode' });
+        if (data[i + 2] === '\x03') {
+          const hasLrc =
+            i + 3 < data.length &&
+            data[i + 3] !== '\x1b' &&
+            data[i + 3] !== '\x01' &&
+            data[i + 3] !== '\x02' &&
+            data[i + 3] !== '\x11' &&
+            data[i + 3] !== '\x13' &&
+            data[i + 3] !== '\x1d';
+          i += hasLrc ? 4 : 3;
+          continue;
+        }
         i += 2;
         continue;
       }
@@ -729,24 +735,22 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           pendingRemainder = data.substring(i);
           break;
         }
-        if (data[i + 2] === '\x03') {
-          if (i + 3 >= data.length) {
-            pendingRemainder = data.substring(i);
-            break;
-          }
-          inBlockMode = false;
-          inBlockFrame = false;
-          modeSignal = 'conv';
-          screenCommands.push({ type: 'enterConvMode' });
-          result += '\x1b[0m';
-          i += 4; // Consume SOH + 'C' + ETX + LRC
-          continue;
-        }
         inBlockMode = false;
         inBlockFrame = false;
         modeSignal = 'conv';
         screenCommands.push({ type: 'enterConvMode' });
-        result += '\x1b[0m';
+        if (data[i + 2] === '\x03') {
+          const hasLrc =
+            i + 3 < data.length &&
+            data[i + 3] !== '\x1b' &&
+            data[i + 3] !== '\x01' &&
+            data[i + 3] !== '\x02' &&
+            data[i + 3] !== '\x11' &&
+            data[i + 3] !== '\x13' &&
+            data[i + 3] !== '\x1d';
+          i += hasLrc ? 4 : 3;
+          continue;
+        }
         i += 2;
         continue;
       }
@@ -765,12 +769,16 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
     // ETX (0x03) — consume ETX and its trailing 1-byte LRC checksum in Block Mode / SOH-STX frames
     if (data[i] === '\x03') {
       if (inBlockMode || inBlockFrame) {
-        if (i + 1 >= data.length) {
-          pendingRemainder = data.substring(i);
-          break;
-        }
+        const hasLrc =
+          i + 1 < data.length &&
+          data[i + 1] !== '\x1b' &&
+          data[i + 1] !== '\x01' &&
+          data[i + 1] !== '\x02' &&
+          data[i + 1] !== '\x11' &&
+          data[i + 1] !== '\x13' &&
+          data[i + 1] !== '\x1d';
         inBlockFrame = inBlockMode;
-        i += 2; // Consume ETX + LRC
+        i += hasLrc ? 2 : 1;
         continue;
       }
       i++;

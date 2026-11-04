@@ -42,9 +42,26 @@ export function Sidebar({
     const [recentExpanded, setRecentExpanded] = useState(true);
     const [favoritesExpanded, setFavoritesExpanded] = useState(true);
     const [allExpanded, setAllExpanded] = useState(true);
+    const [searchQuery, setSearchQuery] = useState("");
+    const q = searchQuery.trim().toLowerCase();
+    const matchesSearch = (item: { name: string; host: string; username?: string }) =>
+        !q ||
+        item.name.toLowerCase().includes(q) ||
+        item.host.toLowerCase().includes(q) ||
+        (item.username ? item.username.toLowerCase().includes(q) : false);
+    const filteredActive = activeSessions.filter(matchesSearch);
+    const filteredRecent = recent.filter(matchesSearch);
+    const filteredFavorites = favorites.filter(matchesSearch);
+    const activeSessionObj = activeSessions.find(s => s.id === activeSessionId);
+    const activeProtocol = activeSessionObj?.protocol === "telnet" ? "telnet" : "ssh";
+    const activeIs6530 = Boolean(
+        activeSessionObj?.isNonStop ||
+        activeSessionObj?.protocol === "telnet" ||
+        (activeSessionObj?.termType && activeSessionObj.termType.toLowerCase().includes("6530"))
+    );
 
     // Filter sessions that are NOT favorites (to avoid duplicates)
-    const nonFavoriteSessions = sessions.filter(s => !s.is_favorite);
+    const nonFavoriteSessions = sessions.filter(s => !s.is_favorite && matchesSearch(s));
     return (
         <div className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
             <div className="sidebar-header" style={{ padding: "0" }}>
@@ -139,6 +156,8 @@ export function Sidebar({
                             type="text"
                             className="input"
                             placeholder="Search sessions..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
                             style={{ fontSize: "var(--text-xs)", flex: 1 }}
                         />
                     </div>
@@ -161,7 +180,7 @@ export function Sidebar({
                                 }} />
                             </div>
 
-                            {activeExpanded && activeSessions.map((session) => {
+                            {activeExpanded && filteredActive.map((session) => {
                                 const protoMeta = getProtocolMeta(session);
                                 return (
                                     <div
@@ -215,7 +234,7 @@ export function Sidebar({
                                     transition: "transform 0.2s ease"
                                 }} />
                             </div>
-                            {recentExpanded && recent.slice(0, 5).map((saved) => {
+                            {recentExpanded && filteredRecent.slice(0, 5).map((saved) => {
                                 const protoMeta = getProtocolMeta(saved);
                                 return (
                                     <div
@@ -290,7 +309,7 @@ export function Sidebar({
                                     transition: "transform 0.2s ease"
                                 }} />
                             </div>
-                            {favoritesExpanded && favorites.map((saved) => {
+                            {favoritesExpanded && filteredFavorites.map((saved) => {
                                 const protoMeta = getProtocolMeta(saved);
                                 return (
                                     <div
@@ -428,10 +447,10 @@ export function Sidebar({
                 </div>
             )}
             {!sidebarCollapsed && sidebarView === "snippets" && (
-                <CommandPalette sessionId={activeSessionId} />
+                <CommandPalette sessionId={activeSessionId} protocol={activeProtocol} />
             )}
             {!sidebarCollapsed && sidebarView === "controls" && (
-                <SidebarControls sessionId={activeSessionId} />
+                <SidebarControls sessionId={activeSessionId} protocol={activeProtocol} is6530={activeIs6530} />
             )}
         </div>
     );

@@ -127,6 +127,8 @@ export const mockTerminal = {
   attachCustomKeyEventHandler: vi.fn(),
   dispose: vi.fn(),
   clear: vi.fn(),
+  reset: vi.fn(),
+  buffer: { active: { cursorX: 0, cursorY: 0 } },
   focus: vi.fn(),
   blur: vi.fn(),
   getSelection: vi.fn(() => ''),
