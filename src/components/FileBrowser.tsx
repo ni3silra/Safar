@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useFileBrowser } from "../hooks/useFileBrowser";
 import { FileEditor } from "./FileEditor";
+import { DeleteConfirmationModal } from "./DeleteConfirmationModal";
 import { Icons } from "./Icons";
 import { FileEntry } from "../types";
 
@@ -35,10 +36,12 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
         handleUp,
         handleDownload,
         handleUpload,
+        handleDelete,
         visitedPaths,
         removeVisitedPath
     } = useFileBrowser(sessionId);
 
+    const [fileToDelete, setFileToDelete] = useState<FileEntry | null>(null);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [suggestionIndex, setSuggestionIndex] = useState(-1);
     const addressContainerRef = useRef<HTMLDivElement>(null);
@@ -339,28 +342,40 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                                         <td className="file-cell file-perm-cell">{formatPermissions(file.permissions)}</td>
                                         <td className="file-cell file-actions-cell">
                                             {formatDate(file.modified)}
-                                            {!file.is_dir && (
-                                                <div className="file-actions-group">
-                                                    <button
-                                                        onClick={(e) => handleEdit(file, e)}
-                                                        title={writable ? "Edit file" : "View file (Read Only)"}
-                                                        className={`file-action-btn edit ${writable ? "writable" : ""}`}
-                                                    >
-                                                        {writable ? <Icons.Edit /> : <span style={{ fontSize: "14px" }}>👁</span>}
-                                                        {writable ? "Edit" : "View"}
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            handleDownload(file);
-                                                        }}
-                                                        title="Download file"
-                                                        className="file-action-btn download"
-                                                    >
-                                                        <Icons.Download /> Save
-                                                    </button>
-                                                </div>
-                                            )}
+                                            <div className="file-actions-group">
+                                                {!file.is_dir && (
+                                                    <>
+                                                        <button
+                                                            onClick={(e) => handleEdit(file, e)}
+                                                            title={writable ? "Edit file" : "View file (Read Only)"}
+                                                            className={`file-action-btn edit ${writable ? "writable" : ""}`}
+                                                        >
+                                                            {writable ? <Icons.Edit /> : <span style={{ fontSize: "14px" }}>👁</span>}
+                                                            {writable ? "Edit" : "View"}
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleDownload(file);
+                                                            }}
+                                                            title="Download file"
+                                                            className="file-action-btn download"
+                                                        >
+                                                            <Icons.Download /> Save
+                                                        </button>
+                                                    </>
+                                                )}
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setFileToDelete(file);
+                                                    }}
+                                                    title={`Delete ${file.is_dir ? "folder" : "file"}`}
+                                                    className="file-action-btn delete"
+                                                >
+                                                    <Icons.Trash /> Delete
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 )
@@ -397,6 +412,23 @@ export function FileBrowser({ sessionId }: FileBrowserProps) {
                         const file = files.find(f => f.name === name);
                         return file && !file.is_dir ? !isWritable(file.permissions) : true;
                     })()}
+                />
+            )}
+            {/* Delete Confirmation Modal */}
+            {fileToDelete && (
+                <DeleteConfirmationModal
+                    title={`Delete ${fileToDelete.is_dir ? "Folder" : "File"}?`}
+                    itemName={fileToDelete.name}
+                    description={
+                        fileToDelete.is_dir
+                            ? `Are you sure you want to delete the folder "${fileToDelete.name}" and all of its contents? This action cannot be undone.`
+                            : `Are you sure you want to delete "${fileToDelete.name}"? This action cannot be undone.`
+                    }
+                    onClose={() => setFileToDelete(null)}
+                    onConfirm={() => {
+                        handleDelete(fileToDelete);
+                        setFileToDelete(null);
+                    }}
                 />
             )}
         </div>

@@ -61,6 +61,12 @@ pub struct SavedSession {
     pub remote_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backspace_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_nonstop: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -124,6 +130,9 @@ impl SavedSession {
             term_type: None,
             remote_command: None,
             backspace_mode: None,
+            protocol: None,
+            service_name: None,
+            is_nonstop: None,
         }
     }
 }
@@ -156,7 +165,7 @@ impl SessionStorage {
             let content = fs::read_to_string(&file_path)?;
             
             // Try to parse as EncryptedData first
-            if let Ok(_) = serde_json::from_str::<EncryptedData>(&content) {
+            if serde_json::from_str::<EncryptedData>(&content).is_ok() {
                 is_locked = true;
             } else {
                 // Try plain JSON

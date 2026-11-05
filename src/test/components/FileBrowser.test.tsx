@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { FileBrowser } from '../../components/FileBrowser';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as useFileBrowserHook from '../../hooks/useFileBrowser';
@@ -38,6 +38,7 @@ describe('FileBrowser', () => {
         handleUp: vi.fn(),
         handleDownload: vi.fn(),
         handleUpload: vi.fn(),
+        handleDelete: vi.fn(),
         visitedPaths: [],
         removeVisitedPath: vi.fn()
     };
@@ -91,5 +92,27 @@ describe('FileBrowser', () => {
 
         render(<FileBrowser sessionId={sessionId} />);
         expect(screen.getByText('Error: Failed to connect')).toBeInTheDocument();
+    });
+
+    it('opens delete confirmation modal and triggers handleDelete', () => {
+        render(<FileBrowser sessionId={sessionId} />);
+
+        const deleteButtons = screen.getAllByTitle(/Delete/);
+        expect(deleteButtons.length).toBeGreaterThan(0);
+
+        // Click delete on file1.txt
+        fireEvent.click(deleteButtons[1]);
+
+        // Confirmation modal should appear
+        const modalHeading = screen.getByText('Delete File?');
+        expect(modalHeading).toBeInTheDocument();
+        expect(screen.getByText(/Are you sure you want to delete "file1.txt"/)).toBeInTheDocument();
+
+        // Click Delete inside modal
+        const modal = modalHeading.closest<HTMLElement>('.modal')!;
+        const modalDeleteBtn = within(modal).getByRole('button', { name: 'Delete' });
+        fireEvent.click(modalDeleteBtn);
+
+        expect(mockHookReturn.handleDelete).toHaveBeenCalledWith(mockHookReturn.files[1]);
     });
 });

@@ -16,10 +16,13 @@ export interface Session {
     port: number;
     username: string;
     connected: boolean;
-    activeView: "terminal" | "files" | "tunnels" | "logs" | "stats" | "performance";
+    activeView: "terminal" | "files" | "tunnels" | "logs" | "browser" | "stats" | "performance" | "guardian";
     backspaceMode?: string;
     termType?: string;
     dynamicTitle?: string;
+    protocol?: "ssh" | "telnet";
+    serviceName?: string;
+    isNonStop?: boolean;
 }
 
 export interface SavedSession {
@@ -38,6 +41,9 @@ export interface SavedSession {
     term_type?: string;
     remote_command?: string;
     backspace_mode?: string;
+    protocol?: "ssh" | "telnet";
+    service_name?: string;
+    is_nonstop?: boolean;
 }
 
 export interface LogEntry {
@@ -62,6 +68,10 @@ export interface ConnectConfig {
     termType?: string;
     remoteCommand?: string;
     backspaceMode?: string;
+    protocol?: "ssh" | "telnet";
+    serviceName?: string;
+    isNonStop?: boolean;
+    savedSessionId?: string | null;
 }
 
 export interface ConnectionResult {

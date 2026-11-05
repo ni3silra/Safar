@@ -77,4 +77,14 @@ describe('Sidebar', () => {
     
     expect(mockProps.setSidebarCollapsed).toHaveBeenCalled();
   });
+
+  it('filters sessions when typing in the search input', () => {
+    render(<Sidebar {...mockProps} />);
+
+    const searchInput = screen.getByPlaceholderText('Search sessions...');
+    fireEvent.change(searchInput, { target: { value: 'Fav' } });
+
+    expect(screen.getByText('Fav Sess')).toBeInTheDocument();
+    expect(screen.queryByText('Saved Sess')).not.toBeInTheDocument();
+  });
 });

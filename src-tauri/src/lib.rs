@@ -2,6 +2,7 @@
 // Main Tauri Library
 
 mod ssh;
+mod telnet;
 mod storage;
 mod encryption;
 mod commands;
@@ -9,12 +10,15 @@ mod commands;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use ssh::SshManager;
+use telnet::TelnetManager;
 use std::sync::Arc;
 use storage::SessionStorage;
 use tauri::Manager;
 
 // Import commands
+use commands::copilot::*;
 use commands::ssh::*;
+use commands::telnet::*;
 use commands::storage::*;
 
 // ============================================
@@ -23,6 +27,7 @@ use commands::storage::*;
 
 pub struct AppState {
     pub ssh_manager: Arc<SshManager>,
+    pub telnet_manager: Arc<TelnetManager>,
     pub session_storage: RwLock<Option<SessionStorage>>,
 }
 
@@ -30,6 +35,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             ssh_manager: Arc::new(SshManager::new()),
+            telnet_manager: Arc::new(TelnetManager::new()),
             session_storage: RwLock::new(None),
         }
     }
@@ -90,7 +96,7 @@ pub fn run() {
         .setup(|app| {
             // Initialize session storage with app data directory
             let state = app.state::<AppState>();
-            if let Some(app_data_dir) = app.path().app_data_dir().ok() {
+            if let Ok(app_data_dir) = app.path().app_data_dir() {
                 state.init_storage(app_data_dir);
             }
             Ok(())
@@ -106,22 +112,31 @@ pub fn run() {
             ssh_connect,
             ssh_send,
             ssh_resize,
+            ssh_keepalive,
             ssh_disconnect,
             ssh_execute,
             ssh_list_sessions,
             ssh_is_connected,
             ssh_get_performance, // New Manual HP NS/Linux Performance tab
+            ssh_get_process_info, // Guardian Process Monitor
             ssh_sftp_ls,
             ssh_sftp_read,
             ssh_sftp_write,
             ssh_sftp_read_text,
             ssh_sftp_write_text,
+            ssh_sftp_remove,
             ssh_stop_forward,
             ssh_forward_local,
             ssh_list_tunnels,
             ssh_forward_remote,
             ssh_stop_forward_remote,
             ssh_list_remote_tunnels,
+            // Telnet commands
+            telnet_connect,
+            telnet_send,
+            telnet_disconnect,
+            telnet_resize,
+            telnet_set_linemode,
             // Session storage commands
             sessions_get_all,
             sessions_get_favorites,
@@ -147,6 +162,14 @@ pub fn run() {
             storage_unlock,
             storage_set_password,
             storage_remove_password,
+            // Copilot commands
+            copilot_test_proxy,
+            copilot_device_code,
+            copilot_poll_auth,
+            copilot_get_user,
+            copilot_get_token,
+            copilot_get_models,
+            copilot_chat,
 
         ])
         .run(tauri::generate_context!())

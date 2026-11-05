@@ -3,6 +3,7 @@ import { Icons } from "./Icons";
 import { CommandPalette } from "./CommandPalette";
 import { SidebarControls } from "./SidebarControls";
 import { Session, ConnectConfig, SavedSession } from "../types";
+import { getProtocolMeta } from "../utils/protocol";
 
 
 
@@ -41,9 +42,26 @@ export function Sidebar({
     const [recentExpanded, setRecentExpanded] = useState(true);
     const [favoritesExpanded, setFavoritesExpanded] = useState(true);
     const [allExpanded, setAllExpanded] = useState(true);
+    const [searchQuery, setSearchQuery] = useState("");
+    const q = searchQuery.trim().toLowerCase();
+    const matchesSearch = (item: { name: string; host: string; username?: string }) =>
+        !q ||
+        item.name.toLowerCase().includes(q) ||
+        item.host.toLowerCase().includes(q) ||
+        (item.username ? item.username.toLowerCase().includes(q) : false);
+    const filteredActive = activeSessions.filter(matchesSearch);
+    const filteredRecent = recent.filter(matchesSearch);
+    const filteredFavorites = favorites.filter(matchesSearch);
+    const activeSessionObj = activeSessions.find(s => s.id === activeSessionId);
+    const activeProtocol = activeSessionObj?.protocol === "telnet" ? "telnet" : "ssh";
+    const activeIs6530 = Boolean(
+        activeSessionObj?.isNonStop ||
+        activeSessionObj?.protocol === "telnet" ||
+        (activeSessionObj?.termType && activeSessionObj.termType.toLowerCase().includes("6530"))
+    );
 
     // Filter sessions that are NOT favorites (to avoid duplicates)
-    const nonFavoriteSessions = sessions.filter(s => !s.is_favorite);
+    const nonFavoriteSessions = sessions.filter(s => !s.is_favorite && matchesSearch(s));
     return (
         <div className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
             <div className="sidebar-header" style={{ padding: "0" }}>
@@ -138,6 +156,8 @@ export function Sidebar({
                             type="text"
                             className="input"
                             placeholder="Search sessions..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
                             style={{ fontSize: "var(--text-xs)", flex: 1 }}
                         />
                     </div>
@@ -160,25 +180,40 @@ export function Sidebar({
                                 }} />
                             </div>
 
-                            {activeExpanded && activeSessions.map((session) => (
-                                <div
-                                    key={session.id}
-                                    className={`session-item ${activeSessionId === session.id ? "active" : ""}`}
-                                    onClick={() => setActiveSessionId(session.id)}
-                                >
-                                    <div className={`session-icon ${session.connected ? "connected" : ""}`}>
-                                        <Icons.Terminal />
-                                    </div>
-                                    <div className="session-info">
-                                        <div className="session-name">
-                                            {session.name}
-                                            {session.dynamicTitle ? ` (${session.dynamicTitle})` : ''}
+                            {activeExpanded && filteredActive.map((session) => {
+                                const protoMeta = getProtocolMeta(session);
+                                return (
+                                    <div
+                                        key={session.id}
+                                        className={`session-item ${activeSessionId === session.id ? "active" : ""}`}
+                                        onClick={() => setActiveSessionId(session.id)}
+                                    >
+                                        <div className={`session-icon ${session.connected ? "connected" : ""}`}>
+                                            <Icons.Terminal />
                                         </div>
-                                        <div className="session-host">{session.host}</div>
+                                        <div className="session-info">
+                                            <div className="session-name" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                    {session.name}
+                                                    {session.dynamicTitle ? ` (${session.dynamicTitle})` : ''}
+                                                </span>
+                                                <span
+                                                    className="session-proto-badge"
+                                                    style={{
+                                                        background: protoMeta.badgeBg,
+                                                        color: protoMeta.badgeColor,
+                                                        border: `1px solid ${protoMeta.badgeBorder}`,
+                                                    }}
+                                                >
+                                                    {protoMeta.badgeText}
+                                                </span>
+                                            </div>
+                                            <div className="session-host">{session.host}</div>
+                                        </div>
+                                        <div className={`session-status ${session.connected ? "connected" : ""}`} />
                                     </div>
-                                    <div className={`session-status ${session.connected ? "connected" : ""}`} />
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
 
@@ -199,41 +234,61 @@ export function Sidebar({
                                     transition: "transform 0.2s ease"
                                 }} />
                             </div>
-                            {recentExpanded && recent.slice(0, 5).map((saved) => (
-                                <div
-                                    key={saved.id}
-                                    className="session-item"
-                                    onClick={() =>
-                                        onConnect({
-                                            host: saved.host,
-                                            port: saved.port,
-                                            username: saved.username,
-                                            password: saved.password || "",
-                                            privateKeyPath: saved.private_key_path,
-                                            sessionName: saved.name,
-                                            termType: saved.term_type,
-                                            remoteCommand: saved.remote_command,
-                                            backspaceMode: saved.backspace_mode,
-                                        })
-                                    }
-                                >
-                                    <div className="session-icon">
-                                        <Icons.Clock />
+                            {recentExpanded && filteredRecent.slice(0, 5).map((saved) => {
+                                const protoMeta = getProtocolMeta(saved);
+                                return (
+                                    <div
+                                        key={saved.id}
+                                        className="session-item"
+                                        onClick={() =>
+                                            onConnect({
+                                                host: saved.host,
+                                                port: saved.port,
+                                                username: saved.username,
+                                                password: saved.password || "",
+                                                privateKeyPath: saved.private_key_path,
+                                                sessionName: saved.name,
+                                                termType: saved.term_type,
+                                                remoteCommand: saved.remote_command,
+                                                backspaceMode: saved.backspace_mode,
+                                                protocol: saved.protocol,
+                                                serviceName: saved.service_name,
+                                                isNonStop: saved.is_nonstop,
+                                            })
+                                        }
+                                    >
+                                        <div className="session-icon">
+                                            <Icons.Clock />
+                                        </div>
+                                        <div className="session-info">
+                                            <div className="session-name" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                    {saved.name}
+                                                </span>
+                                                <span
+                                                    className="session-proto-badge"
+                                                    style={{
+                                                        background: protoMeta.badgeBg,
+                                                        color: protoMeta.badgeColor,
+                                                        border: `1px solid ${protoMeta.badgeBorder}`,
+                                                    }}
+                                                >
+                                                    {protoMeta.badgeText}
+                                                </span>
+                                            </div>
+                                            <div className="session-host">{saved.username ? `${saved.username}@${saved.host}` : saved.host}</div>
+                                        </div>
+                                        <div className="session-actions" onClick={(e) => e.stopPropagation()}>
+                                            <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onEditSession(saved)} title="Edit">
+                                                <Icons.Edit style={{ width: 12, height: 12 }} />
+                                            </button>
+                                            <button className="icon-btn" style={{ width: 24, height: 24, color: "var(--accent-error)" }} onClick={() => onDeleteSession(saved.id)} title="Delete">
+                                                <Icons.Trash style={{ width: 12, height: 12 }} />
+                                            </button>
+                                        </div>
                                     </div>
-                                    <div className="session-info">
-                                        <div className="session-name">{saved.name}</div>
-                                        <div className="session-host">{saved.username}@{saved.host}</div>
-                                    </div>
-                                    <div className="session-actions" onClick={(e) => e.stopPropagation()}>
-                                        <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onEditSession(saved)} title="Edit">
-                                            <Icons.Edit style={{ width: 12, height: 12 }} />
-                                        </button>
-                                        <button className="icon-btn" style={{ width: 24, height: 24, color: "var(--accent-error)" }} onClick={() => onDeleteSession(saved.id)} title="Delete">
-                                            <Icons.Trash style={{ width: 12, height: 12 }} />
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
 
@@ -254,41 +309,61 @@ export function Sidebar({
                                     transition: "transform 0.2s ease"
                                 }} />
                             </div>
-                            {favoritesExpanded && favorites.map((saved) => (
-                                <div
-                                    key={saved.id}
-                                    className="session-item"
-                                    onClick={() =>
-                                        onConnect({
-                                            host: saved.host,
-                                            port: saved.port,
-                                            username: saved.username,
-                                            password: saved.password || "",
-                                            privateKeyPath: saved.private_key_path,
-                                            sessionName: saved.name,
-                                            termType: saved.term_type,
-                                            remoteCommand: saved.remote_command,
-                                            backspaceMode: saved.backspace_mode,
-                                        })
-                                    }
-                                >
-                                    <div className="session-icon">
-                                        <Icons.Star />
+                            {favoritesExpanded && filteredFavorites.map((saved) => {
+                                const protoMeta = getProtocolMeta(saved);
+                                return (
+                                    <div
+                                        key={saved.id}
+                                        className="session-item"
+                                        onClick={() =>
+                                            onConnect({
+                                                host: saved.host,
+                                                port: saved.port,
+                                                username: saved.username,
+                                                password: saved.password || "",
+                                                privateKeyPath: saved.private_key_path,
+                                                sessionName: saved.name,
+                                                termType: saved.term_type,
+                                                remoteCommand: saved.remote_command,
+                                                backspaceMode: saved.backspace_mode,
+                                                protocol: saved.protocol,
+                                                serviceName: saved.service_name,
+                                                isNonStop: saved.is_nonstop,
+                                            })
+                                        }
+                                    >
+                                        <div className="session-icon">
+                                            <Icons.Star />
+                                        </div>
+                                        <div className="session-info">
+                                            <div className="session-name" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                    {saved.name}
+                                                </span>
+                                                <span
+                                                    className="session-proto-badge"
+                                                    style={{
+                                                        background: protoMeta.badgeBg,
+                                                        color: protoMeta.badgeColor,
+                                                        border: `1px solid ${protoMeta.badgeBorder}`,
+                                                    }}
+                                                >
+                                                    {protoMeta.badgeText}
+                                                </span>
+                                            </div>
+                                            <div className="session-host">{saved.username ? `${saved.username}@${saved.host}` : saved.host}</div>
+                                        </div>
+                                        <div className="session-actions" onClick={(e) => e.stopPropagation()}>
+                                            <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onEditSession(saved)} title="Edit">
+                                                <Icons.Edit style={{ width: 12, height: 12 }} />
+                                            </button>
+                                            <button className="icon-btn" style={{ width: 24, height: 24, color: "var(--accent-error)" }} onClick={() => onDeleteSession(saved.id)} title="Delete">
+                                                <Icons.Trash style={{ width: 12, height: 12 }} />
+                                            </button>
+                                        </div>
                                     </div>
-                                    <div className="session-info">
-                                        <div className="session-name">{saved.name}</div>
-                                        <div className="session-host">{saved.username}@{saved.host}</div>
-                                    </div>
-                                    <div className="session-actions" onClick={(e) => e.stopPropagation()}>
-                                        <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onEditSession(saved)} title="Edit">
-                                            <Icons.Edit style={{ width: 12, height: 12 }} />
-                                        </button>
-                                        <button className="icon-btn" style={{ width: 24, height: 24, color: "var(--accent-error)" }} onClick={() => onDeleteSession(saved.id)} title="Delete">
-                                            <Icons.Trash style={{ width: 12, height: 12 }} />
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
 
@@ -309,41 +384,61 @@ export function Sidebar({
                                     transition: "transform 0.2s ease"
                                 }} />
                             </div>
-                            {allExpanded && nonFavoriteSessions.map((saved) => (
-                                <div
-                                    key={saved.id}
-                                    className="session-item"
-                                    onClick={() =>
-                                        onConnect({
-                                            host: saved.host,
-                                            port: saved.port,
-                                            username: saved.username,
-                                            password: saved.password || "",
-                                            privateKeyPath: saved.private_key_path,
-                                            sessionName: saved.name,
-                                            termType: saved.term_type,
-                                            remoteCommand: saved.remote_command,
-                                            backspaceMode: saved.backspace_mode,
-                                        })
-                                    }
-                                >
-                                    <div className="session-icon">
-                                        <Icons.Server />
+                            {allExpanded && nonFavoriteSessions.map((saved) => {
+                                const protoMeta = getProtocolMeta(saved);
+                                return (
+                                    <div
+                                        key={saved.id}
+                                        className="session-item"
+                                        onClick={() =>
+                                            onConnect({
+                                                host: saved.host,
+                                                port: saved.port,
+                                                username: saved.username,
+                                                password: saved.password || "",
+                                                privateKeyPath: saved.private_key_path,
+                                                sessionName: saved.name,
+                                                termType: saved.term_type,
+                                                remoteCommand: saved.remote_command,
+                                                backspaceMode: saved.backspace_mode,
+                                                protocol: saved.protocol,
+                                                serviceName: saved.service_name,
+                                                isNonStop: saved.is_nonstop,
+                                            })
+                                        }
+                                    >
+                                        <div className="session-icon">
+                                            <Icons.Server />
+                                        </div>
+                                        <div className="session-info">
+                                            <div className="session-name" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                    {saved.name}
+                                                </span>
+                                                <span
+                                                    className="session-proto-badge"
+                                                    style={{
+                                                        background: protoMeta.badgeBg,
+                                                        color: protoMeta.badgeColor,
+                                                        border: `1px solid ${protoMeta.badgeBorder}`,
+                                                    }}
+                                                >
+                                                    {protoMeta.badgeText}
+                                                </span>
+                                            </div>
+                                            <div className="session-host">{saved.username ? `${saved.username}@${saved.host}` : saved.host}</div>
+                                        </div>
+                                        <div className="session-actions" onClick={(e) => e.stopPropagation()}>
+                                            <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onEditSession(saved)} title="Edit">
+                                                <Icons.Edit style={{ width: 12, height: 12 }} />
+                                            </button>
+                                            <button className="icon-btn" style={{ width: 24, height: 24, color: "var(--accent-error)" }} onClick={() => onDeleteSession(saved.id)} title="Delete">
+                                                <Icons.Trash style={{ width: 12, height: 12 }} />
+                                            </button>
+                                        </div>
                                     </div>
-                                    <div className="session-info">
-                                        <div className="session-name">{saved.name}</div>
-                                        <div className="session-host">{saved.username}@{saved.host}</div>
-                                    </div>
-                                    <div className="session-actions" onClick={(e) => e.stopPropagation()}>
-                                        <button className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => onEditSession(saved)} title="Edit">
-                                            <Icons.Edit style={{ width: 12, height: 12 }} />
-                                        </button>
-                                        <button className="icon-btn" style={{ width: 24, height: 24, color: "var(--accent-error)" }} onClick={() => onDeleteSession(saved.id)} title="Delete">
-                                            <Icons.Trash style={{ width: 12, height: 12 }} />
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
 
@@ -352,10 +447,10 @@ export function Sidebar({
                 </div>
             )}
             {!sidebarCollapsed && sidebarView === "snippets" && (
-                <CommandPalette sessionId={activeSessionId} />
+                <CommandPalette sessionId={activeSessionId} protocol={activeProtocol} />
             )}
             {!sidebarCollapsed && sidebarView === "controls" && (
-                <SidebarControls sessionId={activeSessionId} />
+                <SidebarControls sessionId={activeSessionId} protocol={activeProtocol} is6530={activeIs6530} />
             )}
         </div>
     );
