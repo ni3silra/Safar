@@ -1467,20 +1467,19 @@ export class Screen6530 {
   }
 
   // ESC a (Read Cursor Address)
-  // Format per 6530 Programmer's Guide:
-  //   Conversational: SOH _ ! <row> <col> CR  ('!' = 0x21 = Page 1)
-  //   Block Mode:     SOH _ <page> <row> <col> ETX LRC
+  // Format per 6530 Specification Section 3.4:
+  //   Conversational: [ SOH(1), 95('_'), 33('!'), cursorY+32, cursorX+32, CR(13) ]
+  //   Block Mode:     [ SOH(1), 95('_'), page+33, cursorY+32, cursorX+32, ETX(3), NUL(0) ]
   generateCursorAddressResponse(isBlockMode = this.blockMode, row?: number, col?: number): string {
     const page = this._activeWritePage;
     const r = Math.min(SCREEN_ROWS - 1, Math.max(0, row ?? page.cursorRow));
     const c = Math.min(SCREEN_COLS - 1, Math.max(0, col ?? page.cursorCol));
-    const rowChar = String.fromCharCode(r + 0x20);
-    const colChar = String.fromCharCode(c + 0x20);
     if (isBlockMode) {
-      const pageChar = String.fromCharCode(Math.max(1, this.selectedPage) + 0x20);
-      return Screen6530.frameBlockMessage('\x01', `_${pageChar}${rowChar}${colChar}`);
+      const pageIndex = Math.max(0, this.displayPage === 0 ? 0 : this.displayPage - 1);
+      const pageByte = pageIndex + 33;
+      return String.fromCharCode(1, 95, pageByte, r + 32, c + 32, 3, 0);
     }
-    return `\x01_!${rowChar}${colChar}\r`;
+    return String.fromCharCode(1, 95, 33, r + 32, c + 32, 13);
   }
 
   // ─── Read Buffer (ESC <), Read With Address (ESC = / ESC - J), Read With Address All (ESC ] / ESC - K) ───
@@ -1612,42 +1611,60 @@ export class Screen6530 {
     return Screen6530.frameBlockMessage('\x02', lines.join('\r'));
   }
 
+  // ─── Build 6530 Function Key Sequence ───
+  // Per 6530 Specification Section 4:
+  // 4.1 Conversational mode (5-byte form):
+  //     [ SOH(1), <key-id>, screenX+32, screenY+32, CR(13) ]
+  // 4.2 Block mode (7-byte form):
+  //     [ SOH(1), <key-id>, page+33, cursorY+32, cursorX+32, ETX(3), NUL(0) ]
+  buildFunctionKeySequence(keyId: number, cursorY?: number, cursorX?: number): string {
+    const page = this._activeDisplayPage;
+    const row = Math.max(0, Math.min(SCREEN_ROWS - 1, cursorY ?? page.cursorRow));
+    const col = Math.max(0, Math.min(SCREEN_COLS - 1, cursorX ?? page.cursorCol));
+
+    if (this.blockMode) {
+      this.keyboardLocked = true;
+      const pageIndex = Math.max(0, this.displayPage === 0 ? 0 : this.displayPage - 1);
+      const pageByte = pageIndex + 33;
+      const rowByte = row + 32;
+      const colByte = col + 32;
+      return String.fromCharCode(1, keyId, pageByte, rowByte, colByte, 3, 0);
+    } else {
+      const colByte = col + 32;
+      const rowByte = row + 32;
+      return String.fromCharCode(1, keyId, colByte, rowByte, 13);
+    }
+  }
+
   // ─── Generate Block Mode Function Key / Enter Response ───
-  // Per 6530 Programmer's Guide Table 3-11:
-  // When a function key (or Enter in block mode) is pressed:
-  //   SOH <keycode> <page> <cursor_row> <cursor_col> [field_data] ETX LRC
-  // Also preserves compatibility with legacy WRITEREAD callers when not in blockMode.
+  // Uses buildFunctionKeySequence in Block Mode (7-byte ETX NUL form) per Section 4.2
+  // and maintains backward compatibility for legacy WRITEREAD callers in Conversational mode.
   generateWriteReadResponse(triggerKey?: string): string {
     const page = this._activeDisplayPage;
-    const cursorRow = String.fromCharCode(page.cursorRow + 0x20);
-    const cursorCol = String.fromCharCode(page.cursorCol + 0x20);
-    const pageChar = String.fromCharCode(Math.max(1, this.displayPage) + 0x20);
-
-    let keyChar = 'v'; // 'v' is standard 6530 Return/Enter keycode in Table 3-11
+    let keyId = 118; // 'v' is standard 6530 Return/Enter keycode (code 118)
     let isEnter = true;
+
     if (triggerKey) {
-      if (triggerKey.startsWith('\x1b') && triggerKey.length >= 2) {
-        keyChar = triggerKey[1];
+      if (triggerKey.length === 1 && triggerKey !== '\r' && triggerKey !== '\n') {
+        keyId = triggerKey.charCodeAt(0);
         isEnter = false;
       } else if (triggerKey.startsWith('\x01') && triggerKey.length >= 2) {
-        keyChar = triggerKey[1];
+        keyId = triggerKey.charCodeAt(1);
         isEnter = false;
-      } else if (triggerKey.length === 1 && triggerKey !== '\r' && triggerKey !== '\n') {
-        keyChar = triggerKey;
+      } else if (triggerKey.startsWith('\x1b') && triggerKey.length >= 2) {
+        keyId = triggerKey.charCodeAt(1);
         isEnter = false;
       }
     }
 
-    // In 6530 Block Mode (both Nonprotect Submode for TEDIT/EDIT and Protect Submode for Pathway/forms):
-    // Always send standard 6530 Block Function Key notification: SOH <keycode> <page> <row> <col> ETX <LRC>
-    // The host will then issue ESC < (Read Buffer) or ESC = / ESC ] (Read With Address) to read data.
     if (this.blockMode) {
-      this.keyboardLocked = true;
-      return Screen6530.frameBlockMessage('\x01', `${keyChar}${pageChar}${cursorRow}${cursorCol}`);
+      return this.buildFunctionKeySequence(keyId, page.cursorRow, page.cursorCol);
     }
 
     const fieldData = this.collectFieldData();
-    const prefix = isEnter ? '\x12' : '\x01' + keyChar;
+    const cursorRow = String.fromCharCode(page.cursorRow + 0x20);
+    const cursorCol = String.fromCharCode(page.cursorCol + 0x20);
+    const prefix = isEnter ? '\x12' : '\x01' + String.fromCharCode(keyId);
     const response = prefix + cursorRow + cursorCol + fieldData + '\r';
 
     this._clearModifiedFlags();

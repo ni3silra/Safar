@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Screen6530, EmulChar6530, createDefaultDataTypeTable } from '../lib/Screen6530';
-import { translate6530ToAnsi } from '../components/Terminal';
+import { translate6530ToAnsi, translateFunctionKeyCommand } from '../components/Terminal';
 
 describe('Screen6530 Engine', () => {
   let screen: Screen6530;
@@ -684,6 +684,94 @@ describe('translate6530ToAnsi Protocol Parser', () => {
       screen.startField(0x20, 0x40); // Field starts at (2, 5), text at (2, 6)
       const fieldStart = screen.findFieldStart(2, 10);
       expect(fieldStart).toEqual({ row: 2, col: 6 });
+    });
+
+    it('translates function key toolbar commands (F1..F16, SF1..SF16) per Section 2 & 4.3', () => {
+      // Base F1..F12: 64..75 ('@'..'K')
+      expect(translateFunctionKeyCommand('F1')).toBe(64);
+      expect(translateFunctionKeyCommand('F2')).toBe(65);
+      expect(translateFunctionKeyCommand('F8')).toBe(71);
+      expect(translateFunctionKeyCommand('F12')).toBe(75);
+
+      // Shifted SF1..SF12: 96..107 ('`'..'k')
+      expect(translateFunctionKeyCommand('SF1')).toBe(96);
+      expect(translateFunctionKeyCommand('SF2')).toBe(97);
+      expect(translateFunctionKeyCommand('SF8')).toBe(103);
+      expect(translateFunctionKeyCommand('SF12')).toBe(107);
+      expect(translateFunctionKeyCommand('S-F1')).toBe(96);
+
+      // F13..F16 (Ctrl+F3..F6): 76..79 ('L'..'O')
+      expect(translateFunctionKeyCommand('F13')).toBe(76);
+      expect(translateFunctionKeyCommand('F14')).toBe(77);
+      expect(translateFunctionKeyCommand('F15')).toBe(78);
+      expect(translateFunctionKeyCommand('F16')).toBe(79);
+
+      // SF13..SF16 (Ctrl+Shift+F3..F6): 108..111 ('l'..'o')
+      expect(translateFunctionKeyCommand('SF13')).toBe(108);
+      expect(translateFunctionKeyCommand('SF14')).toBe(109);
+      expect(translateFunctionKeyCommand('SF15')).toBe(110);
+      expect(translateFunctionKeyCommand('SF16')).toBe(111);
+      expect(translateFunctionKeyCommand('S-F13')).toBe(108);
+
+      // Non-function key commands return null
+      expect(translateFunctionKeyCommand('Ctrl+C')).toBeNull();
+      expect(translateFunctionKeyCommand('Connect')).toBeNull();
+      expect(translateFunctionKeyCommand('F17')).toBeNull();
+      expect(translateFunctionKeyCommand('')).toBeNull();
+    });
+
+    it('builds 5-byte Conversational Mode function key sequence [SOH, key-id, col+32, row+32, CR] per Section 4.1', () => {
+      const scr = new Screen6530();
+      // Conversational mode: screenX=15, screenY=4, keyId=64 (F1)
+      const seq = scr.buildFunctionKeySequence(64, 4, 15);
+      expect(seq.length).toBe(5);
+      expect(seq.charCodeAt(0)).toBe(0x01); // SOH
+      expect(seq.charCodeAt(1)).toBe(64);   // keyId (F1)
+      expect(seq.charCodeAt(2)).toBe(15 + 32); // screenX + 32
+      expect(seq.charCodeAt(3)).toBe(4 + 32);  // screenY + 32
+      expect(seq.charCodeAt(4)).toBe(0x0D); // CR
+      // Conversational mode does NOT lock keyboard
+      expect(scr.keyboardLocked).toBe(false);
+    });
+
+    it('builds 7-byte Block Mode function key sequence [SOH, key-id, page+33, row+32, col+32, ETX, NUL] per Section 4.2', () => {
+      const scr = new Screen6530();
+      scr.enterBlockMode();
+      scr.selectDisplayPage(1); // Page 1 -> offset byte = 0 + 33 = 33 ('!')
+
+      // Block mode: row=8, col=20, keyId=96 (SF1)
+      const seq = scr.buildFunctionKeySequence(96, 8, 20);
+      expect(seq.length).toBe(7);
+      expect(seq.charCodeAt(0)).toBe(0x01); // SOH
+      expect(seq.charCodeAt(1)).toBe(96);   // keyId (SF1)
+      expect(seq.charCodeAt(2)).toBe(33);   // page + 33 ('!')
+      expect(seq.charCodeAt(3)).toBe(8 + 32);  // cursorY + 32
+      expect(seq.charCodeAt(4)).toBe(20 + 32); // cursorX + 32
+      expect(seq.charCodeAt(5)).toBe(0x03); // ETX
+      expect(seq.charCodeAt(6)).toBe(0x00); // NUL (No LRC!)
+
+      // Section 5: Transmitting an F-key in block mode immediately locks the keyboard
+      expect(scr.keyboardLocked).toBe(true);
+
+      // Section 3.1: Host unlocks keyboard with ESC b
+      const unlockRes = translate6530ToAnsi('\x1bb', true);
+      expect(unlockRes.screenCommands).toContainEqual({ type: 'unlockKeyboard' });
+    });
+
+    it('generates 7-byte Block Mode cursor address response ending in ETX NUL per Section 3.4', () => {
+      const scr = new Screen6530();
+      scr.enterBlockMode();
+      scr.selectDisplayPage(1);
+
+      const resp = scr.generateCursorAddressResponse(true, 6, 12);
+      expect(resp.length).toBe(7);
+      expect(resp.charCodeAt(0)).toBe(0x01); // SOH
+      expect(resp.charCodeAt(1)).toBe(95);   // 95 ('_')
+      expect(resp.charCodeAt(2)).toBe(33);   // page + 33 ('!')
+      expect(resp.charCodeAt(3)).toBe(6 + 32);  // row + 32
+      expect(resp.charCodeAt(4)).toBe(12 + 32); // col + 32
+      expect(resp.charCodeAt(5)).toBe(0x03); // ETX
+      expect(resp.charCodeAt(6)).toBe(0x00); // NUL (no LRC)
     });
   });
 });

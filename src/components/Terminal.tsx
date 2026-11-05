@@ -99,6 +99,28 @@ const ALT_FKEY_MAP: Record<string, { normal: string; shift: string }> = {
   "F6": { normal: "F16", shift: "S-F16" },
 };
 
+/**
+ * Translates a 6530 on-screen or physical function key command into the key-id byte
+ * per Tandem 6530 Specification Section 2 & 4.3:
+ * - F1..F12: base 64..75 (Shift: 96..107, Ctrl/Alt: 74..85, Ctrl+Shift: 106..117)
+ * - F13..F16: base F3..F6 with Ctrl modifier: 66+10 = 76..79 (Shift+Ctrl: 66+10+32 = 108..111)
+ */
+export function translateFunctionKeyCommand(command: string): number | null {
+  const isShift = command.startsWith("SF") || command.startsWith("S-F");
+  const rawNum = isShift
+    ? (command.startsWith("SF") ? command.slice(2) : command.slice(3))
+    : (command.startsWith("F") ? command.slice(1) : "");
+  const num = parseInt(rawNum, 10);
+  if (isNaN(num) || num < 1 || num > 16) return null;
+
+  if (num <= 12) {
+    return (isShift ? 96 : 64) + (num - 1);
+  } else {
+    // F13..F16 map to F3..F6 with Ctrl (+10): 66+10=76..79; Shifted: 108..111
+    return (isShift ? 108 : 76) + (num - 13);
+  }
+}
+
 // ─── HP 6530 → ANSI/VT Escape Sequence Translator ───
 // Converts 6530-specific sequences to ANSI equivalents that xterm.js can render.
 // Supports both Conversational Mode and Block Mode (multi-page memory, TEDIT, Pathway, DBU).
@@ -1209,7 +1231,8 @@ export function TerminalComponent({
   // UI State
   const [showSearch, setShowSearch] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [showToolbar, setShowToolbar] = useState(false);
+  const [showToolbar, setShowToolbar] = useState(isConfigured6530);
+  const [showShiftButtons, setShowShiftButtons] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [isBlockMode, setIsBlockMode] = useState(false);
   const [isKeyboardLocked, setIsKeyboardLocked] = useState(false);
@@ -1433,6 +1456,52 @@ export function TerminalComponent({
 
       // HP 6530 navigation & function keys
       if (is6530Ref.current && e.type === "keydown") {
+        // F-key interception (supports F1..F16, Alt+F1..Alt+F6 -> F11..F16, Ctrl+F3..Ctrl+F6 -> F13..F16, Shift)
+        const isFKey = Boolean(
+          (e.altKey && ALT_FKEY_MAP[e.key]) ||
+          FKEY_MAP[e.key] ||
+          (e.key.startsWith("F") && !isNaN(parseInt(e.key.slice(1), 10)))
+        );
+
+        if (isFKey) {
+          e.preventDefault();
+          const screen = screen6530Ref.current;
+          let num = 1;
+          if (e.altKey && ALT_FKEY_MAP[e.key]) {
+            num = parseInt(ALT_FKEY_MAP[e.key].normal.slice(1), 10);
+          } else {
+            num = parseInt(e.key.slice(1), 10);
+          }
+
+          if (!isNaN(num) && num >= 1 && num <= 16) {
+            let keyId: number;
+            const isShift = e.shiftKey;
+            const isCtrlOrAlt = e.ctrlKey || e.altKey;
+
+            if (isCtrlOrAlt && num >= 3 && num <= 6) {
+              // F13..F16 mapped as Ctrl+F3..Ctrl+F6 (Section 2)
+              keyId = (isShift ? 108 : 76) + (num - 3);
+            } else if (num <= 12) {
+              // Base F1..F12 with modifiers (plain: 64, shift: +32, ctrl/alt: +10, both: +42)
+              const base = 64 + (num - 1);
+              const modOffset = (isShift ? 32 : 0) + (isCtrlOrAlt ? 10 : 0);
+              keyId = base + modOffset;
+            } else {
+              // F13..F16 direct
+              keyId = (isShift ? 108 : 76) + (num - 13);
+            }
+
+            const activeBuf = xtermRef.current?.buffer.active;
+            const cursorY = isBlockModeRef.current ? screen.cursorRow : (activeBuf ? activeBuf.cursorY : screen.cursorRow);
+            const cursorX = isBlockModeRef.current ? screen.cursorCol : (activeBuf ? activeBuf.cursorX : screen.cursorCol);
+
+            const seq = screen.buildFunctionKeySequence(keyId, cursorY, cursorX);
+            sendData(seq);
+            setIsKeyboardLocked(screen.keyboardLocked);
+            return false;
+          }
+        }
+
         // Insert key in Block Mode toggles local insert mode
         if (isBlockModeRef.current && e.key === "Insert" && !e.ctrlKey && !e.shiftKey && !e.altKey) {
           e.preventDefault();
@@ -1442,7 +1511,8 @@ export function TerminalComponent({
           return false;
         }
 
-        // Lock Keyboard enforcement in Block Mode (Part 2 Step 13)
+        // Lock Keyboard enforcement in Block Mode (Part 2 Step 13 & Section 5)
+        // User cannot type text into screen while keyboard is locked.
         if (isBlockModeRef.current && screen6530Ref.current.keyboardLocked && !e.ctrlKey && !e.metaKey) {
           e.preventDefault();
           return false;
@@ -1523,30 +1593,6 @@ export function TerminalComponent({
               e.preventDefault();
               return false;
             }
-          }
-        }
-
-        // F-key interception (supports F1..F16 and Alt+F1..Alt+F6 -> F11..F16)
-        const fkeyEntry = (e.altKey && ALT_FKEY_MAP[e.key]) || FKEY_MAP[e.key];
-        if (fkeyEntry) {
-          const seqKey = e.shiftKey ? fkeyEntry.shift : fkeyEntry.normal;
-          const seq = HP_6530_SEQUENCES[seqKey];
-          if (seq) {
-            e.preventDefault();
-            const screen = screen6530Ref.current;
-            if (isBlockModeRef.current && (screen.hasFields || screen.blockMode)) {
-              const fieldData = screen.collectFieldData();
-              if (fieldData.trim()) addHistory(fieldData.trim());
-              const response = screen.generateWriteReadResponse(seq);
-              sendData(response);
-            } else {
-              const keyChar = seq.length >= 2 ? seq[1] : seq;
-              const activeBuf = xtermRef.current?.buffer.active;
-              const rChar = String.fromCharCode(Math.min(23, Math.max(0, activeBuf ? activeBuf.cursorY : screen.cursorRow)) + 0x20);
-              const cChar = String.fromCharCode(Math.min(79, Math.max(0, activeBuf ? activeBuf.cursorX : screen.cursorCol)) + 0x20);
-              sendData(`\x01${keyChar}${rChar}${cChar}\r`);
-            }
-            return false;
           }
         }
       }
@@ -1647,6 +1693,7 @@ export function TerminalComponent({
         if (screen.hasFields || screen.blockMode) {
           const response = screen.generateWriteReadResponse('\r');
           sendData(response);
+          setIsKeyboardLocked(screen.keyboardLocked);
           const fieldData = screen.collectFieldData();
           if (fieldData.trim()) addHistory(fieldData.trim());
         } else {
@@ -1762,9 +1809,6 @@ export function TerminalComponent({
                   terminal.options.scrollback = 0;
                   terminal.write("\x1b[3J");
                 }
-                if (protocol === "telnet") {
-                  invoke("telnet_set_linemode", { sessionId, enabled: false }).catch(() => {});
-                }
                 break;
               case 'enterConvMode':
                 screen.enterConversationalMode();
@@ -1775,9 +1819,6 @@ export function TerminalComponent({
                 if (terminal) {
                   terminal.options.scrollback = scrollback;
                   terminal.write("\x1b[0m\x1b[2J\x1b[3J\x1b[H");
-                }
-                if (protocol === "telnet") {
-                  invoke("telnet_set_linemode", { sessionId, enabled: true }).catch(() => {});
                 }
                 break;
               case 'protectSubEnter':
@@ -1900,9 +1941,15 @@ export function TerminalComponent({
               case 'readColorConfig':
                 sendData(screen.generateColorConfigResponse(isBlockModeRef.current));
                 break;
-              case 'simulateFKey':
-                sendData(screen.generateWriteReadResponse('\x01' + (cmd.char || 'v')));
+              case 'simulateFKey': {
+                const keyId = cmd.char ? cmd.char.charCodeAt(0) : 64; // default F1
+                const activeBuf = xtermRef.current?.buffer.active;
+                const cursorY = isBlockModeRef.current ? screen.cursorRow : (activeBuf ? activeBuf.cursorY : screen.cursorRow);
+                const cursorX = isBlockModeRef.current ? screen.cursorCol : (activeBuf ? activeBuf.cursorX : screen.cursorCol);
+                sendData(screen.buildFunctionKeySequence(keyId, cursorY, cursorX));
+                setIsKeyboardLocked(screen.keyboardLocked);
                 break;
+              }
               case 'statusMessage':
                 screen.statusLine = cmd.char ?? '';
                 setStatusLineText(screen.statusLine);
@@ -2071,10 +2118,22 @@ export function TerminalComponent({
   const findPrev = () => searchAddonRef.current?.findPrevious(searchTerm);
 
   const handleToolbarKey = (key: string) => {
+    const screen = screen6530Ref.current;
+    const fKeyId = translateFunctionKeyCommand(key);
+    if (is6530Ref.current && fKeyId !== null) {
+      const activeBuf = xtermRef.current?.buffer.active;
+      const cursorY = isBlockModeRef.current ? screen.cursorRow : (activeBuf ? activeBuf.cursorY : screen.cursorRow);
+      const cursorX = isBlockModeRef.current ? screen.cursorCol : (activeBuf ? activeBuf.cursorX : screen.cursorCol);
+      const seq = screen.buildFunctionKeySequence(fKeyId, cursorY, cursorX);
+      sendData(seq);
+      setIsKeyboardLocked(screen.keyboardLocked);
+      terminalRef.current?.focus();
+      return;
+    }
+
     const seq = CONTROL_SEQUENCES[key];
     if (!seq) return;
     if (is6530Ref.current) {
-      const screen = screen6530Ref.current;
       if (key === "Ctrl+C") {
         if (!isBlockModeRef.current) {
           sendData(seq);
@@ -2094,12 +2153,13 @@ export function TerminalComponent({
       }
       if (isBlockModeRef.current && (screen.hasFields || screen.blockMode)) {
         sendData(screen.generateWriteReadResponse(seq));
+        setIsKeyboardLocked(screen.keyboardLocked);
       } else {
-        const keyChar = seq.length >= 2 ? seq[1] : seq;
         const activeBuf = xtermRef.current?.buffer.active;
-        const rChar = String.fromCharCode(Math.min(23, Math.max(0, activeBuf ? activeBuf.cursorY : screen.cursorRow)) + 0x20);
-        const cChar = String.fromCharCode(Math.min(79, Math.max(0, activeBuf ? activeBuf.cursorX : screen.cursorCol)) + 0x20);
-        sendData(`\x01${keyChar}${rChar}${cChar}\r`);
+        const cursorY = activeBuf ? activeBuf.cursorY : screen.cursorRow;
+        const cursorX = activeBuf ? activeBuf.cursorX : screen.cursorCol;
+        const keyId = seq.charCodeAt(seq.length - 1);
+        sendData(screen.buildFunctionKeySequence(keyId, cursorY, cursorX));
       }
     } else {
       sendData(seq);
@@ -2188,57 +2248,6 @@ export function TerminalComponent({
         </button>
       </div>
 
-      {/* Control Sequence Toolbar Header */}
-      {showToolbar && (
-        <div style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid rgba(255, 255, 255, 0.05)" }}>
-          {/* Row 1 */}
-          <div style={{
-            display: "flex", gap: "6px", padding: "4px 6px 2px 6px",
-            background: "rgba(0, 0, 0, 0.2)",
-            overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
-          }}>
-            {["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16"].map(key => (
-              <button
-                key={key}
-                onClick={() => handleToolbarKey(key)}
-                style={{
-                  padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
-                  color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
-                onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
-                title={`Send ${key}`}
-              >
-                {key}
-              </button>
-            ))}
-          </div>
-
-          {/* Row 2 */}
-          <div style={{
-            display: "flex", gap: "6px", padding: "2px 6px 6px 6px",
-            background: "rgba(0, 0, 0, 0.2)",
-            overflowX: "auto", whiteSpace: "nowrap", flexShrink: 0
-          }}>
-            {["S-F1", "S-F2", "S-F3", "S-F4", "S-F5", "S-F6", "S-F7", "S-F8", "S-F9", "S-F10", "S-F11", "S-F12", "S-F13", "S-F14", "S-F15", "S-F16", "Ctrl+C", "Up", "Down"].map(key => (
-              <button
-                key={key}
-                onClick={() => handleToolbarKey(key)}
-                style={{
-                  padding: "4px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
-                  color: "#e6edf3", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
-                onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
-                title={`Send ${key}`}
-              >
-                {key}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Terminal View */}
       <div
         ref={terminalRef}
@@ -2277,6 +2286,157 @@ export function TerminalComponent({
           </div>
           <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#e2e8f0" }}>
             {statusLineText || screen6530Ref.current.statusLine}
+          </div>
+        </div>
+      )}
+
+      {/* On-Screen Function Keys Toolbar (Below terminal screen, per 6530 Spec Section 1) */}
+      {showToolbar && (
+        <div style={{
+          display: "flex",
+          flexDirection: "column",
+          background: "rgba(15, 23, 42, 0.8)",
+          borderTop: "1px solid rgba(255, 255, 255, 0.08)",
+          padding: "4px 8px",
+          gap: "4px",
+          userSelect: "none",
+          flexShrink: 0
+        }}>
+          {/* Row 1: F1..F8 (and SF1..SF8 when showShiftButtons is active) + Connect/Disconnect */}
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", overflowX: "auto" }}>
+            <div style={{ display: "flex", gap: "4px" }}>
+              {["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8"].map(key => (
+                <button
+                  key={key}
+                  onClick={() => handleToolbarKey(key)}
+                  style={{
+                    padding: "3px 8px", background: "rgba(255, 255, 255, 0.06)", border: "1px solid rgba(255, 255, 255, 0.12)",
+                    color: "#e2e8f0", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "36px"
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)"}
+                  title={`Send ${key}`}
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
+
+            {showShiftButtons && (
+              <div style={{ display: "flex", gap: "4px", paddingLeft: "6px", borderLeft: "1px solid rgba(255, 255, 255, 0.15)" }}>
+                {["SF1", "SF2", "SF3", "SF4", "SF5", "SF6", "SF7", "SF8"].map(key => (
+                  <button
+                    key={key}
+                    onClick={() => handleToolbarKey(key)}
+                    style={{
+                      padding: "3px 8px", background: "rgba(59, 130, 246, 0.15)", border: "1px solid rgba(59, 130, 246, 0.3)",
+                      color: "#93c5fd", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "40px"
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.28)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.15)"}
+                    title={`Send ${key}`}
+                  >
+                    {key}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div style={{ marginLeft: "auto", display: "flex", gap: "6px" }}>
+              <button
+                onClick={() => {
+                  if (isDisconnected) {
+                    setIsDisconnected(false);
+                    terminalRef.current?.focus();
+                    if (protocol !== "telnet") {
+                      invoke("ssh_keepalive", { sessionId }).catch(() => {});
+                    }
+                  } else {
+                    _onDisconnect?.();
+                  }
+                }}
+                style={{
+                  padding: "3px 10px", fontSize: "11px", fontWeight: 600, borderRadius: "4px", cursor: "pointer",
+                  color: isDisconnected ? "#22c55e" : "#ef4444",
+                  border: isDisconnected ? "1px solid rgba(34, 197, 94, 0.4)" : "1px solid rgba(239, 68, 68, 0.4)",
+                  background: isDisconnected ? "rgba(34, 197, 94, 0.1)" : "rgba(239, 68, 68, 0.1)"
+                }}
+                title={isDisconnected ? "Connect to host" : "Disconnect session"}
+              >
+                {isDisconnected ? "Connect" : "Disconnect"}
+              </button>
+            </div>
+          </div>
+
+          {/* Row 2: F9..F16 (and SF9..SF16 when showShiftButtons is active) + Toggle Shift + Controls */}
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", overflowX: "auto" }}>
+            <div style={{ display: "flex", gap: "4px" }}>
+              {["F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16"].map(key => (
+                <button
+                  key={key}
+                  onClick={() => handleToolbarKey(key)}
+                  style={{
+                    padding: "3px 8px", background: "rgba(255, 255, 255, 0.06)", border: "1px solid rgba(255, 255, 255, 0.12)",
+                    color: "#e2e8f0", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "36px"
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)"}
+                  title={`Send ${key}`}
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
+
+            {showShiftButtons && (
+              <div style={{ display: "flex", gap: "4px", paddingLeft: "6px", borderLeft: "1px solid rgba(255, 255, 255, 0.15)" }}>
+                {["SF9", "SF10", "SF11", "SF12", "SF13", "SF14", "SF15", "SF16"].map(key => (
+                  <button
+                    key={key}
+                    onClick={() => handleToolbarKey(key)}
+                    style={{
+                      padding: "3px 8px", background: "rgba(59, 130, 246, 0.15)", border: "1px solid rgba(59, 130, 246, 0.3)",
+                      color: "#93c5fd", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "40px"
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.28)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.15)"}
+                    title={`Send ${key}`}
+                  >
+                    {key}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div style={{ marginLeft: "auto", display: "flex", gap: "4px" }}>
+              <button
+                onClick={() => setShowShiftButtons(!showShiftButtons)}
+                style={{
+                  padding: "3px 8px", fontSize: "11px", fontWeight: 600, borderRadius: "4px", cursor: "pointer",
+                  background: showShiftButtons ? "rgba(99, 102, 241, 0.25)" : "rgba(255, 255, 255, 0.05)",
+                  border: showShiftButtons ? "1px solid rgba(99, 102, 241, 0.5)" : "1px solid rgba(255, 255, 255, 0.1)",
+                  color: showShiftButtons ? "#a5b4fc" : "#94a3b8"
+                }}
+                title="Toggle Shifted Function Keys (SF1..SF16)"
+              >
+                SF Keys
+              </button>
+              {["Ctrl+C", "Up", "Down"].map(key => (
+                <button
+                  key={key}
+                  onClick={() => handleToolbarKey(key)}
+                  style={{
+                    padding: "3px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
+                    color: "#94a3b8", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
+                  title={`Send ${key}`}
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
