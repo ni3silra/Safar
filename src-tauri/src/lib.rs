@@ -95,7 +95,7 @@ pub fn run() {
         .setup(|app| {
             // Initialize session storage with app data directory
             let state = app.state::<AppState>();
-            if let Some(app_data_dir) = app.path().app_data_dir().ok() {
+            if let Ok(app_data_dir) = app.path().app_data_dir() {
                 state.init_storage(app_data_dir);
             }
             Ok(())

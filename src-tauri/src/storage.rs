@@ -165,7 +165,7 @@ impl SessionStorage {
             let content = fs::read_to_string(&file_path)?;
             
             // Try to parse as EncryptedData first
-            if let Ok(_) = serde_json::from_str::<EncryptedData>(&content) {
+            if serde_json::from_str::<EncryptedData>(&content).is_ok() {
                 is_locked = true;
             } else {
                 // Try plain JSON

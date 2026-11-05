@@ -311,7 +311,7 @@ impl TelnetManager {
             while *running_clone.read() {
                 let read_res = {
                     let mut guard = stream_writer.lock().unwrap();
-                    read_bytes(&mut *guard, &mut read_buf)
+                    read_bytes(&mut guard, &mut read_buf)
                 };
 
                 match read_res {
@@ -369,7 +369,7 @@ impl TelnetManager {
                                                 },
                                             };
                                             if !response.is_empty() {
-                                                let _ = send_bytes(&mut *stream_writer.lock().unwrap(), &response);
+                                                let _ = send_bytes(&mut stream_writer.lock().unwrap(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -396,7 +396,7 @@ impl TelnetManager {
                                                 response = vec![IAC, WONT, opt];
                                             }
                                             if !response.is_empty() {
-                                                let _ = send_bytes(&mut *stream_writer.lock().unwrap(), &response);
+                                                let _ = send_bytes(&mut stream_writer.lock().unwrap(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -416,7 +416,7 @@ impl TelnetManager {
                                                 },
                                             };
                                             if !response.is_empty() {
-                                                let _ = send_bytes(&mut *stream_writer.lock().unwrap(), &response);
+                                                let _ = send_bytes(&mut stream_writer.lock().unwrap(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -440,7 +440,7 @@ impl TelnetManager {
                                                 response = vec![IAC, DONT, opt];
                                             }
                                             if !response.is_empty() {
-                                                let _ = send_bytes(&mut *stream_writer.lock().unwrap(), &response);
+                                                let _ = send_bytes(&mut stream_writer.lock().unwrap(), &response);
                                                 log_hex(&app_handle_clone, &session_id_clone, "SEND", &response, "");
                                             }
                                             i += 3;
@@ -463,7 +463,7 @@ impl TelnetManager {
                                                     let mut sub_resp = vec![IAC, SB, OPT_TERMINAL_TYPE, 0]; // 0 = IS
                                                     sub_resp.extend_from_slice(term_type_to_send.as_bytes());
                                                     sub_resp.extend_from_slice(&[IAC, SE]);
-                                                    let _ = send_bytes(&mut *stream_writer.lock().unwrap(), &sub_resp);
+                                                    let _ = send_bytes(&mut stream_writer.lock().unwrap(), &sub_resp);
                                                     log_hex(&app_handle_clone, &session_id_clone, "SEND", &sub_resp, &format!("RFC Terminal-Type {}", term_type_to_send));
                                                 }
                                             }
@@ -524,7 +524,7 @@ impl TelnetManager {
                                                 format!("{}\r\n", svc)
                                             };
 
-                                            let _ = send_bytes(&mut *stream_writer.lock().unwrap(), choice.as_bytes());
+                                            let _ = send_bytes(&mut stream_writer.lock().unwrap(), choice.as_bytes());
                                             log_hex(&app_handle_clone, &session_id_clone, "SEND", choice.as_bytes(), "TELSERV service select");
 
                                             prompt_buffer.clear();
@@ -536,7 +536,7 @@ impl TelnetManager {
                                             || lower.contains("term = ")
                                         {
                                             let term_cmd = format!("{}\r\n", term_type_to_send);
-                                            let _ = send_bytes(&mut *stream_writer.lock().unwrap(), term_cmd.as_bytes());
+                                            let _ = send_bytes(&mut stream_writer.lock().unwrap(), term_cmd.as_bytes());
                                             log_hex(&app_handle_clone, &session_id_clone, "SEND", term_cmd.as_bytes(), &format!("Conversational Terminal-Type {}", term_type_to_send));
 
                                             prompt_buffer.clear();
@@ -560,7 +560,7 @@ impl TelnetManager {
                                             || lower.contains("term = ")
                                         {
                                             let term_cmd = format!("{}\r\n", term_type_to_send);
-                                            let _ = send_bytes(&mut *stream_writer.lock().unwrap(), term_cmd.as_bytes());
+                                            let _ = send_bytes(&mut stream_writer.lock().unwrap(), term_cmd.as_bytes());
                                             log_hex(&app_handle_clone, &session_id_clone, "SEND", term_cmd.as_bytes(), &format!("Conversational Terminal-Type {}", term_type_to_send));
 
                                             prompt_buffer.clear();
@@ -843,7 +843,7 @@ fn log_hex(app: &AppHandle, session_id: &str, direction: &str, bytes: &[u8], ext
     
     for &b in bytes {
         hex_str.push_str(&format!("{:02X} ", b));
-        if b >= 32 && b <= 126 {
+        if (32..=126).contains(&b) {
             ascii_str.push(b as char);
         } else {
             ascii_str.push('.');

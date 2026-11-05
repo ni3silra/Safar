@@ -1046,9 +1046,9 @@ impl SshManager {
 
         // Create listener
         let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port))
-            .map_err(|e| SshError::IoError(e))?;
+            .map_err(SshError::IoError)?;
         
-        listener.set_nonblocking(true).map_err(|e| SshError::IoError(e))?;
+        listener.set_nonblocking(true).map_err(SshError::IoError)?;
 
         let running = Arc::new(AtomicBool::new(true));
         session_guard.tunnels.insert(local_port, running.clone());
@@ -1185,7 +1185,7 @@ impl SshManager {
         // Inform the SSH server to listen on the remote_port, binding to localhost
         // If the user wants to bind to 0.0.0.0, we would pass None or "0.0.0.0" instead of Some("127.0.0.1"), but let's stick to localhost for safety
         let mut listener = session_guard.session.channel_forward_listen(remote_port, Some("127.0.0.1"), None)
-            .map_err(|e| SshError::Ssh2Error(e))?;
+            .map_err(SshError::Ssh2Error)?;
 
         let running = Arc::new(AtomicBool::new(true));
         session_guard.remote_tunnels.insert(remote_port, running.clone());
