@@ -3218,6 +3218,7 @@ dependencies = [
  "openssl",
  "parking_lot",
  "pbkdf2",
+ "percent-encoding",
  "rand 0.8.5",
  "reqwest",
  "security-framework 2.11.1",
@@ -3233,6 +3234,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "url",
  "uuid",
 ]
 

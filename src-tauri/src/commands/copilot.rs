@@ -48,31 +48,126 @@ pub struct ChatMessage {
     pub content: String,
 }
 
-/// Helper function to create an HTTP client with optional corporate proxy and SSL inspection settings
-pub fn create_http_client(proxy: Option<&str>, ignore_ssl: Option<bool>) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder();
+/// Detailed formatter for reqwest errors that traverses the error source chain
+/// to expose exact failure causes (e.g. 407 Proxy Auth Required, TLS certificate mismatch, DNS failure).
+pub fn format_reqwest_error(prefix: &str, e: &reqwest::Error) -> String {
+    let mut details = Vec::new();
+    details.push(e.to_string());
+
+    if e.is_connect() {
+        details.push("Connection failed: could not connect to server or proxy host".to_string());
+    }
+    if e.is_timeout() {
+        details.push("Connection timed out".to_string());
+    }
+
+    let mut curr: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(e);
+    while let Some(src) = curr {
+        let src_str = src.to_string();
+        if !details.contains(&src_str) {
+            details.push(src_str);
+        }
+        curr = src.source();
+    }
+
+    let chain = details.join(" -> ");
+    if chain.contains("certificate")
+        || chain.contains("self-signed")
+        || chain.contains("unknown issuer")
+        || chain.contains("sec_error")
+        || chain.contains("principal name is incorrect")
+    {
+        format!(
+            "{}: {}. Hint: If your corporate proxy uses TLS inspection / MITM root CA, ensure 'Accept corporate / self-signed TLS certificates' is checked in Copilot Settings (⚙️).",
+            prefix, chain
+        )
+    } else if chain.contains("407") || chain.contains("Proxy Authentication Required") {
+        format!(
+            "{}: {}. Hint: Corporate proxy requires authentication. Please check 'Proxy authentication' and your login credentials in Copilot Settings (⚙️).",
+            prefix, chain
+        )
+    } else {
+        format!("{}: {}", prefix, chain)
+    }
+}
+
+/// Helper function to create an HTTP client with corporate proxy (and credentials) and SSL inspection settings
+pub fn create_http_client(
+    proxy: Option<&str>,
+    proxy_user: Option<&str>,
+    proxy_pass: Option<&str>,
+    ignore_ssl: Option<bool>,
+) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .timeout(std::time::Duration::from_secs(60));
 
     if ignore_ssl.unwrap_or(false) {
-        builder = builder.danger_accept_invalid_certs(true);
+        builder = builder
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true);
     }
 
     if let Some(proxy_str) = proxy {
         let trimmed = proxy_str.trim();
         if !trimmed.is_empty() {
-            let normalized_proxy = if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+            let normalized = if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
                 format!("http://{}", trimmed)
             } else {
                 trimmed.to_string()
             };
 
-            match reqwest::Proxy::all(&normalized_proxy) {
-                Ok(p) => {
-                    builder = builder.proxy(p);
+            // Parse proxy URL to cleanly separate base proxy URL and credentials
+            let (clean_proxy_url, credentials) = match url::Url::parse(&normalized) {
+                Ok(parsed) => {
+                    let host = parsed.host_str().unwrap_or("localhost");
+                    let port = parsed.port().unwrap_or(8080);
+                    let scheme = parsed.scheme();
+                    let base_url = format!("{}://{}:{}", scheme, host, port);
+
+                    // If explicit user is provided, prefer it
+                    let creds = if let Some(u) = proxy_user.filter(|u| !u.trim().is_empty()) {
+                        Some((u.trim().to_string(), proxy_pass.unwrap_or("").to_string()))
+                    } else if !parsed.username().is_empty() {
+                        // Extract and decode from URL userinfo
+                        let u_dec = percent_encoding::percent_decode_str(parsed.username())
+                            .decode_utf8_lossy()
+                            .into_owned();
+                        let p_dec = parsed
+                            .password()
+                            .map(|p| {
+                                percent_encoding::percent_decode_str(p)
+                                    .decode_utf8_lossy()
+                                    .into_owned()
+                            })
+                            .unwrap_or_default();
+                        Some((u_dec, p_dec))
+                    } else {
+                        None
+                    };
+
+                    (base_url, creds)
                 }
-                Err(e) => {
-                    return Err(format!("Invalid proxy configuration '{}': {}", normalized_proxy, e));
+                Err(_) => {
+                    let creds = proxy_user
+                        .filter(|u| !u.trim().is_empty())
+                        .map(|u| (u.trim().to_string(), proxy_pass.unwrap_or("").to_string()));
+                    (normalized, creds)
+                }
+            };
+
+            let mut p = reqwest::Proxy::all(&clean_proxy_url)
+                .map_err(|e| format!("Invalid proxy configuration '{}': {}", clean_proxy_url, e))?;
+
+            // CRITICAL: reqwest::Proxy::all does NOT parse credentials from URL;
+            // basic_auth MUST be called explicitly to generate Proxy-Authorization header!
+            if let Some((username, password)) = credentials {
+                if !username.is_empty() {
+                    p = p.basic_auth(&username, &password);
                 }
             }
+
+            builder = builder.proxy(p);
         }
     }
 
@@ -84,9 +179,11 @@ pub fn create_http_client(proxy: Option<&str>, ignore_ssl: Option<bool>) -> Resu
 pub async fn copilot_device_code(
     use_cli_client: Option<bool>,
     proxy: Option<String>,
+    proxy_user: Option<String>,
+    proxy_pass: Option<String>,
     ignore_ssl: Option<bool>,
 ) -> CommandResponse<DeviceCodeResponse> {
-    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+    let client = match create_http_client(proxy.as_deref(), proxy_user.as_deref(), proxy_pass.as_deref(), ignore_ssl) {
         Ok(c) => c,
         Err(e) => return CommandResponse::err(e),
     };
@@ -120,7 +217,7 @@ pub async fn copilot_device_code(
                 CommandResponse::err(format!("GitHub error (status {}): {}", status, err_text))
             }
         }
-        Err(e) => CommandResponse::err(format!("Network request failed: {}", e)),
+        Err(e) => CommandResponse::err(format_reqwest_error("Network request failed", &e)),
     }
 }
 
@@ -130,9 +227,11 @@ pub async fn copilot_poll_auth(
     device_code: String,
     use_cli_client: Option<bool>,
     proxy: Option<String>,
+    proxy_user: Option<String>,
+    proxy_pass: Option<String>,
     ignore_ssl: Option<bool>,
 ) -> CommandResponse<DevicePollResponse> {
-    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+    let client = match create_http_client(proxy.as_deref(), proxy_user.as_deref(), proxy_pass.as_deref(), ignore_ssl) {
         Ok(c) => c,
         Err(e) => return CommandResponse::err(e),
     };
@@ -208,7 +307,7 @@ pub async fn copilot_poll_auth(
                 Err(e) => CommandResponse::err(format!("Failed to parse GitHub JSON: {}", e)),
             }
         }
-        Err(e) => CommandResponse::err(format!("Auth polling failed: {}", e)),
+        Err(e) => CommandResponse::err(format_reqwest_error("Auth polling failed", &e)),
     }
 }
 
@@ -217,9 +316,11 @@ pub async fn copilot_poll_auth(
 pub async fn copilot_get_user(
     access_token: String,
     proxy: Option<String>,
+    proxy_user: Option<String>,
+    proxy_pass: Option<String>,
     ignore_ssl: Option<bool>,
 ) -> CommandResponse<GitHubUser> {
-    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+    let client = match create_http_client(proxy.as_deref(), proxy_user.as_deref(), proxy_pass.as_deref(), ignore_ssl) {
         Ok(c) => c,
         Err(e) => return CommandResponse::err(e),
     };
@@ -244,7 +345,7 @@ pub async fn copilot_get_user(
                 CommandResponse::err(format!("GitHub user query failed (status {}): {}", status, err_text))
             }
         }
-        Err(e) => CommandResponse::err(format!("Network request failed: {}", e)),
+        Err(e) => CommandResponse::err(format_reqwest_error("Network request failed", &e)),
     }
 }
 
@@ -253,9 +354,11 @@ pub async fn copilot_get_user(
 pub async fn copilot_get_token(
     access_token: String,
     proxy: Option<String>,
+    proxy_user: Option<String>,
+    proxy_pass: Option<String>,
     ignore_ssl: Option<bool>,
 ) -> CommandResponse<CopilotAuthResult> {
-    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+    let client = match create_http_client(proxy.as_deref(), proxy_user.as_deref(), proxy_pass.as_deref(), ignore_ssl) {
         Ok(c) => c,
         Err(e) => return CommandResponse::err(e),
     };
@@ -304,7 +407,7 @@ pub async fn copilot_get_token(
 
             CommandResponse::err(format!("GitHub token exchange failed (status {}): {}", status, body))
         }
-        Err(e) => CommandResponse::err(format!("Network error contacting GitHub: {}", e)),
+        Err(e) => CommandResponse::err(format_reqwest_error("Network error contacting GitHub", &e)),
     }
 }
 
@@ -389,9 +492,11 @@ pub async fn copilot_get_models(
     token: String,
     endpoint: Option<String>,
     proxy: Option<String>,
+    proxy_user: Option<String>,
+    proxy_pass: Option<String>,
     ignore_ssl: Option<bool>,
 ) -> CommandResponse<Vec<CopilotModelInfo>> {
-    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+    let client = match create_http_client(proxy.as_deref(), proxy_user.as_deref(), proxy_pass.as_deref(), ignore_ssl) {
         Ok(c) => c,
         Err(e) => return CommandResponse::err(e),
     };
@@ -403,7 +508,7 @@ pub async fn copilot_get_models(
             success: true,
             data: Some(auth_res),
             ..
-        } = copilot_get_token(active_token.clone(), proxy.clone(), ignore_ssl).await
+        } = copilot_get_token(active_token.clone(), proxy.clone(), proxy_user.clone(), proxy_pass.clone(), ignore_ssl).await
         {
             active_token = auth_res.token;
         }
@@ -496,9 +601,11 @@ pub async fn copilot_chat(
     messages: Vec<ChatMessage>,
     endpoint: Option<String>,
     proxy: Option<String>,
+    proxy_user: Option<String>,
+    proxy_pass: Option<String>,
     ignore_ssl: Option<bool>,
 ) -> CommandResponse<String> {
-    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+    let client = match create_http_client(proxy.as_deref(), proxy_user.as_deref(), proxy_pass.as_deref(), ignore_ssl) {
         Ok(c) => c,
         Err(e) => return CommandResponse::err(e),
     };
@@ -506,7 +613,7 @@ pub async fn copilot_chat(
 
     // If the token is a GitHub OAuth token (ghu_... or gho_...), auto-exchange it for a Copilot internal token
     if (active_token.starts_with("ghu_") || active_token.starts_with("gho_")) && !active_token.starts_with("tid=") {
-        match copilot_get_token(active_token.clone(), proxy.clone(), ignore_ssl).await {
+        match copilot_get_token(active_token.clone(), proxy.clone(), proxy_user.clone(), proxy_pass.clone(), ignore_ssl).await {
             CommandResponse {
                 success: true,
                 data: Some(auth_res),
@@ -675,34 +782,47 @@ mod tests {
 
     #[test]
     fn test_create_http_client_default() {
-        let client = create_http_client(None, None);
+        let client = create_http_client(None, None, None, None);
         assert!(client.is_ok());
     }
 
     #[test]
     fn test_create_http_client_with_proxy_and_ssl_bypass() {
-        let client = create_http_client(Some("http://sp-surf-proxy.intranet.db.com:8080"), Some(true));
+        let client = create_http_client(Some("http://sp-surf-proxy.intranet.db.com:8080"), None, None, Some(true));
         assert!(client.is_ok());
     }
 
     #[test]
-    fn test_create_http_client_with_auth_proxy() {
+    fn test_create_http_client_with_auth_proxy_in_url() {
         let client = create_http_client(
             Some("http://nitin-b.silra%40db.com:password123@sp-surf-proxy.intranet.db.com:8080"),
+            None,
+            None,
             Some(false),
         );
         assert!(client.is_ok());
     }
 
     #[test]
+    fn test_create_http_client_with_explicit_creds() {
+        let client = create_http_client(
+            Some("sp-surf-proxy.intranet.db.com:8080"),
+            Some("nitin-b.silra@db.com"),
+            Some("mypassword#456"),
+            Some(true),
+        );
+        assert!(client.is_ok());
+    }
+
+    #[test]
     fn test_create_http_client_without_scheme_auto_prepends_http() {
-        let client = create_http_client(Some("sp-surf-proxy.intranet.db.com:8080"), None);
+        let client = create_http_client(Some("sp-surf-proxy.intranet.db.com:8080"), None, None, None);
         assert!(client.is_ok());
     }
 
     #[test]
     fn test_create_http_client_invalid_proxy_fails() {
-        let client = create_http_client(Some("http://[invalid-url-with-bad-ipv6"), None);
+        let client = create_http_client(Some("http://[invalid-url-with-bad-ipv6"), None, None, None);
         assert!(client.is_err());
     }
 }

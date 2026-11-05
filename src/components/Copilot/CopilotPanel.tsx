@@ -101,6 +101,13 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+    const getProxyParams = (targetAuth: Partial<CopilotAuthState>) => ({
+        proxy: targetAuth.useProxy && targetAuth.proxyHost ? buildProxyUrl(targetAuth) : undefined,
+        proxyUser: targetAuth.useProxy && targetAuth.proxyAuthEnabled ? targetAuth.proxyLogin : undefined,
+        proxyPass: targetAuth.useProxy && targetAuth.proxyAuthEnabled ? targetAuth.proxyPassword : undefined,
+        ignoreSsl: targetAuth.ignoreSslErrors ?? false,
+    });
+
     // Dynamic model discovery from GitHub Copilot or AI provider
     useEffect(() => {
         if (!auth.isAuthenticated) {
@@ -118,8 +125,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
         invoke("copilot_get_models", {
             token: activeToken,
             endpoint: auth.endpoint || "",
-            proxy: buildProxyUrl(auth),
-            ignoreSsl: auth.ignoreSslErrors ?? false,
+            ...getProxyParams(auth),
         })
             .then((res: any) => {
                 if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
@@ -195,8 +201,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
             setIsPolling(true);
             const resp: any = await invoke("copilot_device_code", {
                 useCliClient: false,
-                proxy: buildProxyUrl(auth),
-                ignoreSsl: auth.ignoreSslErrors ?? false,
+                ...getProxyParams(auth),
             });
             if (!resp.success || !resp.data) {
                 toast.error(resp.error || "Failed to start GitHub device authorization");
@@ -239,8 +244,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 const resp: any = await invoke("copilot_poll_auth", {
                     deviceCode,
                     useCliClient: false,
-                    proxy: buildProxyUrl(auth),
-                    ignoreSsl: auth.ignoreSslErrors ?? false,
+                    ...getProxyParams(auth),
                 });
 
                 if (resp.success && resp.data) {
@@ -250,16 +254,14 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                         // Fetch user profile
                         const userResp: any = await invoke("copilot_get_user", {
                             accessToken,
-                            proxy: buildProxyUrl(auth),
-                            ignoreSsl: auth.ignoreSslErrors ?? false,
+                            ...getProxyParams(auth),
                         });
                         const user = userResp.success ? userResp.data : { login: "github-user" };
 
                         // Fetch Copilot session token
                         const tokenResp: any = await invoke("copilot_get_token", {
                             accessToken,
-                            proxy: buildProxyUrl(auth),
-                            ignoreSsl: auth.ignoreSslErrors ?? false,
+                            ...getProxyParams(auth),
                         });
                         const hasCopilot = tokenResp.success && tokenResp.data?.is_copilot_token;
 
@@ -346,15 +348,13 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
 
             const userResp: any = await invoke("copilot_get_user", {
                 accessToken: token,
-                proxy: buildProxyUrl(auth),
-                ignoreSsl: auth.ignoreSslErrors ?? false,
+                ...getProxyParams(auth),
             });
             const user = userResp.success ? userResp.data : { login: "user" };
 
             const tokenResp: any = await invoke("copilot_get_token", {
                 accessToken: token,
-                proxy: buildProxyUrl(auth),
-                ignoreSsl: auth.ignoreSslErrors ?? false,
+                ...getProxyParams(auth),
             });
             const hasCopilot = tokenResp.success && tokenResp.data?.is_copilot_token;
 
@@ -444,6 +444,8 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 proxyLogin: settingProxyLogin,
                 proxyPassword: settingProxyPassword,
             });
+            const testProxyUser = settingUseProxy && settingProxyAuthEnabled ? settingProxyLogin.trim() : undefined;
+            const testProxyPass = settingUseProxy && settingProxyAuthEnabled ? settingProxyPassword : undefined;
             const testIgnoreSsl = settingIgnoreSsl;
 
             const resp: any = await invoke("copilot_chat", {
@@ -452,6 +454,8 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 messages: [{ role: "user", content: "Ping: Respond with 'Safar AI Connected'." }],
                 endpoint: endpointToTest,
                 proxy: testProxy,
+                proxyUser: testProxyUser,
+                proxyPass: testProxyPass,
                 ignoreSsl: testIgnoreSsl,
             });
 
@@ -582,8 +586,7 @@ When suggesting terminal commands to fix problems, inspect logs, or configure se
                 model,
                 messages: chatMessages,
                 endpoint: activeEndpoint,
-                proxy: buildProxyUrl(auth),
-                ignoreSsl: auth.ignoreSslErrors ?? false,
+                ...getProxyParams(auth),
             });
 
             if (resp.success && resp.data) {

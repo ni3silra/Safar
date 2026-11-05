@@ -271,6 +271,8 @@ describe('CopilotPanel', () => {
           'copilot_chat',
           expect.objectContaining({
             proxy: 'http://nitin-b.silra%40db.com:mypassword@sp-surf-proxy.intranet.db.com:8080',
+            proxyUser: 'nitin-b.silra@db.com',
+            proxyPass: 'mypassword',
             ignoreSsl: true,
           })
         );
