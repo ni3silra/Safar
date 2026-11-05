@@ -9,6 +9,7 @@ import {
     CopilotMessage,
     CopilotModel,
     CopilotModelInfo,
+    buildProxyUrl,
 } from "./types";
 import { CopilotMessageItem } from "./CopilotMessageItem";
 
@@ -67,6 +68,15 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     const [settingSystemPrompt, setSettingSystemPrompt] = useState(auth.customSystemPrompt || "");
     const [isTestingConnection, setIsTestingConnection] = useState(false);
 
+    // Corporate HTTP Proxy settings
+    const [settingUseProxy, setSettingUseProxy] = useState(auth.useProxy ?? false);
+    const [settingProxyHost, setSettingProxyHost] = useState(auth.proxyHost || "");
+    const [settingProxyPort, setSettingProxyPort] = useState(auth.proxyPort || "8080");
+    const [settingProxyAuthEnabled, setSettingProxyAuthEnabled] = useState(auth.proxyAuthEnabled ?? false);
+    const [settingProxyLogin, setSettingProxyLogin] = useState(auth.proxyLogin || "");
+    const [settingProxyPassword, setSettingProxyPassword] = useState(auth.proxyPassword || "");
+    const [settingIgnoreSsl, setSettingIgnoreSsl] = useState(auth.ignoreSslErrors ?? false);
+
     // Manual PAT Option on login screen
     const [showManualToken, setShowManualToken] = useState(false);
     const [manualTokenInput, setManualTokenInput] = useState("");
@@ -108,6 +118,8 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
         invoke("copilot_get_models", {
             token: activeToken,
             endpoint: auth.endpoint || "",
+            proxy: buildProxyUrl(auth),
+            ignoreSsl: auth.ignoreSslErrors ?? false,
         })
             .then((res: any) => {
                 if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
@@ -115,7 +127,21 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 }
             })
             .catch(() => {});
-    }, [auth.isAuthenticated, auth.provider, auth.copilotToken, auth.accessToken, auth.apiKey, auth.endpoint]);
+    }, [
+        auth.isAuthenticated,
+        auth.provider,
+        auth.copilotToken,
+        auth.accessToken,
+        auth.apiKey,
+        auth.endpoint,
+        auth.useProxy,
+        auth.proxyHost,
+        auth.proxyPort,
+        auth.proxyAuthEnabled,
+        auth.proxyLogin,
+        auth.proxyPassword,
+        auth.ignoreSslErrors,
+    ]);
 
     // Auto-scroll messages
     useEffect(() => {
@@ -126,7 +152,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
 
     // Save auth changes
     useEffect(() => {
-        if (auth.isAuthenticated) {
+        if (auth.isAuthenticated || auth.useProxy || auth.apiKey) {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
         } else {
             localStorage.removeItem(STORAGE_KEY);
@@ -152,6 +178,13 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
             setSettingApiKey(auth.apiKey || "");
             setSettingEndpoint(auth.customEndpoint || "");
             setSettingSystemPrompt(auth.customSystemPrompt || "");
+            setSettingUseProxy(auth.useProxy ?? false);
+            setSettingProxyHost(auth.proxyHost || "");
+            setSettingProxyPort(auth.proxyPort || "8080");
+            setSettingProxyAuthEnabled(auth.proxyAuthEnabled ?? false);
+            setSettingProxyLogin(auth.proxyLogin || "");
+            setSettingProxyPassword(auth.proxyPassword || "");
+            setSettingIgnoreSsl(auth.ignoreSslErrors ?? false);
         }
     }, [showSettings, auth]);
 
@@ -160,7 +193,11 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     const startDeviceAuth = async () => {
         try {
             setIsPolling(true);
-            const resp: any = await invoke("copilot_device_code", { useCliClient: false });
+            const resp: any = await invoke("copilot_device_code", {
+                useCliClient: false,
+                proxy: buildProxyUrl(auth),
+                ignoreSsl: auth.ignoreSslErrors ?? false,
+            });
             if (!resp.success || !resp.data) {
                 toast.error(resp.error || "Failed to start GitHub device authorization");
                 setIsPolling(false);
@@ -202,6 +239,8 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 const resp: any = await invoke("copilot_poll_auth", {
                     deviceCode,
                     useCliClient: false,
+                    proxy: buildProxyUrl(auth),
+                    ignoreSsl: auth.ignoreSslErrors ?? false,
                 });
 
                 if (resp.success && resp.data) {
@@ -209,14 +248,23 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                     if (status === "success" && resp.data.access_token) {
                         const accessToken = resp.data.access_token;
                         // Fetch user profile
-                        const userResp: any = await invoke("copilot_get_user", { accessToken });
+                        const userResp: any = await invoke("copilot_get_user", {
+                            accessToken,
+                            proxy: buildProxyUrl(auth),
+                            ignoreSsl: auth.ignoreSslErrors ?? false,
+                        });
                         const user = userResp.success ? userResp.data : { login: "github-user" };
 
                         // Fetch Copilot session token
-                        const tokenResp: any = await invoke("copilot_get_token", { accessToken });
+                        const tokenResp: any = await invoke("copilot_get_token", {
+                            accessToken,
+                            proxy: buildProxyUrl(auth),
+                            ignoreSsl: auth.ignoreSslErrors ?? false,
+                        });
                         const hasCopilot = tokenResp.success && tokenResp.data?.is_copilot_token;
 
-                        setAuth({
+                        setAuth((prev) => ({
+                            ...prev,
                             isAuthenticated: true,
                             provider: "github",
                             accessToken,
@@ -224,7 +272,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                             isCopilotSubscriber: !!hasCopilot,
                             endpoint: hasCopilot ? tokenResp.data.endpoint : "https://api.githubcopilot.com",
                             user,
-                        });
+                        }));
 
                         setDeviceAuth(null);
                         setIsPolling(false);
@@ -267,26 +315,28 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
         try {
             setIsLoading(true);
             if (token.startsWith("sk-")) {
-                setAuth({
+                setAuth((prev) => ({
+                    ...prev,
                     isAuthenticated: true,
                     provider: "openai",
                     apiKey: token,
                     endpoint: "https://api.openai.com/v1",
                     user: { login: "openai-user" },
-                });
+                }));
                 setModel("gpt-4o");
                 setShowManualToken(false);
                 setManualTokenInput("");
                 toast.success("Connected to OpenAI successfully!");
                 return;
             } else if (token.startsWith("gsk_")) {
-                setAuth({
+                setAuth((prev) => ({
+                    ...prev,
                     isAuthenticated: true,
                     provider: "groq",
                     apiKey: token,
                     endpoint: "https://api.groq.com/openai/v1",
                     user: { login: "groq-user" },
-                });
+                }));
                 setModel("llama-3.3-70b-versatile");
                 setShowManualToken(false);
                 setManualTokenInput("");
@@ -294,13 +344,22 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 return;
             }
 
-            const userResp: any = await invoke("copilot_get_user", { accessToken: token });
+            const userResp: any = await invoke("copilot_get_user", {
+                accessToken: token,
+                proxy: buildProxyUrl(auth),
+                ignoreSsl: auth.ignoreSslErrors ?? false,
+            });
             const user = userResp.success ? userResp.data : { login: "user" };
 
-            const tokenResp: any = await invoke("copilot_get_token", { accessToken: token });
+            const tokenResp: any = await invoke("copilot_get_token", {
+                accessToken: token,
+                proxy: buildProxyUrl(auth),
+                ignoreSsl: auth.ignoreSslErrors ?? false,
+            });
             const hasCopilot = tokenResp.success && tokenResp.data?.is_copilot_token;
 
-            setAuth({
+            setAuth((prev) => ({
+                ...prev,
                 isAuthenticated: true,
                 provider: "github",
                 accessToken: token,
@@ -308,7 +367,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 isCopilotSubscriber: !!hasCopilot,
                 endpoint: hasCopilot ? tokenResp.data.endpoint : "https://api.githubcopilot.com",
                 user,
-            });
+            }));
 
             setShowManualToken(false);
             setManualTokenInput("");
@@ -321,7 +380,19 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     };
 
     const handleSignOut = () => {
-        setAuth({ isAuthenticated: false, provider: "github" });
+        setAuth((prev) => ({
+            isAuthenticated: false,
+            provider: "github",
+            // Preserve proxy configuration across sign-out
+            useProxy: prev.useProxy,
+            proxyHost: prev.proxyHost,
+            proxyPort: prev.proxyPort,
+            proxyAuthEnabled: prev.proxyAuthEnabled,
+            proxyLogin: prev.proxyLogin,
+            proxyPassword: prev.proxyPassword,
+            proxyUrl: prev.proxyUrl,
+            ignoreSslErrors: prev.ignoreSslErrors,
+        }));
         setDeviceAuth(null);
         if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
         setIsPolling(false);
@@ -365,11 +436,23 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 return;
             }
 
+            const testProxy = buildProxyUrl({
+                useProxy: settingUseProxy,
+                proxyHost: settingProxyHost,
+                proxyPort: settingProxyPort,
+                proxyAuthEnabled: settingProxyAuthEnabled,
+                proxyLogin: settingProxyLogin,
+                proxyPassword: settingProxyPassword,
+            });
+            const testIgnoreSsl = settingIgnoreSsl;
+
             const resp: any = await invoke("copilot_chat", {
                 token: tokenToTest,
                 model: modelToTest,
                 messages: [{ role: "user", content: "Ping: Respond with 'Safar AI Connected'." }],
                 endpoint: endpointToTest,
+                proxy: testProxy,
+                ignoreSsl: testIgnoreSsl,
             });
 
             if (resp.success) {
@@ -397,6 +480,18 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 ? settingEndpoint.trim()
                 : "https://api.githubcopilot.com";
 
+        const proxyConfig = {
+            useProxy: settingUseProxy,
+            proxyHost: settingProxyHost.trim(),
+            proxyPort: settingProxyPort.trim() || "8080",
+            proxyAuthEnabled: settingProxyAuthEnabled,
+            proxyLogin: settingProxyLogin.trim(),
+            proxyPassword: settingProxyPassword,
+            ignoreSslErrors: settingIgnoreSsl,
+        };
+
+        const computedProxyUrl = buildProxyUrl(proxyConfig);
+
         setAuth({
             ...auth,
             isAuthenticated: isAuthed,
@@ -405,6 +500,8 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
             customEndpoint: settingEndpoint.trim(),
             customSystemPrompt: settingSystemPrompt.trim(),
             endpoint: resolvedEndpoint,
+            ...proxyConfig,
+            proxyUrl: computedProxyUrl,
             user:
                 auth.user || {
                     login: settingProvider === "openai" ? "openai" : settingProvider === "groq" ? "groq" : "custom-ai",
@@ -485,6 +582,8 @@ When suggesting terminal commands to fix problems, inspect logs, or configure se
                 model,
                 messages: chatMessages,
                 endpoint: activeEndpoint,
+                proxy: buildProxyUrl(auth),
+                ignoreSsl: auth.ignoreSslErrors ?? false,
             });
 
             if (resp.success && resp.data) {
@@ -818,6 +917,180 @@ When suggesting terminal commands to fix problems, inspect logs, or configure se
                                     Overrides the base persona instructions while preserving attached terminal buffers.
                                 </div>
                             </div>
+
+                            {/* Customize HTTP proxy (Corporate Proxy Configuration) */}
+                            <div style={{ marginTop: "14px", paddingTop: "14px", borderTop: "1px solid var(--border-default)" }}>
+                                <label
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "8px",
+                                        fontSize: "12.5px",
+                                        fontWeight: 600,
+                                        cursor: "pointer",
+                                        color: "var(--text-primary)",
+                                        marginBottom: settingUseProxy ? "12px" : "4px",
+                                        userSelect: "none",
+                                    }}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={settingUseProxy}
+                                        onChange={(e) => setSettingUseProxy(e.target.checked)}
+                                        style={{ width: "15px", height: "15px", cursor: "pointer", accentColor: "var(--accent-primary)" }}
+                                    />
+                                    <span>Customize HTTP proxy</span>
+                                </label>
+
+                                {settingUseProxy && (
+                                    <div style={{ paddingLeft: "24px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                                        {/* Host name */}
+                                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                            <label
+                                                style={{
+                                                    width: "90px",
+                                                    fontSize: "12px",
+                                                    color: "var(--text-secondary)",
+                                                    flexShrink: 0,
+                                                }}
+                                            >
+                                                Host name:
+                                            </label>
+                                            <input
+                                                type="text"
+                                                className="copilot-field-input"
+                                                placeholder="sp-surf-proxy.intranet.db.com"
+                                                value={settingProxyHost}
+                                                onChange={(e) => setSettingProxyHost(e.target.value)}
+                                                style={{ flex: 1, fontFamily: "monospace", fontSize: "12px" }}
+                                            />
+                                        </div>
+
+                                        {/* Port number */}
+                                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                            <label
+                                                style={{
+                                                    width: "90px",
+                                                    fontSize: "12px",
+                                                    color: "var(--text-secondary)",
+                                                    flexShrink: 0,
+                                                }}
+                                            >
+                                                Port number:
+                                            </label>
+                                            <input
+                                                type="text"
+                                                className="copilot-field-input"
+                                                placeholder="8080"
+                                                value={settingProxyPort}
+                                                onChange={(e) => setSettingProxyPort(e.target.value)}
+                                                style={{ width: "100px", fontFamily: "monospace", fontSize: "12px" }}
+                                            />
+                                        </div>
+
+                                        {/* Proxy authentication */}
+                                        <div style={{ marginTop: "2px" }}>
+                                            <label
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: "8px",
+                                                    fontSize: "12px",
+                                                    fontWeight: 500,
+                                                    cursor: "pointer",
+                                                    color: "var(--text-primary)",
+                                                    marginBottom: settingProxyAuthEnabled ? "8px" : "2px",
+                                                    userSelect: "none",
+                                                }}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={settingProxyAuthEnabled}
+                                                    onChange={(e) => setSettingProxyAuthEnabled(e.target.checked)}
+                                                    style={{ width: "14px", height: "14px", cursor: "pointer", accentColor: "var(--accent-primary)" }}
+                                                />
+                                                <span>Proxy authentication</span>
+                                            </label>
+
+                                            {settingProxyAuthEnabled && (
+                                                <div style={{ paddingLeft: "22px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                                                    {/* Login */}
+                                                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                                        <label
+                                                            style={{
+                                                                width: "70px",
+                                                                fontSize: "12px",
+                                                                color: "var(--text-secondary)",
+                                                                flexShrink: 0,
+                                                            }}
+                                                        >
+                                                            Login:
+                                                        </label>
+                                                        <input
+                                                            type="text"
+                                                            className="copilot-field-input"
+                                                            placeholder="nitin-b.silra@db.com"
+                                                            value={settingProxyLogin}
+                                                            onChange={(e) => setSettingProxyLogin(e.target.value)}
+                                                            style={{ flex: 1, fontSize: "12px" }}
+                                                        />
+                                                    </div>
+
+                                                    {/* Password */}
+                                                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                                        <label
+                                                            style={{
+                                                                width: "70px",
+                                                                fontSize: "12px",
+                                                                color: "var(--text-secondary)",
+                                                                flexShrink: 0,
+                                                            }}
+                                                        >
+                                                            Password:
+                                                        </label>
+                                                        <input
+                                                            type="password"
+                                                            className="copilot-field-input"
+                                                            placeholder="••••••••••••••••"
+                                                            value={settingProxyPassword}
+                                                            onChange={(e) => setSettingProxyPassword(e.target.value)}
+                                                            style={{ flex: 1, fontSize: "12px" }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Corporate / Self-Signed SSL Inspection */}
+                                        <div style={{ marginTop: "4px" }}>
+                                            <label
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "flex-start",
+                                                    gap: "8px",
+                                                    fontSize: "12px",
+                                                    cursor: "pointer",
+                                                    color: "var(--text-primary)",
+                                                    userSelect: "none",
+                                                }}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={settingIgnoreSsl}
+                                                    onChange={(e) => setSettingIgnoreSsl(e.target.checked)}
+                                                    style={{ width: "14px", height: "14px", marginTop: "2px", cursor: "pointer", accentColor: "var(--accent-primary)" }}
+                                                />
+                                                <div>
+                                                    <span style={{ fontWeight: 500 }}>Accept corporate / self-signed TLS certificates</span>
+                                                    <div style={{ fontSize: "10.5px", color: "var(--text-muted)", marginTop: "2px", lineHeight: 1.35 }}>
+                                                        Bypasses certificate validation if corporate proxy uses TLS inspection.
+                                                    </div>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         </div>
 
                         <div className="copilot-settings-footer">
@@ -880,6 +1153,46 @@ When suggesting terminal commands to fix problems, inspect logs, or configure se
 
                         {!deviceAuth ? (
                             <>
+                                {auth.useProxy && auth.proxyHost && (
+                                    <div
+                                        style={{
+                                            margin: "0 0 14px 0",
+                                            padding: "6px 12px",
+                                            borderRadius: "6px",
+                                            background: "rgba(56, 189, 248, 0.1)",
+                                            border: "1px solid rgba(56, 189, 248, 0.25)",
+                                            fontSize: "11px",
+                                            color: "#38bdf8",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            width: "100%",
+                                            boxSizing: "border-box",
+                                        }}
+                                    >
+                                        <span style={{ display: "flex", alignItems: "center", gap: "6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#38bdf8", display: "inline-block", flexShrink: 0 }}></span>
+                                            Proxy: {auth.proxyHost}:{auth.proxyPort || "8080"}
+                                        </span>
+                                        <button
+                                            onClick={() => setShowSettings(true)}
+                                            style={{
+                                                background: "transparent",
+                                                border: "none",
+                                                color: "#38bdf8",
+                                                fontSize: "11px",
+                                                cursor: "pointer",
+                                                textDecoration: "underline",
+                                                padding: 0,
+                                                marginLeft: "8px",
+                                                flexShrink: 0,
+                                            }}
+                                        >
+                                            Edit
+                                        </button>
+                                    </div>
+                                )}
+
                                 <button
                                     onClick={startDeviceAuth}
                                     disabled={isPolling}

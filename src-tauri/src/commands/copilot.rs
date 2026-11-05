@@ -48,10 +48,48 @@ pub struct ChatMessage {
     pub content: String,
 }
 
+/// Helper function to create an HTTP client with optional corporate proxy and SSL inspection settings
+pub fn create_http_client(proxy: Option<&str>, ignore_ssl: Option<bool>) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder();
+
+    if ignore_ssl.unwrap_or(false) {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+
+    if let Some(proxy_str) = proxy {
+        let trimmed = proxy_str.trim();
+        if !trimmed.is_empty() {
+            let normalized_proxy = if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+                format!("http://{}", trimmed)
+            } else {
+                trimmed.to_string()
+            };
+
+            match reqwest::Proxy::all(&normalized_proxy) {
+                Ok(p) => {
+                    builder = builder.proxy(p);
+                }
+                Err(e) => {
+                    return Err(format!("Invalid proxy configuration '{}': {}", normalized_proxy, e));
+                }
+            }
+        }
+    }
+
+    builder.build().map_err(|e| format!("Failed to build HTTP client: {}", e))
+}
+
 /// Step 1: Initiate GitHub Device Code Flow
 #[tauri::command]
-pub async fn copilot_device_code(use_cli_client: Option<bool>) -> CommandResponse<DeviceCodeResponse> {
-    let client = reqwest::Client::new();
+pub async fn copilot_device_code(
+    use_cli_client: Option<bool>,
+    proxy: Option<String>,
+    ignore_ssl: Option<bool>,
+) -> CommandResponse<DeviceCodeResponse> {
+    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+        Ok(c) => c,
+        Err(e) => return CommandResponse::err(e),
+    };
     let client_id = if use_cli_client.unwrap_or(false) {
         GITHUB_CLI_CLIENT_ID
     } else {
@@ -91,8 +129,13 @@ pub async fn copilot_device_code(use_cli_client: Option<bool>) -> CommandRespons
 pub async fn copilot_poll_auth(
     device_code: String,
     use_cli_client: Option<bool>,
+    proxy: Option<String>,
+    ignore_ssl: Option<bool>,
 ) -> CommandResponse<DevicePollResponse> {
-    let client = reqwest::Client::new();
+    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+        Ok(c) => c,
+        Err(e) => return CommandResponse::err(e),
+    };
     let client_id = if use_cli_client.unwrap_or(false) {
         GITHUB_CLI_CLIENT_ID
     } else {
@@ -171,8 +214,15 @@ pub async fn copilot_poll_auth(
 
 /// Step 3: Fetch the authenticated user profile
 #[tauri::command]
-pub async fn copilot_get_user(access_token: String) -> CommandResponse<GitHubUser> {
-    let client = reqwest::Client::new();
+pub async fn copilot_get_user(
+    access_token: String,
+    proxy: Option<String>,
+    ignore_ssl: Option<bool>,
+) -> CommandResponse<GitHubUser> {
+    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+        Ok(c) => c,
+        Err(e) => return CommandResponse::err(e),
+    };
     let res = client
         .get("https://api.github.com/user")
         .header(AUTHORIZATION, format!("Bearer {}", access_token))
@@ -200,8 +250,15 @@ pub async fn copilot_get_user(access_token: String) -> CommandResponse<GitHubUse
 
 /// Step 4: Exchange GitHub OAuth access token for Copilot internal session token
 #[tauri::command]
-pub async fn copilot_get_token(access_token: String) -> CommandResponse<CopilotAuthResult> {
-    let client = reqwest::Client::new();
+pub async fn copilot_get_token(
+    access_token: String,
+    proxy: Option<String>,
+    ignore_ssl: Option<bool>,
+) -> CommandResponse<CopilotAuthResult> {
+    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+        Ok(c) => c,
+        Err(e) => return CommandResponse::err(e),
+    };
     let res = client
         .get("https://api.github.com/copilot_internal/v2/token")
         .header(AUTHORIZATION, format!("Bearer {}", access_token))
@@ -331,8 +388,13 @@ pub struct CopilotModelInfo {
 pub async fn copilot_get_models(
     token: String,
     endpoint: Option<String>,
+    proxy: Option<String>,
+    ignore_ssl: Option<bool>,
 ) -> CommandResponse<Vec<CopilotModelInfo>> {
-    let client = reqwest::Client::new();
+    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+        Ok(c) => c,
+        Err(e) => return CommandResponse::err(e),
+    };
     let mut active_token = token.trim().to_string();
 
     // Auto-exchange if GitHub OAuth token
@@ -341,7 +403,7 @@ pub async fn copilot_get_models(
             success: true,
             data: Some(auth_res),
             ..
-        } = copilot_get_token(active_token.clone()).await
+        } = copilot_get_token(active_token.clone(), proxy.clone(), ignore_ssl).await
         {
             active_token = auth_res.token;
         }
@@ -433,13 +495,18 @@ pub async fn copilot_chat(
     model: String,
     messages: Vec<ChatMessage>,
     endpoint: Option<String>,
+    proxy: Option<String>,
+    ignore_ssl: Option<bool>,
 ) -> CommandResponse<String> {
-    let client = reqwest::Client::new();
+    let client = match create_http_client(proxy.as_deref(), ignore_ssl) {
+        Ok(c) => c,
+        Err(e) => return CommandResponse::err(e),
+    };
     let mut active_token = token.trim().to_string();
 
     // If the token is a GitHub OAuth token (ghu_... or gho_...), auto-exchange it for a Copilot internal token
     if (active_token.starts_with("ghu_") || active_token.starts_with("gho_")) && !active_token.starts_with("tid=") {
-        match copilot_get_token(active_token.clone()).await {
+        match copilot_get_token(active_token.clone(), proxy.clone(), ignore_ssl).await {
             CommandResponse {
                 success: true,
                 data: Some(auth_res),
@@ -604,6 +671,39 @@ mod tests {
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].id, "gpt-4o");
         assert_eq!(models[1].name, "Claude 3.5 Sonnet");
+    }
+
+    #[test]
+    fn test_create_http_client_default() {
+        let client = create_http_client(None, None);
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_create_http_client_with_proxy_and_ssl_bypass() {
+        let client = create_http_client(Some("http://sp-surf-proxy.intranet.db.com:8080"), Some(true));
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_create_http_client_with_auth_proxy() {
+        let client = create_http_client(
+            Some("http://nitin-b.silra%40db.com:password123@sp-surf-proxy.intranet.db.com:8080"),
+            Some(false),
+        );
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_create_http_client_without_scheme_auto_prepends_http() {
+        let client = create_http_client(Some("sp-surf-proxy.intranet.db.com:8080"), None);
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_create_http_client_invalid_proxy_fails() {
+        let client = create_http_client(Some("http://[invalid-url-with-bad-ipv6"), None);
+        assert!(client.is_err());
     }
 }
 

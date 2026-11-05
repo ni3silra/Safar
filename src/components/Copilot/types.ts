@@ -29,6 +29,37 @@ export interface CopilotAuthState {
     isCopilotSubscriber?: boolean;
     endpoint?: string;
     user?: CopilotUser;
+    // Corporate HTTP Proxy Configuration
+    useProxy?: boolean;
+    proxyHost?: string;
+    proxyPort?: string;
+    proxyAuthEnabled?: boolean;
+    proxyLogin?: string;
+    proxyPassword?: string;
+    proxyUrl?: string;
+    ignoreSslErrors?: boolean;
+}
+
+/**
+ * Builds a standard HTTP proxy URL from proxy configuration fields.
+ * If authentication is enabled and credentials are provided, user and password are URI-encoded.
+ */
+export function buildProxyUrl(auth?: Partial<CopilotAuthState> | null): string | undefined {
+    if (!auth || !auth.useProxy) return undefined;
+    const rawHost = auth.proxyHost?.trim();
+    if (!rawHost) return undefined;
+
+    // Strip any inadvertent scheme and trailing slashes
+    const cleanHost = rawHost.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+    const port = auth.proxyPort?.trim() || "8080";
+
+    if (auth.proxyAuthEnabled && auth.proxyLogin?.trim()) {
+        const user = encodeURIComponent(auth.proxyLogin.trim());
+        const pass = encodeURIComponent(auth.proxyPassword || "");
+        return `http://${user}:${pass}@${cleanHost}:${port}`;
+    }
+
+    return `http://${cleanHost}:${port}`;
 }
 
 export interface CopilotMessage {
