@@ -8,6 +8,7 @@ import {
     CopilotDeviceAuth,
     CopilotMessage,
     CopilotModel,
+    CopilotModelInfo,
 } from "./types";
 import { CopilotMessageItem } from "./CopilotMessageItem";
 
@@ -63,6 +64,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     const [settingProvider, setSettingProvider] = useState<AIProvider>(auth.provider || "github");
     const [settingApiKey, setSettingApiKey] = useState(auth.apiKey || "");
     const [settingEndpoint, setSettingEndpoint] = useState(auth.customEndpoint || "");
+    const [settingSystemPrompt, setSettingSystemPrompt] = useState(auth.customSystemPrompt || "");
     const [isTestingConnection, setIsTestingConnection] = useState(false);
 
     // Manual PAT Option on login screen
@@ -72,27 +74,48 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     // Chat State
     const [model, setModel] = useState<CopilotModel>(() => {
         try {
-            return (localStorage.getItem(MODEL_STORAGE_KEY) as CopilotModel) || "gpt-4o";
+            const saved = (localStorage.getItem(MODEL_STORAGE_KEY) as CopilotModel) || "auto";
+            return saved || "auto";
         } catch {
-            return "gpt-4o";
+            return "auto";
         }
     });
 
-    const [messages, setMessages] = useState<CopilotMessage[]>([
-        {
-            id: "welcome",
-            role: "assistant",
-            content:
-                "👋 **Welcome to Safar Copilot!**\n\nI'm your AI pair programmer for this remote SSH connection. I can analyze terminal output, diagnose errors, explain commands, and run shell commands directly into your terminal.\n\nTry clicking any quick action below or ask me anything about your server!",
-            timestamp: Date.now(),
-        },
-    ]);
+    const [availableModels, setAvailableModels] = useState<CopilotModelInfo[]>([]);
+
+    const [messages, setMessages] = useState<CopilotMessage[]>([]);
 
     const [inputPrompt, setInputPrompt] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const [includeTerminalContext, setIncludeTerminalContext] = useState(true);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    // Dynamic model discovery from GitHub Copilot or AI provider
+    useEffect(() => {
+        if (!auth.isAuthenticated) {
+            setAvailableModels([]);
+            return;
+        }
+
+        const activeToken =
+            auth.provider === "openai" || auth.provider === "groq" || auth.provider === "custom"
+                ? auth.apiKey || ""
+                : auth.copilotToken || auth.accessToken || "";
+
+        if (!activeToken) return;
+
+        invoke("copilot_get_models", {
+            token: activeToken,
+            endpoint: auth.endpoint || "",
+        })
+            .then((res: any) => {
+                if (res?.success && Array.isArray(res.data) && res.data.length > 0) {
+                    setAvailableModels(res.data);
+                }
+            })
+            .catch(() => {});
+    }, [auth.isAuthenticated, auth.provider, auth.copilotToken, auth.accessToken, auth.apiKey, auth.endpoint]);
 
     // Auto-scroll messages
     useEffect(() => {
@@ -128,6 +151,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
             setSettingProvider(auth.provider || "github");
             setSettingApiKey(auth.apiKey || "");
             setSettingEndpoint(auth.customEndpoint || "");
+            setSettingSystemPrompt(auth.customSystemPrompt || "");
         }
     }, [showSettings, auth]);
 
@@ -206,10 +230,10 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                         setIsPolling(false);
 
                         if (hasCopilot) {
-                            toast.success(`Successfully connected to Copilot as @${user.login}!`);
+                            toast.success(`Connected to GitHub Copilot as @${user.login}!`);
                         } else {
                             toast.warning(
-                                `Signed in as @${user.login}, but GitHub Copilot is not enabled on this account. You can enter an OpenAI or Groq key in Settings.`
+                                `Signed in as @${user.login}, but GitHub Copilot is not active on this account. You can enter an OpenAI or Groq key in Settings.`
                             );
                         }
                         return;
@@ -243,7 +267,6 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
         try {
             setIsLoading(true);
             if (token.startsWith("sk-")) {
-                // OpenAI API Key
                 setAuth({
                     isAuthenticated: true,
                     provider: "openai",
@@ -257,7 +280,6 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 toast.success("Connected to OpenAI successfully!");
                 return;
             } else if (token.startsWith("gsk_")) {
-                // Groq API Key
                 setAuth({
                     isAuthenticated: true,
                     provider: "groq",
@@ -272,7 +294,6 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 return;
             }
 
-            // Otherwise treat as GitHub Personal Access Token or Copilot session token
             const userResp: any = await invoke("copilot_get_user", { accessToken: token });
             const user = userResp.success ? userResp.data : { login: "user" };
 
@@ -304,7 +325,13 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
         setDeviceAuth(null);
         if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
         setIsPolling(false);
-        toast.info("Signed out of Safar Copilot");
+        toast.info("Signed out of GitHub Copilot");
+    };
+
+    const handleNewChat = () => {
+        setMessages([]);
+        setInputPrompt("");
+        toast.info("Started new Copilot chat");
     };
 
     // ─── Test Connection & Settings ───
@@ -376,6 +403,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
             provider: settingProvider,
             apiKey: settingApiKey.trim(),
             customEndpoint: settingEndpoint.trim(),
+            customSystemPrompt: settingSystemPrompt.trim(),
             endpoint: resolvedEndpoint,
             user:
                 auth.user || {
@@ -399,7 +427,6 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
         const query = (promptText || inputPrompt).trim();
         if (!query || isLoading) return;
 
-        // Determine token to use
         let activeToken = "";
         let activeEndpoint = auth.endpoint || "";
 
@@ -431,17 +458,19 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
         setIsLoading(true);
 
         try {
-            // Build system prompt with terminal context
-            const systemPrompt = `You are Safar Copilot, an expert AI terminal assistant and Linux/Unix system administrator communicating with a user connected to a remote server via SSH.
+            const defaultBasePrompt = `You are Safar Copilot, an expert AI terminal assistant and Linux/Unix system administrator communicating with a user connected to a remote server via SSH.
 When suggesting terminal commands to fix problems, inspect logs, or configure services:
 1. Always format executable terminal commands in markdown code blocks (\`\`\`bash ... \`\`\`).
 2. Provide concise, accurate, and safe shell commands.
-3. If terminal output is provided, analyze the errors and status shown in that terminal output carefully.
-${
-    terminalOutput
-        ? `\nCURRENT TERMINAL BUFFER & RECENT OUTPUT:\n\`\`\`\n${terminalOutput}\n\`\`\`\n`
-        : ""
-}`;
+3. If terminal output is provided, analyze the errors and status shown in that terminal output carefully.`;
+
+            const basePrompt = auth.customSystemPrompt?.trim() || defaultBasePrompt;
+
+            const systemPrompt = `${basePrompt}${
+                terminalOutput
+                    ? `\n\nCURRENT TERMINAL BUFFER & RECENT OUTPUT:\n\`\`\`\n${terminalOutput}\n\`\`\`\n`
+                    : ""
+            }`;
 
             const chatMessages = [
                 { role: "system", content: systemPrompt },
@@ -492,7 +521,6 @@ ${
             setIsLoading(true);
             toast.info(`Executing "${command}" on remote server...`);
 
-            // Execute command via SSH one-shot channel
             const execResp: any = await invoke("ssh_execute", {
                 sessionId,
                 command,
@@ -500,7 +528,6 @@ ${
 
             const output = execResp.success ? execResp.data || "(No output returned)" : `Error: ${execResp.error}`;
 
-            // Add execution note and output to chat
             const userAnalysisPrompt = `I executed the following command on the server:\n\`\`\`bash\n${command}\n\`\`\`\n\nCommand output received from remote server:\n\`\`\`\n${output}\n\`\`\`\n\nPlease analyze this result and tell me what it means and what action I should take next.`;
 
             await handleSendMessage(userAnalysisPrompt);
@@ -517,68 +544,75 @@ ${
         !auth.apiKey;
 
     return (
-        <div className="copilot-panel">
-            {/* Header */}
+        <div className="copilot-panel copilot-idea-theme">
+            {/* JetBrains IDEA Tool Window Header */}
             <div className="copilot-header">
                 <div className="copilot-header-brand">
-                    <div className="copilot-sparkle-badge">
+                    <div className="copilot-sparkle-badge" title="GitHub Copilot">
                         <Icons.Sparkles style={{ width: 14, height: 14 }} />
                     </div>
-                    <span>Copilot</span>
+                    <span className="copilot-title-text">GitHub Copilot</span>
+                    <span className="copilot-chat-pill">Chat</span>
                 </div>
 
                 <div className="copilot-header-actions">
                     {auth.isAuthenticated && (
                         <>
-                            <select
-                                className="copilot-model-select"
-                                value={model}
-                                onChange={(e) => setModel(e.target.value as CopilotModel)}
-                                title="Select AI Model"
+                            {/* New Chat Button */}
+                            <button
+                                className="copilot-header-btn"
+                                onClick={handleNewChat}
+                                title="New Chat (Clear session)"
                             >
-                                {auth.provider === "groq" ? (
-                                    <>
-                                        <option value="llama-3.3-70b-versatile">Llama 3.3 70B</option>
-                                        <option value="llama-3.1-8b-instant">Llama 3.1 8B</option>
-                                    </>
-                                ) : auth.provider === "openai" ? (
-                                    <>
-                                        <option value="gpt-4o">GPT-4o</option>
-                                        <option value="gpt-4o-mini">GPT-4o Mini</option>
-                                        <option value="o1-mini">o1-mini</option>
-                                    </>
-                                ) : (
-                                    <>
-                                        <option value="gpt-4o">GPT-4o</option>
-                                        <option value="claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-                                        <option value="gpt-4o-mini">GPT-4o Mini</option>
-                                        <option value="o1-mini">o1-mini</option>
-                                    </>
-                                )}
-                            </select>
+                                <Icons.Plus style={{ width: 13, height: 13 }} />
+                            </button>
 
+                            {/* Warning Indicator on Icon (instead of full chat banner) */}
+                            {hasNoCopilotPlan && (
+                                <button
+                                    className="copilot-header-warning-btn"
+                                    onClick={() => setShowSettings(true)}
+                                    title={`Copilot subscription not found for @${auth.user?.login || "user"}. Click to configure an OpenAI or Groq API key in Settings.`}
+                                >
+                                    <Icons.AlertTriangle style={{ width: 13, height: 13, color: "#facc15" }} />
+                                </button>
+                            )}
+
+                            {/* Settings Button */}
                             <button
                                 className="copilot-header-btn"
                                 onClick={() => setShowSettings(true)}
                                 title="AI Settings & API Keys"
                             >
-                                <Icons.Settings style={{ width: 14, height: 14 }} />
+                                <Icons.Settings style={{ width: 13, height: 13 }} />
                             </button>
 
+                            {/* User Pill */}
                             <div
-                                className="copilot-user-pill"
-                                title={`Signed in as @${auth.user?.login || "user"}`}
+                                className={`copilot-user-pill ${hasNoCopilotPlan ? "has-warning" : ""}`}
+                                title={
+                                    hasNoCopilotPlan
+                                        ? `Copilot subscription not detected for @${auth.user?.login || "user"}. Click to configure API key.`
+                                        : `Signed in as @${auth.user?.login || "user"}`
+                                }
+                                onClick={hasNoCopilotPlan ? () => setShowSettings(true) : undefined}
+                                style={hasNoCopilotPlan ? { cursor: "pointer" } : undefined}
                             >
-                                {auth.user?.avatar_url && (
+                                {hasNoCopilotPlan ? (
+                                    <Icons.AlertTriangle style={{ width: 11, height: 11, color: "#facc15", flexShrink: 0 }} />
+                                ) : auth.user?.avatar_url ? (
                                     <img
                                         src={auth.user.avatar_url}
                                         alt="Avatar"
                                         className="copilot-user-avatar"
                                     />
-                                )}
+                                ) : null}
                                 <span>@{auth.user?.login || "user"}</span>
                                 <button
-                                    onClick={handleSignOut}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleSignOut();
+                                    }}
                                     style={{
                                         background: "transparent",
                                         border: "none",
@@ -589,7 +623,7 @@ ${
                                     }}
                                     title="Sign Out"
                                 >
-                                    <Icons.X style={{ width: 10, height: 10 }} />
+                                    <Icons.X style={{ width: 9, height: 9 }} />
                                 </button>
                             </div>
                         </>
@@ -601,10 +635,11 @@ ${
                             onClick={() => setShowSettings(true)}
                             title="AI Settings & API Keys"
                         >
-                            <Icons.Settings style={{ width: 14, height: 14 }} />
+                            <Icons.Settings style={{ width: 13, height: 13 }} />
                         </button>
                     )}
 
+                    {/* Close Panel Button */}
                     <button
                         className="copilot-header-btn"
                         onClick={onClose}
@@ -738,6 +773,51 @@ ${
                                     </div>
                                 </>
                             )}
+
+                            {/* System Prompt Override */}
+                            <div style={{ marginTop: "12px" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                                    <label className="copilot-field-label" style={{ margin: 0 }}>
+                                        System Prompt Override{" "}
+                                        <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>
+                                            (Optional)
+                                        </span>
+                                    </label>
+                                    {settingSystemPrompt && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setSettingSystemPrompt("")}
+                                            style={{
+                                                background: "transparent",
+                                                border: "none",
+                                                color: "#60a5fa",
+                                                fontSize: "11px",
+                                                cursor: "pointer",
+                                                padding: 0,
+                                            }}
+                                        >
+                                            Reset
+                                        </button>
+                                    )}
+                                </div>
+                                <textarea
+                                    className="copilot-field-input"
+                                    rows={4}
+                                    placeholder="Leave blank to use default Safar assistant prompt, or enter custom instructions..."
+                                    value={settingSystemPrompt}
+                                    onChange={(e) => setSettingSystemPrompt(e.target.value)}
+                                    style={{
+                                        resize: "vertical",
+                                        fontFamily: "inherit",
+                                        fontSize: "12px",
+                                        lineHeight: 1.45,
+                                        minHeight: "70px",
+                                    }}
+                                />
+                                <div style={{ fontSize: "10.5px", color: "var(--text-muted)", marginTop: "4px" }}>
+                                    Overrides the base persona instructions while preserving attached terminal buffers.
+                                </div>
+                            </div>
                         </div>
 
                         <div className="copilot-settings-footer">
@@ -950,38 +1030,113 @@ ${
             ) : (
                 /* Authenticated Chat View */
                 <div className="copilot-chat-container">
-                    {/* Notice if GitHub account has no active Copilot subscription */}
-                    {hasNoCopilotPlan && (
-                        <div className="copilot-banner-warning">
-                            <div>
-                                ⚠️ <strong>Copilot Subscription Not Found</strong> for @{auth.user?.login}.
-                                GitHub Copilot requires a paid subscription. You can add a free Groq key or OpenAI key
-                                to chat with AI and analyze terminal commands.
-                            </div>
-                            <button
-                                className="copilot-banner-btn"
-                                onClick={() => setShowSettings(true)}
-                            >
-                                Configure API Key
-                            </button>
-                        </div>
-                    )}
-
+                    {/* Chat Messages List or JetBrains IDEA Welcome State */}
                     <div className="copilot-messages-list">
-                        {messages.map((message) => (
-                            <CopilotMessageItem
-                                key={message.id}
-                                message={message}
-                                onRunCommand={(cmd) => {
-                                    onRunCommand(cmd);
-                                    toast.success(`Sent to terminal: ${cmd}`);
-                                }}
-                                onRunAndAnalyze={handleRunAndAnalyze}
-                            />
-                        ))}
+                        {messages.length === 0 ? (
+                            /* JetBrains IDEA Copilot Welcome Empty State */
+                            <div className="copilot-idea-welcome">
+                                <div className="copilot-idea-emblem">
+                                    <Icons.Sparkles style={{ width: 28, height: 28 }} />
+                                </div>
+                                <h2 className="copilot-idea-heading">How can Copilot help you?</h2>
+                                <p className="copilot-idea-subheading">
+                                    Your AI pair programmer for this remote SSH connection. Ask questions about your
+                                    server, diagnose errors, or run commands directly into your terminal.
+                                </p>
+
+                                {/* JetBrains Action Cards (2x2 Grid) */}
+                                <div className="copilot-idea-cards-grid">
+                                    <button
+                                        className="copilot-idea-card"
+                                        onClick={() =>
+                                            handleSendMessage(
+                                                "Explain what is currently displayed in the terminal and diagnose any errors."
+                                            )
+                                        }
+                                    >
+                                        <div className="copilot-idea-card-text">
+                                            <div className="copilot-idea-card-title">🔍 Explain Terminal Error</div>
+                                            <div className="copilot-idea-card-desc">
+                                                Inspect recent screen & explain errors
+                                            </div>
+                                        </div>
+                                    </button>
+
+                                    <button
+                                        className="copilot-idea-card"
+                                        onClick={() =>
+                                            handleSendMessage(
+                                                "Check server health: uptime, CPU load average, memory usage, and free disk space."
+                                            )
+                                        }
+                                    >
+                                        <div className="copilot-idea-card-text">
+                                            <div className="copilot-idea-card-title">🩺 Diagnose Health</div>
+                                            <div className="copilot-idea-card-desc">
+                                                Uptime, CPU, RAM, & disk capacity
+                                            </div>
+                                        </div>
+                                    </button>
+
+                                    <button
+                                        className="copilot-idea-card"
+                                        onClick={() =>
+                                            handleSendMessage(
+                                                "Show me listening ports, active TCP sockets, and running network services on this host."
+                                            )
+                                        }
+                                    >
+                                        <div className="copilot-idea-card-text">
+                                            <div className="copilot-idea-card-title">🌐 Check Ports</div>
+                                            <div className="copilot-idea-card-desc">
+                                                List listening sockets & services
+                                            </div>
+                                        </div>
+                                    </button>
+
+                                    <button
+                                        className="copilot-idea-card"
+                                        onClick={() =>
+                                            handleSendMessage(
+                                                "Find large files taking up disk space over 500MB on this system."
+                                            )
+                                        }
+                                    >
+                                        <div className="copilot-idea-card-text">
+                                            <div className="copilot-idea-card-title">💾 Find Large Files</div>
+                                            <div className="copilot-idea-card-desc">
+                                                Locate disk usage hogs over 500MB
+                                            </div>
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            messages.map((message) => (
+                                <CopilotMessageItem
+                                    key={message.id}
+                                    message={message}
+                                    userAvatarUrl={auth.user?.avatar_url}
+                                    userLogin={auth.user?.login}
+                                    onRunCommand={(cmd) => {
+                                        onRunCommand(cmd);
+                                        toast.success(`Sent to terminal: ${cmd}`);
+                                    }}
+                                    onRunAndAnalyze={handleRunAndAnalyze}
+                                />
+                            ))
+                        )}
 
                         {isLoading && (
                             <div className="copilot-message assistant">
+                                <div className="copilot-msg-meta">
+                                    <div className="copilot-msg-author">
+                                        <div className="copilot-msg-avatar copilot-icon">
+                                            <Icons.Sparkles style={{ width: 12, height: 12 }} />
+                                        </div>
+                                        <span className="copilot-msg-name">GitHub Copilot</span>
+                                    </div>
+                                </div>
                                 <div
                                     className="copilot-message-bubble"
                                     style={{ display: "flex", alignItems: "center", gap: "8px" }}
@@ -996,103 +1151,52 @@ ${
                         <div ref={messagesEndRef} />
                     </div>
 
-                    {/* Quick Action Chips */}
-                    <div className="copilot-chips-container">
-                        <button
-                            className="copilot-chip"
-                            onClick={() =>
-                                handleSendMessage(
-                                    "Explain what is currently displayed in the terminal and if there are any errors."
-                                )
-                            }
-                            title="Inspect recent terminal buffer and explain any errors"
-                        >
-                            🔍 Explain Terminal Error
-                        </button>
-                        <button
-                            className="copilot-chip"
-                            onClick={() =>
-                                handleSendMessage(
-                                    "Check server health: uptime, CPU load, memory usage, and free disk space."
-                                )
-                            }
-                            title="Diagnose server health metrics"
-                        >
-                            🩺 Diagnose Health
-                        </button>
-                        <button
-                            className="copilot-chip"
-                            onClick={() =>
-                                handleSendMessage(
-                                    "Show me listening ports and running network services on this host."
-                                )
-                            }
-                            title="List listening network ports"
-                        >
-                            🌐 Check Ports
-                        </button>
-                        <button
-                            className="copilot-chip"
-                            onClick={() =>
-                                handleSendMessage("Find large files taking up disk space over 500MB.")
-                            }
-                            title="Find large disk usage files"
-                        >
-                            💾 Find Large Files
-                        </button>
-                    </div>
+                    {/* JetBrains IDEA Style Prompt Input Area */}
+                    <div className="copilot-idea-input-section">
+                        <div className="copilot-idea-input-box">
+                            {/* Input Tools & Context Chip Bar */}
+                            <div className="copilot-idea-tools-bar">
+                                <label
+                                    className={`copilot-idea-chip ${
+                                        includeTerminalContext ? "active" : ""
+                                    }`}
+                                    title="Toggle attaching active remote terminal buffer to query"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={includeTerminalContext}
+                                        onChange={(e) => setIncludeTerminalContext(e.target.checked)}
+                                        style={{ display: "none" }}
+                                    />
+                                    <span className="copilot-chip-indicator" />
+                                    <Icons.Terminal style={{ width: 11, height: 11 }} />
+                                    <span>Terminal Context</span>
+                                </label>
 
-                    {/* Input Area */}
-                    <div className="copilot-input-area">
-                        <div className="copilot-context-bar">
-                            <label className="copilot-context-toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={includeTerminalContext}
-                                    onChange={(e) => setIncludeTerminalContext(e.target.checked)}
-                                />
-                                <span>Attach Terminal Output</span>
-                            </label>
+                                {messages.length > 0 && (
+                                    <button
+                                        className="copilot-idea-btn-clear"
+                                        onClick={handleNewChat}
+                                        title="Clear chat history"
+                                    >
+                                        <Icons.Trash style={{ width: 11, height: 11 }} />
+                                        <span>Clear</span>
+                                    </button>
+                                )}
+                            </div>
 
-                            <button
-                                onClick={() =>
-                                    setMessages([
-                                        {
-                                            id: crypto.randomUUID(),
-                                            role: "assistant",
-                                            content: "Chat cleared. What can I help you with next?",
-                                            timestamp: Date.now(),
-                                        },
-                                    ])
-                                }
-                                style={{
-                                    background: "transparent",
-                                    border: "none",
-                                    color: "var(--text-muted)",
-                                    fontSize: "11px",
-                                    cursor: "pointer",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: "4px",
-                                }}
-                                title="Clear Chat History"
-                            >
-                                <Icons.Trash style={{ width: 11, height: 11 }} /> Clear
-                            </button>
-                        </div>
-
-                        <div className="copilot-input-wrapper">
+                            {/* Textarea */}
                             <textarea
                                 ref={textareaRef}
-                                className="copilot-textarea"
-                                placeholder="Ask Copilot about your terminal, commands, or errors... (Enter to send)"
+                                className="copilot-idea-textarea"
+                                placeholder="Ask Copilot about your terminal, commands, or errors..."
                                 value={inputPrompt}
                                 rows={1}
                                 onChange={(e) => {
                                     setInputPrompt(e.target.value);
                                     // Auto grow
                                     e.target.style.height = "auto";
-                                    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+                                    e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
                                 }}
                                 onKeyDown={(e) => {
                                     if (e.key === "Enter" && !e.shiftKey) {
@@ -1101,14 +1205,87 @@ ${
                                     }
                                 }}
                             />
-                            <button
-                                className="copilot-send-btn"
-                                onClick={() => handleSendMessage()}
-                                disabled={!inputPrompt.trim() || isLoading}
-                                title="Send query to Copilot"
-                            >
-                                <Icons.Send />
-                            </button>
+
+                            {/* Input Bottom Bar with Model Selector on Left, Hint & Send on Right */}
+                            <div className="copilot-idea-submit-bar">
+                                <div className="copilot-idea-submit-left">
+                                    {/* Model Selector Dropdown with Auto fallback and dynamic models */}
+                                    <select
+                                        className="copilot-model-select"
+                                        value={model}
+                                        onChange={(e) => setModel(e.target.value as CopilotModel)}
+                                        title="Select AI Model"
+                                    >
+                                        <option value="auto">Auto</option>
+                                        {auth.provider === "groq" ? (
+                                            <>
+                                                <option value="llama-3.3-70b-versatile">Llama 3.3 70B</option>
+                                                <option value="llama-3.1-8b-instant">Llama 3.1 8B</option>
+                                            </>
+                                        ) : auth.provider === "openai" ? (
+                                            <>
+                                                {availableModels.length > 0 ? (
+                                                    availableModels
+                                                        .filter(
+                                                            (m) =>
+                                                                m.id.includes("gpt") ||
+                                                                m.id.includes("o1") ||
+                                                                m.id.includes("o3")
+                                                        )
+                                                        .map((m) => (
+                                                            <option key={m.id} value={m.id}>
+                                                                {m.name || m.id}
+                                                            </option>
+                                                        ))
+                                                ) : (
+                                                    <>
+                                                        <option value="gpt-4o">GPT-4o</option>
+                                                        <option value="gpt-4o-mini">GPT-4o Mini</option>
+                                                        <option value="o1-mini">o1-mini</option>
+                                                    </>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <>
+                                                {availableModels.length > 0 ? (
+                                                    availableModels.map((m) => (
+                                                        <option key={m.id} value={m.id}>
+                                                            {m.name || m.id}
+                                                        </option>
+                                                    ))
+                                                ) : (
+                                                    <>
+                                                        <option value="gpt-4o">GPT-4o</option>
+                                                        <option value="gpt-4o-mini">GPT-4o Mini</option>
+                                                        <option value="gpt-4">GPT-4</option>
+                                                        <option value="o1-mini">o1-mini</option>
+                                                    </>
+                                                )}
+                                            </>
+                                        )}
+                                    </select>
+                                </div>
+
+                                <div className="copilot-idea-submit-right">
+                                    <span className="copilot-idea-keyhint">
+                                        ⏎ Send • Shift+⏎ New Line
+                                    </span>
+
+                                    <button
+                                        className="copilot-idea-send-btn"
+                                        onClick={() => handleSendMessage()}
+                                        disabled={!inputPrompt.trim() || isLoading}
+                                        title="Send query to Copilot"
+                                    >
+                                        <Icons.Send style={{ width: 13, height: 13 }} />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Footnote Disclaimer */}
+                        <div className="copilot-idea-disclaimer">
+                            AI responses may be inaccurate. Always verify terminal commands before execution.
                         </div>
                     </div>
                 </div>

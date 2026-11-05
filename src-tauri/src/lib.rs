@@ -167,6 +167,7 @@ pub fn run() {
             copilot_poll_auth,
             copilot_get_user,
             copilot_get_token,
+            copilot_get_models,
             copilot_chat,
 
         ])

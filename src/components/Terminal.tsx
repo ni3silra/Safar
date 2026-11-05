@@ -1232,7 +1232,7 @@ export function TerminalComponent({
   // UI State
   const [showSearch, setShowSearch] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [showToolbar, setShowToolbar] = useState(isConfigured6530);
+  const [showToolbar, setShowToolbar] = useState(false);
   const [showShiftButtons, setShowShiftButtons] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [isBlockMode, setIsBlockMode] = useState(false);
@@ -2245,121 +2245,6 @@ export function TerminalComponent({
   return (
     <div className="terminal-container" style={{ backgroundColor: useCustomColors ? customBackground : TERMINAL_THEMES[themeName].colors.background, display: "flex", flexDirection: "column" }}>
 
-      {/* Toolbar Trigger Area */}
-      <div style={{ position: "absolute", top: 4, right: 12, zIndex: 10, display: "flex", alignItems: "center", gap: "8px" }}>
-
-        {/* Terminal Mode Pill Indicator */}
-        <div
-          title={is6530Session ? (isBlockMode ? "6530 Block Mode (Click to toggle)" : "6530 Conversational Mode (Click to toggle)") : (isBlockMode ? "Block Mode" : "Line Mode")}
-          onClick={() => {
-            const nextMode = !isBlockModeRef.current;
-            isBlockModeRef.current = nextMode;
-            setIsBlockMode(nextMode);
-            if (nextMode) {
-              screen6530Ref.current.enterBlockMode();
-            } else {
-              screen6530Ref.current.enterConversationalMode();
-            }
-          }}
-          style={{
-            background: "var(--bg-secondary)", border: "1px solid var(--border-color)",
-            padding: "2px 8px", borderRadius: "12px", fontSize: "11px",
-            color: is6530Session ? "#60a5fa" : "var(--text-muted)",
-            display: "flex", alignItems: "center", gap: "6px",
-            cursor: "pointer", userSelect: "none"
-          }}
-        >
-          <span style={{
-            width: "6px", height: "6px", borderRadius: "50%",
-            background: isBlockMode ? "#60a5fa" : "#34d399",
-            boxShadow: isBlockMode ? "0 0 6px rgba(96,165,250,0.5)" : "none"
-          }} />
-          {is6530Session ? (isBlockMode ? "6530 Block" : "6530 Conv.") : (isBlockMode ? "Block Mode" : "Line Mode")}
-        </div>
-
-        {/* Copilot AI Assistant Button (SSH Only) */}
-        {protocol !== "telnet" && (
-          <button
-            className={`btn ${showCopilot ? "btn-primary" : "btn-secondary"}`}
-            style={{
-              padding: "4px 10px",
-              fontSize: "11px",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              background: showCopilot
-                ? "linear-gradient(135deg, #6366f1, #8b5cf6)"
-                : "rgba(99, 102, 241, 0.12)",
-              color: showCopilot ? "#ffffff" : "#a5b4fc",
-              border: showCopilot
-                ? "1px solid rgba(255, 255, 255, 0.2)"
-                : "1px solid rgba(139, 92, 246, 0.4)",
-              borderRadius: "6px",
-              cursor: "pointer",
-              fontWeight: 600,
-              boxShadow: showCopilot ? "0 0 12px rgba(99, 102, 241, 0.4)" : "none",
-              transition: "all 0.15s ease",
-            }}
-            onClick={() => {
-              setShowCopilot((prev) => {
-                const next = !prev;
-                setTimeout(safeFit, 60);
-                return next;
-              });
-            }}
-            title="Toggle GitHub Copilot AI Assistant [Ctrl+Shift+I]"
-          >
-            <Icons.Sparkles style={{ width: 13, height: 13 }} />
-            <span>Copilot</span>
-          </button>
-        )}
-
-        {/* Clear Button */}
-        <button
-          className="btn btn-secondary"
-          style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px", color: "var(--col-red)", borderColor: "rgba(239, 68, 68, 0.3)" }}
-          onClick={() => {
-            blockBufferRef.current = "";
-            screen6530Ref.current.reset();
-            xtermRef.current?.clear();
-            terminalRef.current?.focus();
-          }}
-          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.1)"}
-          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-          title="Clear Terminal Display"
-        >
-          Clear
-        </button>
-
-        {/* History Button */}
-        <button
-          className="btn btn-secondary"
-          style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px" }}
-          onClick={() => setShowHistoryModal(true)}
-          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
-          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-          title="Command History"
-        >
-          <Icons.Clock style={{ width: 12, height: 12 }} />
-          History
-        </button>
-
-        <button
-          className="btn btn-secondary"
-          style={{ padding: "4px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px" }}
-          onClick={() => {
-            setShowToolbar(!showToolbar);
-            terminalRef.current?.focus();
-          }}
-          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
-          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-          title="Toggle Control Sequences"
-        >
-          {showToolbar ? <Icons.CaretUp style={{ width: 12, height: 12 }} /> : <Icons.CaretDown style={{ width: 12, height: 12 }} />}
-          {showToolbar ? "Hide Controls" : "Show Controls"}
-        </button>
-      </div>
-
       {/* Terminal View & GitHub Copilot Side Panel Split */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
         <div
@@ -2372,6 +2257,319 @@ export function TerminalComponent({
             position: "relative"
           }}
         >
+          {/* Terminal Pane Top Toolbar */}
+          <div
+            className="terminal-top-toolbar"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              padding: "4px 10px",
+              gap: "8px",
+              background: "rgba(0, 0, 0, 0.25)",
+              borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+              flexShrink: 0,
+              zIndex: 10,
+              userSelect: "none",
+            }}
+          >
+            {/* Terminal Mode Pill Indicator */}
+            <div
+              title={is6530Session ? (isBlockMode ? "6530 Block Mode (Click to toggle)" : "6530 Conversational Mode (Click to toggle)") : (isBlockMode ? "Block Mode" : "Line Mode")}
+              onClick={() => {
+                const nextMode = !isBlockModeRef.current;
+                isBlockModeRef.current = nextMode;
+                setIsBlockMode(nextMode);
+                if (nextMode) {
+                  screen6530Ref.current.enterBlockMode();
+                } else {
+                  screen6530Ref.current.enterConversationalMode();
+                }
+              }}
+              style={{
+                background: "var(--bg-secondary)", border: "1px solid var(--border-color)",
+                padding: "2px 8px", borderRadius: "12px", fontSize: "11px",
+                color: is6530Session ? "#60a5fa" : "var(--text-muted)",
+                display: "flex", alignItems: "center", gap: "6px",
+                cursor: "pointer", userSelect: "none"
+              }}
+            >
+              <span style={{
+                width: "6px", height: "6px", borderRadius: "50%",
+                background: isBlockMode ? "#60a5fa" : "#34d399",
+                boxShadow: isBlockMode ? "0 0 6px rgba(96,165,250,0.5)" : "none"
+              }} />
+              {is6530Session ? (isBlockMode ? "6530 Block" : "6530 Conv.") : (isBlockMode ? "Block Mode" : "Line Mode")}
+            </div>
+
+            {/* Copilot AI Assistant Button (SSH Only) */}
+            {protocol !== "telnet" && (
+              <button
+                className={`btn ${showCopilot ? "btn-primary" : "btn-secondary"}`}
+                style={{
+                  padding: "3px 9px",
+                  fontSize: "11px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  background: showCopilot
+                    ? "linear-gradient(135deg, #6366f1, #8b5cf6)"
+                    : "rgba(99, 102, 241, 0.12)",
+                  color: showCopilot ? "#ffffff" : "#a5b4fc",
+                  border: showCopilot
+                    ? "1px solid rgba(255, 255, 255, 0.2)"
+                    : "1px solid rgba(139, 92, 246, 0.4)",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  boxShadow: showCopilot ? "0 0 12px rgba(99, 102, 241, 0.4)" : "none",
+                  transition: "all 0.15s ease",
+                }}
+                onClick={() => {
+                  setShowCopilot((prev) => {
+                    const next = !prev;
+                    setTimeout(safeFit, 60);
+                    return next;
+                  });
+                }}
+                title="Toggle GitHub Copilot AI Assistant [Ctrl+Shift+I]"
+              >
+                <Icons.Sparkles style={{ width: 13, height: 13 }} />
+                <span>Copilot</span>
+              </button>
+            )}
+
+            {/* Clear Button */}
+            <button
+              className="btn btn-secondary"
+              style={{ padding: "3px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px", color: "var(--col-red)", borderColor: "rgba(239, 68, 68, 0.3)" }}
+              onClick={() => {
+                blockBufferRef.current = "";
+                screen6530Ref.current.reset();
+                xtermRef.current?.clear();
+                terminalRef.current?.focus();
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "rgba(239, 68, 68, 0.1)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              title="Clear Terminal Display"
+            >
+              Clear
+            </button>
+
+            {/* History Button */}
+            <button
+              className="btn btn-secondary"
+              style={{ padding: "3px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px" }}
+              onClick={() => setShowHistoryModal(true)}
+              onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              title="Command History"
+            >
+              <Icons.Clock style={{ width: 12, height: 12 }} />
+              History
+            </button>
+
+            {/* Controls Button */}
+            <button
+              className="btn btn-secondary"
+              style={{ padding: "3px 8px", fontSize: "11px", display: "flex", alignItems: "center", gap: "6px" }}
+              onClick={() => {
+                setShowToolbar((prev) => {
+                  const next = !prev;
+                  setTimeout(safeFit, 60);
+                  return next;
+                });
+                terminalRef.current?.focus();
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              title="Toggle Control Sequences & Function Keys"
+            >
+              {showToolbar ? <Icons.CaretUp style={{ width: 12, height: 12 }} /> : <Icons.CaretDown style={{ width: 12, height: 12 }} />}
+              {showToolbar ? "Hide Controls" : "Show Controls"}
+            </button>
+          </div>
+
+          {/* On-Screen Function Keys & Control Sequences (Top Drawer, Hidden by Default) */}
+          {showToolbar && (
+            <div
+              className="terminal-controls-drawer"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                background: "rgba(15, 23, 42, 0.95)",
+                borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+                padding: "5px 8px",
+                gap: "4px",
+                userSelect: "none",
+                flexShrink: 0,
+                boxShadow: "0 4px 12px rgba(0, 0, 0, 0.35)",
+                zIndex: 9,
+              }}
+            >
+              {/* Row 1: F1..F8 (and SF1..SF8 when showShiftButtons is active) + Connect/Disconnect */}
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", overflowX: "auto" }}>
+                <div style={{ display: "flex", gap: "4px" }}>
+                  {["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8"].map(key => (
+                    <button
+                      key={key}
+                      onClick={() => handleToolbarKey(key)}
+                      style={{
+                        padding: "3px 8px", background: "rgba(255, 255, 255, 0.06)", border: "1px solid rgba(255, 255, 255, 0.12)",
+                        color: "#e2e8f0", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "36px"
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)"}
+                      title={`Send ${key}`}
+                    >
+                      {key}
+                    </button>
+                  ))}
+                </div>
+
+                {showShiftButtons && (
+                  <div style={{ display: "flex", gap: "4px", paddingLeft: "6px", borderLeft: "1px solid rgba(255, 255, 255, 0.15)" }}>
+                    {["SF1", "SF2", "SF3", "SF4", "SF5", "SF6", "SF7", "SF8"].map(key => (
+                      <button
+                        key={key}
+                        onClick={() => handleToolbarKey(key)}
+                        style={{
+                          padding: "3px 8px", background: "rgba(59, 130, 246, 0.15)", border: "1px solid rgba(59, 130, 246, 0.3)",
+                          color: "#93c5fd", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "40px"
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.28)"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.15)"}
+                        title={`Send ${key}`}
+                      >
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ marginLeft: "auto", display: "flex", gap: "6px" }}>
+                  <button
+                    onClick={() => {
+                      if (isDisconnected) {
+                        setIsDisconnected(false);
+                        terminalRef.current?.focus();
+                        if (protocol !== "telnet") {
+                          invoke("ssh_keepalive", { sessionId }).catch(() => {});
+                        }
+                      } else {
+                        _onDisconnect?.();
+                      }
+                    }}
+                    style={{
+                      padding: "3px 10px", fontSize: "11px", fontWeight: 600, borderRadius: "4px", cursor: "pointer",
+                      color: isDisconnected ? "#22c55e" : "#ef4444",
+                      border: isDisconnected ? "1px solid rgba(34, 197, 94, 0.4)" : "1px solid rgba(239, 68, 68, 0.4)",
+                      background: isDisconnected ? "rgba(34, 197, 94, 0.1)" : "rgba(239, 68, 68, 0.1)"
+                    }}
+                    title={isDisconnected ? "Connect to host" : "Disconnect session"}
+                  >
+                    {isDisconnected ? "Connect" : "Disconnect"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Row 2: F9..F16 (and SF9..SF16 when showShiftButtons is active) + Toggle Shift + Controls */}
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", overflowX: "auto" }}>
+                <div style={{ display: "flex", gap: "4px" }}>
+                  {["F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16"].map(key => (
+                    <button
+                      key={key}
+                      onClick={() => handleToolbarKey(key)}
+                      style={{
+                        padding: "3px 8px", background: "rgba(255, 255, 255, 0.06)", border: "1px solid rgba(255, 255, 255, 0.12)",
+                        color: "#e2e8f0", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "36px"
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)"}
+                      title={`Send ${key}`}
+                    >
+                      {key}
+                    </button>
+                  ))}
+                </div>
+
+                {showShiftButtons && (
+                  <div style={{ display: "flex", gap: "4px", paddingLeft: "6px", borderLeft: "1px solid rgba(255, 255, 255, 0.15)" }}>
+                    {["SF9", "SF10", "SF11", "SF12", "SF13", "SF14", "SF15", "SF16"].map(key => (
+                      <button
+                        key={key}
+                        onClick={() => handleToolbarKey(key)}
+                        style={{
+                          padding: "3px 8px", background: "rgba(59, 130, 246, 0.15)", border: "1px solid rgba(59, 130, 246, 0.3)",
+                          color: "#93c5fd", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "40px"
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.28)"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.15)"}
+                        title={`Send ${key}`}
+                      >
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ marginLeft: "auto", display: "flex", gap: "4px" }}>
+                  <button
+                    onClick={() => setShowShiftButtons(!showShiftButtons)}
+                    style={{
+                      padding: "3px 8px", fontSize: "11px", fontWeight: 600, borderRadius: "4px", cursor: "pointer",
+                      background: showShiftButtons ? "rgba(99, 102, 241, 0.25)" : "rgba(255, 255, 255, 0.05)",
+                      border: showShiftButtons ? "1px solid rgba(99, 102, 241, 0.5)" : "1px solid rgba(255, 255, 255, 0.1)",
+                      color: showShiftButtons ? "#a5b4fc" : "#94a3b8"
+                    }}
+                    title="Toggle Shifted Function Keys (SF1..SF16)"
+                  >
+                    SF Keys
+                  </button>
+                  {["Ctrl+C", "Up", "Down"].map(key => (
+                    <button
+                      key={key}
+                      onClick={() => handleToolbarKey(key)}
+                      style={{
+                        padding: "3px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
+                        color: "#94a3b8", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
+                      title={`Send ${key}`}
+                    >
+                      {key}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Search Bar (scoped inside terminal pane) */}
+          {showSearch && (
+            <div className="terminal-search-bar" style={{ position: "absolute", top: 38, right: 14, zIndex: 20 }}>
+              <input
+                autoFocus
+                type="text"
+                className="terminal-search-input"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.shiftKey ? findPrev() : findNext();
+                  }
+                  if (e.key === "Escape") setShowSearch(false);
+                }}
+                placeholder="Find..."
+              />
+              <button onClick={findPrev} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretUp /></button>
+              <button onClick={findNext} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretDown /></button>
+              <div className="terminal-search-divider" />
+              <button onClick={() => setShowSearch(false)} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.X /></button>
+            </div>
+          )}
+
           <div
             ref={terminalRef}
             style={{ flex: 1, overflow: "hidden", padding: "8px", cursor: "text" }}
@@ -2449,182 +2647,9 @@ export function TerminalComponent({
         </div>
       )}
 
-      {/* On-Screen Function Keys Toolbar (Below terminal screen, per 6530 Spec Section 1) */}
-      {showToolbar && (
-        <div style={{
-          display: "flex",
-          flexDirection: "column",
-          background: "rgba(15, 23, 42, 0.8)",
-          borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-          padding: "4px 8px",
-          gap: "4px",
-          userSelect: "none",
-          flexShrink: 0
-        }}>
-          {/* Row 1: F1..F8 (and SF1..SF8 when showShiftButtons is active) + Connect/Disconnect */}
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", overflowX: "auto" }}>
-            <div style={{ display: "flex", gap: "4px" }}>
-              {["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8"].map(key => (
-                <button
-                  key={key}
-                  onClick={() => handleToolbarKey(key)}
-                  style={{
-                    padding: "3px 8px", background: "rgba(255, 255, 255, 0.06)", border: "1px solid rgba(255, 255, 255, 0.12)",
-                    color: "#e2e8f0", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "36px"
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)"}
-                  title={`Send ${key}`}
-                >
-                  {key}
-                </button>
-              ))}
-            </div>
 
-            {showShiftButtons && (
-              <div style={{ display: "flex", gap: "4px", paddingLeft: "6px", borderLeft: "1px solid rgba(255, 255, 255, 0.15)" }}>
-                {["SF1", "SF2", "SF3", "SF4", "SF5", "SF6", "SF7", "SF8"].map(key => (
-                  <button
-                    key={key}
-                    onClick={() => handleToolbarKey(key)}
-                    style={{
-                      padding: "3px 8px", background: "rgba(59, 130, 246, 0.15)", border: "1px solid rgba(59, 130, 246, 0.3)",
-                      color: "#93c5fd", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "40px"
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.28)"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.15)"}
-                    title={`Send ${key}`}
-                  >
-                    {key}
-                  </button>
-                ))}
-              </div>
-            )}
 
-            <div style={{ marginLeft: "auto", display: "flex", gap: "6px" }}>
-              <button
-                onClick={() => {
-                  if (isDisconnected) {
-                    setIsDisconnected(false);
-                    terminalRef.current?.focus();
-                    if (protocol !== "telnet") {
-                      invoke("ssh_keepalive", { sessionId }).catch(() => {});
-                    }
-                  } else {
-                    _onDisconnect?.();
-                  }
-                }}
-                style={{
-                  padding: "3px 10px", fontSize: "11px", fontWeight: 600, borderRadius: "4px", cursor: "pointer",
-                  color: isDisconnected ? "#22c55e" : "#ef4444",
-                  border: isDisconnected ? "1px solid rgba(34, 197, 94, 0.4)" : "1px solid rgba(239, 68, 68, 0.4)",
-                  background: isDisconnected ? "rgba(34, 197, 94, 0.1)" : "rgba(239, 68, 68, 0.1)"
-                }}
-                title={isDisconnected ? "Connect to host" : "Disconnect session"}
-              >
-                {isDisconnected ? "Connect" : "Disconnect"}
-              </button>
-            </div>
-          </div>
 
-          {/* Row 2: F9..F16 (and SF9..SF16 when showShiftButtons is active) + Toggle Shift + Controls */}
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", overflowX: "auto" }}>
-            <div style={{ display: "flex", gap: "4px" }}>
-              {["F9", "F10", "F11", "F12", "F13", "F14", "F15", "F16"].map(key => (
-                <button
-                  key={key}
-                  onClick={() => handleToolbarKey(key)}
-                  style={{
-                    padding: "3px 8px", background: "rgba(255, 255, 255, 0.06)", border: "1px solid rgba(255, 255, 255, 0.12)",
-                    color: "#e2e8f0", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "36px"
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.06)"}
-                  title={`Send ${key}`}
-                >
-                  {key}
-                </button>
-              ))}
-            </div>
-
-            {showShiftButtons && (
-              <div style={{ display: "flex", gap: "4px", paddingLeft: "6px", borderLeft: "1px solid rgba(255, 255, 255, 0.15)" }}>
-                {["SF9", "SF10", "SF11", "SF12", "SF13", "SF14", "SF15", "SF16"].map(key => (
-                  <button
-                    key={key}
-                    onClick={() => handleToolbarKey(key)}
-                    style={{
-                      padding: "3px 8px", background: "rgba(59, 130, 246, 0.15)", border: "1px solid rgba(59, 130, 246, 0.3)",
-                      color: "#93c5fd", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600, flexShrink: 0, minWidth: "40px"
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.28)"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = "rgba(59, 130, 246, 0.15)"}
-                    title={`Send ${key}`}
-                  >
-                    {key}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div style={{ marginLeft: "auto", display: "flex", gap: "4px" }}>
-              <button
-                onClick={() => setShowShiftButtons(!showShiftButtons)}
-                style={{
-                  padding: "3px 8px", fontSize: "11px", fontWeight: 600, borderRadius: "4px", cursor: "pointer",
-                  background: showShiftButtons ? "rgba(99, 102, 241, 0.25)" : "rgba(255, 255, 255, 0.05)",
-                  border: showShiftButtons ? "1px solid rgba(99, 102, 241, 0.5)" : "1px solid rgba(255, 255, 255, 0.1)",
-                  color: showShiftButtons ? "#a5b4fc" : "#94a3b8"
-                }}
-                title="Toggle Shifted Function Keys (SF1..SF16)"
-              >
-                SF Keys
-              </button>
-              {["Ctrl+C", "Up", "Down"].map(key => (
-                <button
-                  key={key}
-                  onClick={() => handleToolbarKey(key)}
-                  style={{
-                    padding: "3px 8px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid rgba(255, 255, 255, 0.1)",
-                    color: "#94a3b8", borderRadius: "4px", fontSize: "11px", cursor: "pointer", fontWeight: 600
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"}
-                  title={`Send ${key}`}
-                >
-                  {key}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Search Bar */}
-      {
-        showSearch && (
-          <div className="terminal-search-bar">
-            <input
-              autoFocus
-              type="text"
-              className="terminal-search-input"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.shiftKey ? findPrev() : findNext();
-                }
-                if (e.key === "Escape") setShowSearch(false);
-              }}
-              placeholder="Find..."
-            />
-            <button onClick={findPrev} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretUp /></button>
-            <button onClick={findNext} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.CaretDown /></button>
-            <div className="terminal-search-divider" />
-            <button onClick={() => setShowSearch(false)} className="icon-btn" style={{ width: 24, height: 24 }}><Icons.X /></button>
-          </div>
-        )
-      }
 
       {/* History Modal Viewer */}
       {

@@ -141,7 +141,7 @@ describe("CopilotPanel Component", () => {
         await waitFor(() => {
             expect(getTerminalOutputMock).toHaveBeenCalled();
             expect(invoke).toHaveBeenCalledWith("copilot_chat", expect.objectContaining({
-                model: "gpt-4o",
+                model: "auto",
             }));
             expect(screen.getByText(/The error indicates MySQL service is down/i)).toBeInTheDocument();
             expect(screen.getByText("systemctl restart mysql")).toBeInTheDocument();

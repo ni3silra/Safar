@@ -251,6 +251,181 @@ pub async fn copilot_get_token(access_token: String) -> CommandResponse<CopilotA
     }
 }
 
+async fn execute_chat_request(
+    client: &reqwest::Client,
+    full_url: &str,
+    active_token: &str,
+    model_name: &str,
+    messages: &[ChatMessage],
+) -> Result<String, (reqwest::StatusCode, String)> {
+    let payload = serde_json::json!({
+        "model": model_name,
+        "messages": messages,
+        "temperature": 0.2,
+        "stream": false
+    });
+
+    let mut req = client
+        .post(full_url)
+        .header(AUTHORIZATION, format!("Bearer {}", active_token))
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "application/json");
+
+    if full_url.contains("githubcopilot.com") {
+        req = req
+            .header("Editor-Version", "vscode/1.95.0")
+            .header("Editor-Plugin-Version", "copilot-chat/0.22.0")
+            .header(USER_AGENT, "GithubCopilot/1.22.0")
+            .header("Copilot-Integration-Id", "vscode-chat")
+            .header("Openai-Organization", "github-copilot")
+            .header("Openai-Intent", "conversation-panel");
+    } else {
+        req = req.header(USER_AGENT, "Safar-SSH-Copilot/1.0");
+    }
+
+    let resp = req.json(&payload).send().await.map_err(|e| {
+        (reqwest::StatusCode::INTERNAL_SERVER_ERROR, format!("Network error: {}", e))
+    })?;
+
+    let status = resp.status();
+    let raw_text = resp.text().await.unwrap_or_default();
+
+    if status.is_success() {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw_text) {
+            if let Some(content) = json
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c0| c0.get("message"))
+                .and_then(|m| m.get("content"))
+                .and_then(|t| t.as_str())
+            {
+                return Ok(content.to_string());
+            } else if let Some(content) = json
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c0| c0.get("text"))
+                .and_then(|t| t.as_str())
+            {
+                return Ok(content.to_string());
+            }
+        }
+
+        if !raw_text.trim().is_empty() && raw_text.trim() != "OK" {
+            return Ok(raw_text);
+        }
+
+        Err((status, format!("Unexpected response format: {}", raw_text)))
+    } else {
+        Err((status, raw_text))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopilotModelInfo {
+    pub id: String,
+    pub name: String,
+}
+
+/// Step 4b: Retrieve list of accessible models from GitHub Copilot or configured AI provider
+#[tauri::command]
+pub async fn copilot_get_models(
+    token: String,
+    endpoint: Option<String>,
+) -> CommandResponse<Vec<CopilotModelInfo>> {
+    let client = reqwest::Client::new();
+    let mut active_token = token.trim().to_string();
+
+    // Auto-exchange if GitHub OAuth token
+    if (active_token.starts_with("ghu_") || active_token.starts_with("gho_")) && !active_token.starts_with("tid=") {
+        if let CommandResponse {
+            success: true,
+            data: Some(auth_res),
+            ..
+        } = copilot_get_token(active_token.clone()).await
+        {
+            active_token = auth_res.token;
+        }
+    }
+
+    let raw_endpoint = endpoint.unwrap_or_default().trim().to_string();
+    let target_url = if raw_endpoint.is_empty()
+        || raw_endpoint.contains("models.inference.ai.azure.com")
+        || raw_endpoint.contains("models.github.ai")
+        || raw_endpoint.contains("githubcopilot.com")
+    {
+        if active_token.starts_with("sk-") {
+            "https://api.openai.com/v1/models".to_string()
+        } else if active_token.starts_with("gsk_") {
+            "https://api.groq.com/openai/v1/models".to_string()
+        } else {
+            "https://api.githubcopilot.com/models".to_string()
+        }
+    } else if raw_endpoint.ends_with("/models") {
+        raw_endpoint
+    } else {
+        format!("{}/models", raw_endpoint.trim_end_matches('/'))
+    };
+
+    let mut req = client
+        .get(&target_url)
+        .header(AUTHORIZATION, format!("Bearer {}", active_token))
+        .header(ACCEPT, "application/json");
+
+    if target_url.contains("githubcopilot.com") {
+        req = req
+            .header("Editor-Version", "vscode/1.95.0")
+            .header("Editor-Plugin-Version", "copilot-chat/0.22.0")
+            .header(USER_AGENT, "GithubCopilot/1.22.0")
+            .header("Copilot-Integration-Id", "vscode-chat");
+    } else {
+        req = req.header(USER_AGENT, "Safar-SSH-Copilot/1.0");
+    }
+
+    let default_copilot_models = vec![
+        CopilotModelInfo { id: "gpt-4o".into(), name: "GPT-4o".into() },
+        CopilotModelInfo { id: "gpt-4o-mini".into(), name: "GPT-4o Mini".into() },
+        CopilotModelInfo { id: "gpt-4".into(), name: "GPT-4".into() },
+        CopilotModelInfo { id: "o1-mini".into(), name: "o1-mini".into() },
+    ];
+
+    match req.send().await {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                    let mut models: Vec<CopilotModelInfo> = Vec::new();
+                    let list = json
+                        .get("data")
+                        .or_else(|| json.get("models"))
+                        .and_then(|v| v.as_array());
+
+                    if let Some(arr) = list {
+                        for item in arr {
+                            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                                let name = item
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(id)
+                                    .to_string();
+                                models.push(CopilotModelInfo {
+                                    id: id.to_string(),
+                                    name,
+                                });
+                            }
+                        }
+                    }
+
+                    if !models.is_empty() {
+                        return CommandResponse::ok(models);
+                    }
+                }
+            }
+            CommandResponse::ok(default_copilot_models)
+        }
+        Err(_) => CommandResponse::ok(default_copilot_models),
+    }
+}
+
 /// Step 5: Send chat completions query to Copilot Chat or OpenAI/Custom API
 #[tauri::command]
 pub async fn copilot_chat(
@@ -311,72 +486,43 @@ pub async fn copilot_chat(
         format!("{}/chat/completions", base_endpoint.trim_end_matches('/'))
     };
 
-    let payload = serde_json::json!({
-        "model": model,
-        "messages": messages,
-        "temperature": 0.2,
-        "stream": false
-    });
-
-    let mut req = client
-        .post(&full_url)
-        .header(AUTHORIZATION, format!("Bearer {}", active_token))
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json");
-
-    if full_url.contains("githubcopilot.com") {
-        req = req
-            .header("Editor-Version", "vscode/1.95.0")
-            .header("Editor-Plugin-Version", "copilot-chat/0.22.0")
-            .header(USER_AGENT, "GithubCopilot/1.22.0")
-            .header("Openai-Organization", "github-copilot")
-            .header("Openai-Intent", "conversation-panel");
+    // Sanitize requested model for Copilot API (Auto resolves to gpt-4o)
+    let raw_model = model.trim().to_string();
+    let effective_model = if raw_model.is_empty() || raw_model.eq_ignore_ascii_case("auto") {
+        "gpt-4o".to_string()
     } else {
-        req = req.header(USER_AGENT, "Safar-SSH-Copilot/1.0");
-    }
+        raw_model
+    };
 
-    match req.json(&payload).send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            let raw_text = resp.text().await.unwrap_or_default();
+    let initial_model = if full_url.contains("githubcopilot.com") {
+        match effective_model.as_str() {
+            "gpt-4o" | "gpt-4o-mini" | "gpt-4" | "o1-mini" | "o1-preview" | "claude-3.5-sonnet" => effective_model,
+            _ => "gpt-4o".to_string(),
+        }
+    } else {
+        effective_model
+    };
 
-            if status.is_success() {
-                // Parse standard OpenAI chat completion JSON response
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw_text) {
-                    if let Some(content) = json
-                        .get("choices")
-                        .and_then(|c| c.get(0))
-                        .and_then(|c0| c0.get("message"))
-                        .and_then(|m| m.get("content"))
-                        .and_then(|t| t.as_str())
-                    {
-                        return CommandResponse::ok(content.to_string());
-                    } else if let Some(content) = json
-                        .get("choices")
-                        .and_then(|c| c.get(0))
-                        .and_then(|c0| c0.get("text"))
-                        .and_then(|t| t.as_str())
-                    {
-                        return CommandResponse::ok(content.to_string());
-                    }
+    match execute_chat_request(&client, &full_url, &active_token, &initial_model, &messages).await {
+        Ok(reply) => CommandResponse::ok(reply),
+        Err((status, err_body)) => {
+            // If Copilot returns model_not_supported, automatically fallback to gpt-4 or gpt-4o
+            if full_url.contains("githubcopilot.com") && err_body.contains("model_not_supported") {
+                let fallback_model = if initial_model == "gpt-4" { "gpt-4o" } else { "gpt-4" };
+                if let Ok(reply) = execute_chat_request(&client, &full_url, &active_token, fallback_model, &messages).await {
+                    return CommandResponse::ok(reply);
                 }
+            }
 
-                // If response is not JSON choices but non-empty text, return as string
-                if !raw_text.trim().is_empty() && raw_text.trim() != "OK" {
-                    return CommandResponse::ok(raw_text);
-                }
-
-                CommandResponse::err(format!("Unexpected response format from AI service: {}", raw_text))
-            } else if status == reqwest::StatusCode::UNAUTHORIZED {
+            if status == reqwest::StatusCode::UNAUTHORIZED {
                 CommandResponse::err(format!(
                     "AI service returned 401 Unauthorized ({}): {}. Your token may have expired or is invalid. Please sign in again or verify your API key.",
-                    full_url, raw_text
+                    full_url, err_body
                 ))
             } else {
-                CommandResponse::err(format!("AI service ({}) returned error {}: {}", full_url, status, raw_text))
+                CommandResponse::err(format!("AI service ({}) returned error {}: {}", full_url, status, err_body))
             }
         }
-        Err(e) => CommandResponse::err(format!("Failed to contact AI service ({}): {}", full_url, e)),
     }
 }
 
@@ -441,6 +587,23 @@ mod tests {
         };
         assert_eq!(msg.role, "user");
         assert_eq!(msg.content, "Check disk usage");
+    }
+
+    #[test]
+    fn test_copilot_model_info_deserialization() {
+        let json_str = r#"{"data":[{"id":"gpt-4o","name":"GPT-4o"},{"id":"claude-3.5-sonnet","name":"Claude 3.5 Sonnet"}]}"#;
+        let v: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let arr = v.get("data").unwrap().as_array().unwrap();
+        let models: Vec<CopilotModelInfo> = arr
+            .iter()
+            .map(|item| CopilotModelInfo {
+                id: item.get("id").unwrap().as_str().unwrap().to_string(),
+                name: item.get("name").unwrap().as_str().unwrap().to_string(),
+            })
+            .collect();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "gpt-4o");
+        assert_eq!(models[1].name, "Claude 3.5 Sonnet");
     }
 }
 

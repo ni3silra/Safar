@@ -25,6 +25,7 @@ export interface CopilotAuthState {
     copilotToken?: string;
     apiKey?: string;
     customEndpoint?: string;
+    customSystemPrompt?: string;
     isCopilotSubscriber?: boolean;
     endpoint?: string;
     user?: CopilotUser;
@@ -40,10 +41,17 @@ export interface CopilotMessage {
     commandOutput?: string;
 }
 
+export interface CopilotModelInfo {
+    id: string;
+    name: string;
+}
+
 export type CopilotModel =
+    | "auto"
     | "gpt-4o"
     | "claude-3.5-sonnet"
     | "gpt-4o-mini"
+    | "gpt-4"
     | "o1-mini"
     | "llama-3.3-70b-versatile"
     | "llama-3.1-8b-instant"
