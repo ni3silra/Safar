@@ -59,22 +59,22 @@ const VT_SEQUENCES: Record<string, string> = {
   "S-F13": "\x1b[25;2~", "S-F14": "\x1b[26;2~", "S-F15": "\x1b[28;2~", "S-F16": "\x1b[29;2~",
 };
 
-// HP NonStop 6530 function key sequences
-// F1-F8 → ESC p through ESC w  |  F9-F16 → ESC a through ESC h
-// Shift+F1-F8 → ESC P through ESC W  |  Shift+F9-F16 → ESC A through ESC H
+// HP NonStop 6530 function key sequences (per 6530 Programmer's Guide Table 2-7 & Table 3-11)
+// Unshifted F1-F16 → 0x40 ('@') through 0x4F ('O')
+// Shifted S-F1-S-F16 → 0x60 ('`') through 0x6F ('o')
 const HP_6530_SEQUENCES: Record<string, string> = {
   "Ctrl+C": "\x03",
   "Up": "\x1b[A",
   "Down": "\x1b[B",
-  "F1": "\x1bp", "F2": "\x1bq", "F3": "\x1br", "F4": "\x1bs",
-  "F5": "\x1bt", "F6": "\x1bu", "F7": "\x1bv", "F8": "\x1bw",
-  "F9": "\x1ba", "F10": "\x1bb", "F11": "\x1bc", "F12": "\x1bd",
-  "F13": "\x1be", "F14": "\x1bf", "F15": "\x1bg", "F16": "\x1bh",
+  "F1": "\x01@", "F2": "\x01A", "F3": "\x01B", "F4": "\x01C",
+  "F5": "\x01D", "F6": "\x01E", "F7": "\x01F", "F8": "\x01G",
+  "F9": "\x01H", "F10": "\x01I", "F11": "\x01J", "F12": "\x01K",
+  "F13": "\x01L", "F14": "\x01M", "F15": "\x01N", "F16": "\x01O",
 
-  "S-F1": "\x1bP", "S-F2": "\x1bQ", "S-F3": "\x1bR", "S-F4": "\x1bS",
-  "S-F5": "\x1bT", "S-F6": "\x1bU", "S-F7": "\x1bV", "S-F8": "\x1bW",
-  "S-F9": "\x1bA", "S-F10": "\x1bB", "S-F11": "\x1bC", "S-F12": "\x1bD",
-  "S-F13": "\x1bE", "S-F14": "\x1bF", "S-F15": "\x1bG", "S-F16": "\x1bH",
+  "S-F1": "\x01`", "S-F2": "\x01a", "S-F3": "\x01b", "S-F4": "\x01c",
+  "S-F5": "\x01d", "S-F6": "\x01e", "S-F7": "\x01f", "S-F8": "\x01g",
+  "S-F9": "\x01h", "S-F10": "\x01i", "S-F11": "\x01j", "S-F12": "\x01k",
+  "S-F13": "\x01l", "S-F14": "\x01m", "S-F15": "\x01n", "S-F16": "\x01o",
 };
 
 // Map keyboard F-key names (from KeyboardEvent.key) to our sequence key names
@@ -87,6 +87,16 @@ const FKEY_MAP: Record<string, { normal: string; shift: string }> = {
   "F11": { normal: "F11", shift: "S-F11" }, "F12": { normal: "F12", shift: "S-F12" },
   "F13": { normal: "F13", shift: "S-F13" }, "F14": { normal: "F14", shift: "S-F14" },
   "F15": { normal: "F15", shift: "S-F15" }, "F16": { normal: "F16", shift: "S-F16" },
+};
+
+// Map Alt+F1..Alt+F6 for keyboards without physical F11..F16 keys
+const ALT_FKEY_MAP: Record<string, { normal: string; shift: string }> = {
+  "F1": { normal: "F11", shift: "S-F11" },
+  "F2": { normal: "F12", shift: "S-F12" },
+  "F3": { normal: "F13", shift: "S-F13" },
+  "F4": { normal: "F14", shift: "S-F14" },
+  "F5": { normal: "F15", shift: "S-F15" },
+  "F6": { normal: "F16", shift: "S-F16" },
 };
 
 // ─── HP 6530 → ANSI/VT Escape Sequence Translator ───
@@ -106,6 +116,7 @@ export interface ScreenCommand {
     | 'cursor'
     | 'cursorOnly'
     | 'startField'
+    | 'defineFieldAttr'
     | 'videoAttr'
     | 'protectStart'
     | 'protectEnd'
@@ -113,15 +124,23 @@ export interface ScreenCommand {
     | 'lockKeyboard'
     | 'eraseEop'
     | 'eraseEol'
+    | 'clearMemory'
+    | 'insertLine'
+    | 'deleteLine'
+    | 'insertChar'
+    | 'deleteChar'
     | 'resetMdt'
     | 'readBuffer'
     | 'readWithAddress'
     | 'readWithAddressAll'
+    | 'readScreenAllAttrs'
     | 'readCursor'
     | 'readStatus'
     | 'readRevision'
     | 'readConfig'
     | 'readColorConfig'
+    | 'simulateFKey'
+    | 'statusMessage'
     | 'enq'
     | 'char'
     | 'clear';
@@ -205,25 +224,26 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           i += 3;
           continue;
         }
-        // ESC - t (Set Color Configuration) / ESC - q (Set/Reset Color Map Table)
-        if (sub === 't' || sub === 'q') {
+        // ESC - t (Set Color Configuration) / ESC - q (Set/Reset Color Map Table) / ESC - s (Load Variable Field Table)
+        if (sub === 't' || sub === 'q' || sub === 's') {
           let j = i + 3;
-          while (j < data.length && data[j] !== '\r' && data[j] !== '\n' && data[j] !== '\x03' && data[j] !== '\x1b' && data[j] !== '\x01') {
+          while (j < data.length && data[j] !== '\r' && data[j] !== '\n' && data[j] !== '\x03' && data[j] !== '\x04' && data[j] !== '\x1b' && data[j] !== '\x01') {
             j++;
           }
           if (j < data.length && (data[j] === '\r' || data[j] === '\n')) j++;
           i = j;
           continue;
         }
-        // ESC - X / ESC - Y / ESC - W : width/column format
-        if (sub === 'X' || sub === 'Y' || sub === 'W' || sub === 'c' || sub === 'd') {
+        // ESC - X / ESC - Y / ESC - W / ESC - r : single-char extended commands
+        if (sub === 'X' || sub === 'Y' || sub === 'W' || sub === 'c' || sub === 'd' || sub === 'r') {
           i += 3;
           continue;
         }
-        // ESC - <params> C (Set Buffer Address Extended)
-        // ESC - <params> D (Set Cursor Address Extended)
-        // ESC - <params> J (Read With Address Extended)
-        // ESC - <params> K (Read With Address All Extended)
+        // ESC - [<params>] C (Set Buffer Address Extended)
+        // ESC - [<params>] D (Set Cursor Address Extended)
+        // ESC - [<params>] I (Clear Memory to Spaces Extended)
+        // ESC - [<params>] J (Read With Address Extended — 0 params in TEDIT = full page!)
+        // ESC - [<params>] K (Read With Address All Extended — 0 params = full page!)
         let j = i + 2;
         while (j < data.length && ((data.charCodeAt(j) >= 0x30 && data.charCodeAt(j) <= 0x3b) || data[j] === ' ')) {
           j++;
@@ -233,31 +253,126 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           break;
         }
         const finalChar = data[j];
-        const paramStr = data.substring(i + 2, j);
-        const parts = paramStr.split(';').map(s => parseInt(s, 10));
-        if (finalChar === 'C' && parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-          const r0 = Math.max(0, parts[0] - 1);
-          const c0 = Math.max(0, parts[1] - 1);
-          screenCommands.push({ type: 'bufferAddress', row: r0, col: c0 });
-          result += `\x1b[${r0 + 1};${c0 + 1}H`;
+        const paramStr = data.substring(i + 2, j).trim();
+        const parts = paramStr.length > 0 ? paramStr.split(';').map(s => parseInt(s, 10)) : [];
+        if (finalChar === 'C') {
+          if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+            const r0 = Math.max(0, parts[0] - 1);
+            const c0 = Math.max(0, parts[1] - 1);
+            screenCommands.push({ type: 'bufferAddress', row: r0, col: c0 });
+            result += `\x1b[${r0 + 1};${c0 + 1}H`;
+            i = j + 1;
+            continue;
+          }
+          if (
+            parts.length === 0 &&
+            j + 2 < data.length &&
+            data.charCodeAt(j + 1) >= 0x20 && data.charCodeAt(j + 1) <= 0x37 &&
+            data.charCodeAt(j + 2) >= 0x20 && data.charCodeAt(j + 2) <= 0x6f
+          ) {
+            const r0 = data.charCodeAt(j + 1) - 0x20;
+            const c0 = data.charCodeAt(j + 2) - 0x20;
+            screenCommands.push({ type: 'bufferAddress', row: r0, col: c0 });
+            result += `\x1b[${r0 + 1};${c0 + 1}H`;
+            i = j + 3;
+            continue;
+          }
+        }
+        if (finalChar === 'D') {
+          if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+            const r0 = Math.max(0, parts[0] - 1);
+            const c0 = Math.max(0, parts[1] - 1);
+            screenCommands.push({ type: 'cursor', row: r0, col: c0 });
+            result += `\x1b[${r0 + 1};${c0 + 1}H`;
+            i = j + 1;
+            continue;
+          }
+          if (
+            parts.length === 0 &&
+            j + 2 < data.length &&
+            data.charCodeAt(j + 1) >= 0x20 && data.charCodeAt(j + 1) <= 0x37 &&
+            data.charCodeAt(j + 2) >= 0x20 && data.charCodeAt(j + 2) <= 0x6f
+          ) {
+            const r0 = data.charCodeAt(j + 1) - 0x20;
+            const c0 = data.charCodeAt(j + 2) - 0x20;
+            screenCommands.push({ type: 'cursorOnly', row: r0, col: c0 });
+            result += `\x1b[${r0 + 1};${c0 + 1}H`;
+            i = j + 3;
+            continue;
+          }
+        }
+        if (finalChar === 'I') {
+          if (parts.length >= 4) {
+            screenCommands.push({
+              type: 'clearMemory',
+              row: Math.max(0, (parts[0] || 1) - 1),
+              col: Math.max(0, (parts[1] || 1) - 1),
+              endRow: Math.max(0, (parts[2] || 24) - 1),
+              endCol: Math.max(0, (parts[3] || 80) - 1),
+            });
+            i = j + 1;
+            continue;
+          }
+          if (
+            parts.length === 0 &&
+            j + 4 < data.length &&
+            data.charCodeAt(j + 1) >= 0x20 && data.charCodeAt(j + 1) <= 0x37 &&
+            data.charCodeAt(j + 2) >= 0x20 && data.charCodeAt(j + 2) <= 0x6f &&
+            data.charCodeAt(j + 3) >= 0x20 && data.charCodeAt(j + 3) <= 0x37 &&
+            data.charCodeAt(j + 4) >= 0x20 && data.charCodeAt(j + 4) <= 0x6f
+          ) {
+            screenCommands.push({
+              type: 'clearMemory',
+              row: data.charCodeAt(j + 1) - 0x20,
+              col: data.charCodeAt(j + 2) - 0x20,
+              endRow: data.charCodeAt(j + 3) - 0x20,
+              endCol: data.charCodeAt(j + 4) - 0x20,
+            });
+            i = j + 5;
+            continue;
+          }
+          screenCommands.push({ type: 'clearMemory', row: 0, col: 0, endRow: 23, endCol: 79 });
           i = j + 1;
           continue;
         }
-        if (finalChar === 'D' && parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-          const r0 = Math.max(0, parts[0] - 1);
-          const c0 = Math.max(0, parts[1] - 1);
-          screenCommands.push({ type: 'cursor', row: r0, col: c0 });
-          result += `\x1b[${r0 + 1};${c0 + 1}H`;
-          i = j + 1;
-          continue;
-        }
-        if ((finalChar === 'J' || finalChar === 'K') && parts.length >= 4) {
+        if (finalChar === 'J' || finalChar === 'K') {
+          const cmdType = finalChar === 'K' ? 'readWithAddressAll' : 'readWithAddress';
+          if (parts.length >= 4) {
+            screenCommands.push({
+              type: cmdType,
+              row: Math.max(0, (parts[0] || 1) - 1),
+              col: Math.max(0, (parts[1] || 1) - 1),
+              endRow: Math.max(0, (parts[2] || 24) - 1),
+              endCol: Math.max(0, (parts[3] || 80) - 1),
+            });
+            i = j + 1;
+            continue;
+          }
+          if (
+            parts.length === 0 &&
+            j + 4 < data.length &&
+            data.charCodeAt(j + 1) >= 0x20 && data.charCodeAt(j + 1) <= 0x37 &&
+            data.charCodeAt(j + 2) >= 0x20 && data.charCodeAt(j + 2) <= 0x6f &&
+            data.charCodeAt(j + 3) >= 0x20 && data.charCodeAt(j + 3) <= 0x37 &&
+            data.charCodeAt(j + 4) >= 0x20 && data.charCodeAt(j + 4) <= 0x6f
+          ) {
+            screenCommands.push({
+              type: cmdType,
+              row: data.charCodeAt(j + 1) - 0x20,
+              col: data.charCodeAt(j + 2) - 0x20,
+              endRow: data.charCodeAt(j + 3) - 0x20,
+              endCol: data.charCodeAt(j + 4) - 0x20,
+            });
+            i = j + 5;
+            continue;
+          }
+          // 0 parameters (e.g. 1B 2D 4A in TEDIT): read entire current page (0,0 .. 23,79)!
           screenCommands.push({
-            type: finalChar === 'K' ? 'readWithAddressAll' : 'readWithAddress',
-            row: Math.max(0, (parts[0] || 1) - 1),
-            col: Math.max(0, (parts[1] || 1) - 1),
-            endRow: Math.max(0, (parts[2] || 24) - 1),
-            endCol: Math.max(0, (parts[3] || 80) - 1),
+            type: cmdType,
+            row: 0,
+            col: 0,
+            endRow: 23,
+            endCol: 79,
           });
           i = j + 1;
           continue;
@@ -340,8 +455,14 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
         }
       }
 
-      // ── ANSI SS3 pass-through: ESC O ──
+      // ── 6530 Insert Character in Block Mode (ESC O — 2 bytes!) vs ANSI SS3 pass-through in Conv Mode ──
       if (next === 'O') {
+        if (inBlockMode) {
+          screenCommands.push({ type: 'insertChar' });
+          result += '\x1b[1@';
+          i += 2;
+          continue;
+        }
         if (i + 2 >= data.length) {
           pendingRemainder = data.substring(i);
           break;
@@ -406,24 +527,27 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           pendingRemainder = data.substring(i);
           break;
         }
-        if (
-          inBlockMode &&
-          i + 5 < data.length &&
-          data.charCodeAt(i + 2) >= 0x20 && data.charCodeAt(i + 2) <= 0x37 &&
-          data.charCodeAt(i + 3) >= 0x20 && data.charCodeAt(i + 3) <= 0x6f &&
-          data.charCodeAt(i + 4) >= 0x20 && data.charCodeAt(i + 4) <= 0x37 &&
-          data.charCodeAt(i + 5) >= 0x20 && data.charCodeAt(i + 5) <= 0x6f &&
-          (i + 6 >= data.length || data[i + 6] === '\x03')
-        ) {
-          screenCommands.push({
-            type: 'readWithAddress',
-            row: data.charCodeAt(i + 2) - 0x20,
-            col: data.charCodeAt(i + 3) - 0x20,
-            endRow: data.charCodeAt(i + 4) - 0x20,
-            endCol: data.charCodeAt(i + 5) - 0x20,
-          });
-          i += 6;
-          continue;
+        if (inBlockMode) {
+          if (i + 5 >= data.length) {
+            pendingRemainder = data.substring(i);
+            break;
+          }
+          if (
+            data.charCodeAt(i + 2) >= 0x20 && data.charCodeAt(i + 2) <= 0x37 &&
+            data.charCodeAt(i + 3) >= 0x20 && data.charCodeAt(i + 3) <= 0x6f &&
+            data.charCodeAt(i + 4) >= 0x20 && data.charCodeAt(i + 4) <= 0x37 &&
+            data.charCodeAt(i + 5) >= 0x20 && data.charCodeAt(i + 5) <= 0x6f
+          ) {
+            screenCommands.push({
+              type: 'readWithAddress',
+              row: data.charCodeAt(i + 2) - 0x20,
+              col: data.charCodeAt(i + 3) - 0x20,
+              endRow: data.charCodeAt(i + 4) - 0x20,
+              endCol: data.charCodeAt(i + 5) - 0x20,
+            });
+            i += 6;
+            continue;
+          }
         }
         const row0 = data.charCodeAt(i + 2) - 0x20;
         const col0 = data.charCodeAt(i + 3) - 0x20;
@@ -475,11 +599,34 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
         case 'F': i += 2; continue;
 
         // Erase & Clear operations (6530 Spec: ESC I = Clear Memory to Spaces, ESC J = Erase to End of Page, ESC K = Erase to End of Line)
-        case 'I': result += '\x1b[2J\x1b[H'; screenCommands.push({ type: 'clear' }); i += 2; continue;
+        case 'I': {
+          if (
+            inBlockMode &&
+            i + 5 < data.length &&
+            data.charCodeAt(i + 2) >= 0x20 && data.charCodeAt(i + 2) <= 0x37 &&
+            data.charCodeAt(i + 3) >= 0x20 && data.charCodeAt(i + 3) <= 0x6f &&
+            data.charCodeAt(i + 4) >= 0x20 && data.charCodeAt(i + 4) <= 0x37 &&
+            data.charCodeAt(i + 5) >= 0x20 && data.charCodeAt(i + 5) <= 0x6f
+          ) {
+            screenCommands.push({
+              type: 'clearMemory',
+              row: data.charCodeAt(i + 2) - 0x20,
+              col: data.charCodeAt(i + 3) - 0x20,
+              endRow: data.charCodeAt(i + 4) - 0x20,
+              endCol: data.charCodeAt(i + 5) - 0x20,
+            });
+            i += 6;
+            continue;
+          }
+          result += '\x1b[2J\x1b[H';
+          screenCommands.push({ type: 'clear' });
+          i += 2;
+          continue;
+        }
         case 'J': result += '\x1b[0J'; screenCommands.push({ type: 'eraseEop' }); i += 2; continue;
         case 'K': result += '\x1b[0K'; screenCommands.push({ type: 'eraseEol' }); i += 2; continue;
-        case 'L': result += '\x1b[1L'; i += 2; continue;
-        case 'M': result += '\x1b[1M'; i += 2; continue;
+        case 'L': result += '\x1b[1L'; screenCommands.push({ type: 'insertLine' }); i += 2; continue;
+        case 'M': result += '\x1b[1M'; screenCommands.push({ type: 'deleteLine' }); i += 2; continue;
 
         // Reinitialize terminal (ESC q)
         case 'q': result += '\x1b[0m\x1b[2J\x1b[H'; screenCommands.push({ type: 'clear' }); i += 2; continue;
@@ -536,9 +683,18 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           i += 2;
           continue;
 
-        // Cursor visibility
+        // Cursor visibility / Simulate Function Key (ESC d <keycode>, 6530 Spec Page 2-52)
         case 'e': result += '\x1b[?25l'; i += 2; continue;
-        case 'd': result += '\x1b[?25h'; i += 2; continue;
+        case 'd': {
+          if (inBlockMode && i + 2 < data.length && data.charCodeAt(i + 2) >= 0x40 && data.charCodeAt(i + 2) <= 0x7a) {
+            screenCommands.push({ type: 'simulateFKey', char: data[i + 2] });
+            i += 3;
+            continue;
+          }
+          result += '\x1b[?25h';
+          i += 2;
+          continue;
+        }
         case 'Y': result += '\x1b[?25h'; i += 2; continue;
 
         // Tab operations
@@ -576,9 +732,35 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           continue;
         }
 
-        // Insert/delete character
-        case 'P': result += '\x1b[1@'; i += 2; continue;
-        case 'Q': result += '\x1b[1P'; i += 2; continue;
+        // Delete character (ESC P) and Read Screen With All Attributes (ESC Q <sRow><sCol><eRow><eCol>)
+        case 'P':
+          result += '\x1b[1P';
+          screenCommands.push({ type: 'deleteChar' });
+          i += 2;
+          continue;
+        case 'Q': {
+          if (
+            inBlockMode &&
+            i + 5 < data.length &&
+            data.charCodeAt(i + 2) >= 0x20 && data.charCodeAt(i + 2) <= 0x37 &&
+            data.charCodeAt(i + 3) >= 0x20 && data.charCodeAt(i + 3) <= 0x6f &&
+            data.charCodeAt(i + 4) >= 0x20 && data.charCodeAt(i + 4) <= 0x37 &&
+            data.charCodeAt(i + 5) >= 0x20 && data.charCodeAt(i + 5) <= 0x6f
+          ) {
+            screenCommands.push({
+              type: 'readScreenAllAttrs',
+              row: data.charCodeAt(i + 2) - 0x20,
+              col: data.charCodeAt(i + 3) - 0x20,
+              endRow: data.charCodeAt(i + 4) - 0x20,
+              endCol: data.charCodeAt(i + 5) - 0x20,
+            });
+            i += 6;
+            continue;
+          }
+          result += '\x1b[1P';
+          i += 2;
+          continue;
+        }
 
         // Bell
         case 'E': result += '\x07'; i += 2; continue;
@@ -636,16 +818,40 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
           i += 2;
           continue;
 
-        // Write to Message/Status Line (ESC o <message> CR/ETX)
+        // Write to Message/Status Line (ESC o <message with optional ESC 6 attr> CR, 6530 Spec Pages 2-49 & 3-93)
         case 'o': {
-          if (inBlockMode) {
+          if (inBlockMode || (i + 2 < data.length && data[i + 2] !== '\r' && data[i + 2] !== '\n')) {
             let j = i + 2;
-            while (j < data.length && data[j] !== '\r' && data[j] !== '\n' && data[j] !== '\x03' && data[j] !== '\x1b' && data[j] !== '\x11' && data[j] !== '\x13') {
+            let msgText = '';
+            while (j < data.length && data[j] !== '\r' && data[j] !== '\n' && data[j] !== '\x03' && data[j] !== '\x04') {
+              if (data[j] === '\x1b') {
+                if (j + 1 >= data.length) {
+                  pendingRemainder = data.substring(i);
+                  break;
+                }
+                if (data[j + 1] === '6' || data[j + 1] === '7') {
+                  if (j + 2 >= data.length) {
+                    pendingRemainder = data.substring(i);
+                    break;
+                  }
+                  j += 3;
+                  continue;
+                }
+              }
+              if (data.charCodeAt(j) >= 0x20) {
+                msgText += data[j];
+              }
               j++;
             }
-            if (j < data.length && (data[j] === '\r' || data[j] === '\n')) {
+            if (pendingRemainder) break;
+            if (j >= data.length) {
+              pendingRemainder = data.substring(i);
+              break;
+            }
+            if (data[j] === '\r' || data[j] === '\n') {
               j++;
             }
+            screenCommands.push({ type: 'statusMessage', char: msgText });
             i = j;
             continue;
           }
@@ -674,8 +880,14 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
       if (pendingRemainder) break;
     }
 
-    // Ignore NUL padding bytes
-    if (data[i] === '\x00') {
+    // Ignore NUL padding, EOT (0x04), ACK (0x06), SO (0x0E), SI (0x0F)
+    if (
+      data[i] === '\x00' ||
+      data[i] === '\x04' ||
+      data[i] === '\x06' ||
+      data[i] === '\x0e' ||
+      data[i] === '\x0f'
+    ) {
       i++;
       continue;
     }
@@ -688,7 +900,7 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
       continue;
     }
 
-    // ── 6530 Control Characters: DC1, DC3, GS ──
+    // ── 6530 Control Characters: DC1, DC2, DC3, DC4, FS, GS ──
     // DC1 (0x11) — Set Buffer Address in Block Mode: 0x11 <row> <col> (or WRITEREAD framing when standalone)
     if (data[i] === '\x11') {
       writeReadActive = true;
@@ -713,24 +925,83 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
       continue;
     }
 
-    // DC3 (0x13) — Set Cursor Address in Block Mode: 0x13 <row> <col>
-    if (data[i] === '\x13') {
+    // DC2 (0x12) — Extended Data Compression in Block Mode: 0x12 <count> <char> (6530 Spec Page 3-65)
+    if (data[i] === '\x12') {
       if (inBlockMode || inBlockFrame) {
-        if (
-          i + 2 < data.length &&
-          data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37 &&
-          data.charCodeAt(i + 2) >= 0x20 && data.charCodeAt(i + 2) <= 0x6f
-        ) {
-          const row0 = data.charCodeAt(i + 1) - 0x20;
-          const col0 = data.charCodeAt(i + 2) - 0x20;
-          screenCommands.push({ type: 'cursorOnly', row: row0, col: col0 });
-          result += `\x1b[${row0 + 1};${col0 + 1}H`;
-          i += 3;
-          continue;
-        } else if (i + 2 >= data.length && i + 1 < data.length && data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37) {
+        if (i + 2 >= data.length) {
           pendingRemainder = data.substring(i);
           break;
         }
+        const count = Math.max(0, data.charCodeAt(i + 1) - 0x20);
+        const repeatChar = data[i + 2];
+        for (let k = 0; k < count; k++) {
+          screenCommands.push({ type: 'char', char: repeatChar });
+          result += repeatChar;
+        }
+        i += 3;
+        continue;
+      }
+      i++;
+      continue;
+    }
+
+    // DC3 (0x13) — Set Cursor Address: 0x13 <row> <col> (6530 Spec Page 2-24 & 3-14)
+    if (data[i] === '\x13') {
+      if (
+        i + 2 < data.length &&
+        data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37 &&
+        data.charCodeAt(i + 2) >= 0x20 && data.charCodeAt(i + 2) <= 0x6f
+      ) {
+        const row0 = data.charCodeAt(i + 1) - 0x20;
+        const col0 = data.charCodeAt(i + 2) - 0x20;
+        screenCommands.push({ type: inBlockMode || inBlockFrame ? 'cursorOnly' : 'cursor', row: row0, col: col0 });
+        result += `\x1b[${row0 + 1};${col0 + 1}H`;
+        i += 3;
+        continue;
+      } else if (
+        (inBlockMode || inBlockFrame) &&
+        i + 2 >= data.length &&
+        (i + 1 >= data.length || (data.charCodeAt(i + 1) >= 0x20 && data.charCodeAt(i + 1) <= 0x37))
+      ) {
+        pendingRemainder = data.substring(i);
+        break;
+      }
+      i++;
+      continue;
+    }
+
+    // DC4 (0x14) — Limited Data Compression (repeat spaces) in Block Mode: 0x14 <count> (6530 Spec Page 3-65)
+    if (data[i] === '\x14') {
+      if (inBlockMode || inBlockFrame) {
+        if (i + 1 >= data.length) {
+          pendingRemainder = data.substring(i);
+          break;
+        }
+        const count = Math.max(0, data.charCodeAt(i + 1) - 0x20);
+        for (let k = 0; k < count; k++) {
+          screenCommands.push({ type: 'char', char: ' ' });
+          result += ' ';
+        }
+        i += 2;
+        continue;
+      }
+      i++;
+      continue;
+    }
+
+    // FS (0x1C) — Define Field Attribute in Protect Submode: 0x1C <row> <col> <tableParam> (6530 Spec Page 3-38)
+    if (data[i] === '\x1c') {
+      if (inBlockMode || inBlockFrame) {
+        if (i + 3 >= data.length) {
+          pendingRemainder = data.substring(i);
+          break;
+        }
+        const row0 = Math.max(0, data.charCodeAt(i + 1) - 0x20);
+        const col0 = Math.max(0, data.charCodeAt(i + 2) - 0x20);
+        const tableParam = data.charCodeAt(i + 3);
+        screenCommands.push({ type: 'defineFieldAttr', row: row0, col: col0, dataAttr: tableParam });
+        i += 4;
+        continue;
       }
       i++;
       continue;
@@ -746,7 +1017,7 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
       const dAttr = data.charCodeAt(i + 2);
       screenCommands.push({ type: 'startField', videoAttr: vAttr, dataAttr: dAttr });
       const flags = vAttr & 0x1f;
-      const isProtected = (dAttr & 0x01) !== 0;
+      const isProtected = (dAttr & 0x40) !== 0 ? (dAttr & 0x20) !== 0 : (dAttr & 0x01) !== 0;
       const parts: string[] = ['0'];
       if (flags & 0x01) parts.push('4');
       if (flags & 0x02) parts.push('5');
@@ -1163,6 +1434,38 @@ export function TerminalComponent({
               return false;
             }
 
+            // 6530 Page Up / Page Down / Roll Up / Roll Down / Insert Char / Delete Char Function Keys (Table 3-11)
+            if (e.key === "PageDown") {
+              e.preventDefault();
+              sendData(screen.generateWriteReadResponse(e.shiftKey || e.altKey ? "\x01r" : "\x01R"));
+              return false;
+            }
+            if (e.key === "PageUp") {
+              e.preventDefault();
+              sendData(screen.generateWriteReadResponse(e.shiftKey || e.altKey ? "\x01s" : "\x01S"));
+              return false;
+            }
+            if (e.altKey && e.key === "ArrowUp") {
+              e.preventDefault();
+              sendData(screen.generateWriteReadResponse(e.shiftKey ? "\x01p" : "\x01P"));
+              return false;
+            }
+            if (e.altKey && e.key === "ArrowDown") {
+              e.preventDefault();
+              sendData(screen.generateWriteReadResponse(e.shiftKey ? "\x01q" : "\x01Q"));
+              return false;
+            }
+            if (e.ctrlKey && e.key === "Insert" && screen.protectSubmode) {
+              e.preventDefault();
+              sendData(screen.generateWriteReadResponse("\x01T"));
+              return false;
+            }
+            if (e.ctrlKey && e.key === "Delete" && screen.protectSubmode) {
+              e.preventDefault();
+              sendData(screen.generateWriteReadResponse("\x01t"));
+              return false;
+            }
+
             if (e.key === "ArrowLeft") {
               const pos = screen.moveCursorLeft();
               if (pos) terminal.write(`\x1b[${pos.row + 1};${pos.col + 1}H`);
@@ -1196,8 +1499,8 @@ export function TerminalComponent({
           }
         }
 
-        // F-key interception
-        const fkeyEntry = FKEY_MAP[e.key];
+        // F-key interception (supports F1..F16 and Alt+F1..Alt+F6 -> F11..F16)
+        const fkeyEntry = (e.altKey && ALT_FKEY_MAP[e.key]) || FKEY_MAP[e.key];
         if (fkeyEntry) {
           const seqKey = e.shiftKey ? fkeyEntry.shift : fkeyEntry.normal;
           const seq = HP_6530_SEQUENCES[seqKey];
@@ -1211,7 +1514,10 @@ export function TerminalComponent({
               sendData(response);
             } else {
               const keyChar = seq.length >= 2 ? seq[1] : seq;
-              sendData(`\x01${keyChar}\r`);
+              const activeBuf = xtermRef.current?.buffer.active;
+              const rChar = String.fromCharCode(Math.min(23, Math.max(0, activeBuf ? activeBuf.cursorY : screen.cursorRow)) + 0x20);
+              const cChar = String.fromCharCode(Math.min(79, Math.max(0, activeBuf ? activeBuf.cursorX : screen.cursorCol)) + 0x20);
+              sendData(`\x01${keyChar}${rChar}${cChar}\r`);
             }
             return false;
           }
@@ -1302,7 +1608,10 @@ export function TerminalComponent({
       // -----------------------------------------------------------------
 
       if (isEscapeSequence) {
-        sendData(data);
+        // Never leak raw VT/ANSI escape sequences to the host in 6530 Block Mode
+        if (!is6530Ref.current) {
+          sendData(data);
+        }
         return;
       }
 
@@ -1339,7 +1648,10 @@ export function TerminalComponent({
       // Check for Ctrl+C (\x03) or Ctrl+D (\x04)
       if (data === "\x03" || data === "\x04") {
         blockBufferRef.current = "";
-        sendData(data);
+        // Never send raw 0x03 (ETX) or 0x04 (EOT) in 6530 Block Mode — raw ETX corrupts block framing!
+        if (!is6530Ref.current) {
+          sendData(data);
+        }
         return;
       }
 
@@ -1427,6 +1739,7 @@ export function TerminalComponent({
                 break;
               case 'protectSubEnter':
                 screen.enterProtectSubmode();
+                screen.blockMode = true;
                 isBlockModeRef.current = true;
                 setIsBlockMode(true);
                 blockBufferRef.current = "";
@@ -1458,6 +1771,9 @@ export function TerminalComponent({
               case 'startField':
                 screen.startField(cmd.videoAttr!, cmd.dataAttr!, cmd.extAttr);
                 break;
+              case 'defineFieldAttr':
+                screen.defineFieldAttribute(cmd.row!, cmd.col!, cmd.dataAttr!);
+                break;
               case 'videoAttr':
                 screen.setVideoAttribute(cmd.videoAttr!);
                 break;
@@ -1479,6 +1795,21 @@ export function TerminalComponent({
               case 'eraseEol':
                 screen.eraseToEndOfLine();
                 break;
+              case 'clearMemory':
+                screen.clearMemoryToSpaces(cmd.row, cmd.col, cmd.endRow, cmd.endCol);
+                break;
+              case 'insertLine':
+                screen.insertLine();
+                break;
+              case 'deleteLine':
+                screen.deleteLine();
+                break;
+              case 'insertChar':
+                screen.insertChar();
+                break;
+              case 'deleteChar':
+                screen.deleteChar();
+                break;
               case 'resetMdt':
                 screen.resetModifiedDataTags();
                 break;
@@ -1486,14 +1817,17 @@ export function TerminalComponent({
                 sendData(screen.generateReadBufferResponse(false, cmd.row, cmd.col, cmd.endRow, cmd.endCol));
                 break;
               case 'readWithAddress':
-                sendData(screen.generateReadBufferResponse(true, cmd.row, cmd.col, cmd.endRow, cmd.endCol));
+                sendData(screen.generateReadBufferResponse(true, cmd.row, cmd.col, cmd.endRow, cmd.endCol, false));
                 break;
               case 'readWithAddressAll':
-                if (isBlockModeRef.current) {
-                  sendData(screen.generateReadBufferResponse(true, cmd.row ?? 0, cmd.col ?? 0, cmd.endRow ?? 23, cmd.endCol ?? 79));
+                if (isBlockModeRef.current || screen.blockMode) {
+                  sendData(screen.generateReadBufferResponse(true, cmd.row ?? 0, cmd.col ?? 0, cmd.endRow ?? 23, cmd.endCol ?? 79, true));
                 } else {
                   sendData(screen.generateStatusResponse(false));
                 }
+                break;
+              case 'readScreenAllAttrs':
+                sendData(screen.generateReadScreenWithAttributesResponse(cmd.row, cmd.col, cmd.endRow, cmd.endCol));
                 break;
               case 'readCursor': {
                 const activeBuf = xtermRef.current?.buffer.active;
@@ -1513,6 +1847,12 @@ export function TerminalComponent({
                 break;
               case 'readColorConfig':
                 sendData(screen.generateColorConfigResponse(isBlockModeRef.current));
+                break;
+              case 'simulateFKey':
+                sendData(screen.generateWriteReadResponse('\x01' + (cmd.char || 'v')));
+                break;
+              case 'statusMessage':
+                screen.statusLine = cmd.char ?? '';
                 break;
               case 'enq':
                 sendData("\x06"); // ACK
@@ -1675,13 +2015,33 @@ export function TerminalComponent({
   const handleToolbarKey = (key: string) => {
     const seq = CONTROL_SEQUENCES[key];
     if (!seq) return;
-    if (is6530Ref.current && key !== "Ctrl+C" && key !== "Up" && key !== "Down") {
+    if (is6530Ref.current) {
       const screen = screen6530Ref.current;
+      if (key === "Ctrl+C") {
+        if (!isBlockModeRef.current) {
+          sendData(seq);
+        }
+        terminalRef.current?.focus();
+        return;
+      }
+      if (key === "Up" || key === "Down") {
+        if (isBlockModeRef.current && (screen.hasFields || screen.blockMode)) {
+          const pos = key === "Up" ? screen.moveCursorUp() : screen.moveCursorDown();
+          if (pos) xtermRef.current?.write(`\x1b[${pos.row + 1};${pos.col + 1}H`);
+        } else {
+          sendData(seq);
+        }
+        terminalRef.current?.focus();
+        return;
+      }
       if (isBlockModeRef.current && (screen.hasFields || screen.blockMode)) {
         sendData(screen.generateWriteReadResponse(seq));
       } else {
         const keyChar = seq.length >= 2 ? seq[1] : seq;
-        sendData(`\x01${keyChar}\r`);
+        const activeBuf = xtermRef.current?.buffer.active;
+        const rChar = String.fromCharCode(Math.min(23, Math.max(0, activeBuf ? activeBuf.cursorY : screen.cursorRow)) + 0x20);
+        const cChar = String.fromCharCode(Math.min(79, Math.max(0, activeBuf ? activeBuf.cursorX : screen.cursorCol)) + 0x20);
+        sendData(`\x01${keyChar}${rChar}${cChar}\r`);
       }
     } else {
       sendData(seq);

@@ -378,4 +378,132 @@ describe('translate6530ToAnsi Protocol Parser', () => {
     expect(enterResp.startsWith('\x01v!#\'')).toBe(true);
     expect(enterResp.charCodeAt(5)).toBe(0x03);
   });
+
+  it('reproduces the exact live TEDIT wire log flow and responds to 3-byte ESC - J (1B 2D 4A) without Terminal Error 172', () => {
+    const screen = new Screen6530();
+
+    // Exact wire bytes sent by TEDIT on opening file A:
+    // 04 01 42 03 00 (EOT + SOH B ETX LRC) + 1B 70 31 04 (ESC p 1 EOT) + 1B 71 04 (ESC q EOT)
+    // + 1B 57 (ESC W) + 1B 76 53 30 0D 0F 1B 76 4D 30 0D 1B 76 4D 31 0D
+    // + 24 rows of 11 <row> 20 1D 20 40 (DC1 row col=0 + GS vAttr=0x20 dAttr=0x40 unprotected)
+    // + 1B 6F 1B 36 25 "1) $USER1.USNISI.A 1/24 (BOF) (EOF) 1:79                  D20." 0D (ESC o status message with embedded ESC 6 %)
+    // + 13 20 21 (DC3 row 0 col 1) + 1B 3E (ESC > reset MDT) + 1B 62 04 (ESC b EOT) + 04 05 (EOT ENQ)
+    let teditInit =
+      '\x04\x01B\x03\x00\x1bp1\x04\x1bq\x04\x1bW\x1bvS0\r\x0f\x1bvM0\r\x1bvM1\r';
+    for (let r = 0; r < 24; r++) {
+      teditInit += `\x11${String.fromCharCode(0x20 + r)} \x1d @`;
+    }
+    teditInit +=
+      '\x1bo\x1b6%1) $USER1.USNISI.A 1/24 (BOF) (EOF) 1:79                  D20.\r\x13 !\x1b>\x1bb\x04\x04\x05';
+
+    const parsedInit = translate6530ToAnsi(teditInit, false);
+    expect(parsedInit.pendingRemainder).toBe('');
+    expect(parsedInit.enquiryRequested).toBe(true);
+
+    // Execute screen commands in order
+    for (const cmd of parsedInit.screenCommands) {
+      switch (cmd.type) {
+        case 'enterBlockMode':
+          screen.enterBlockMode();
+          break;
+        case 'setMaxPages':
+          screen.setMaxPages(cmd.page!);
+          break;
+        case 'clear':
+          screen.clearSelectedPage();
+          break;
+        case 'protectSubEnter':
+          screen.enterProtectSubmode();
+          screen.blockMode = true;
+          break;
+        case 'bufferAddress':
+          screen.setBufferAddress(cmd.row!, cmd.col!);
+          break;
+        case 'startField':
+          screen.startField(cmd.videoAttr!, cmd.dataAttr!, cmd.extAttr);
+          break;
+        case 'statusMessage':
+          screen.statusLine = cmd.char ?? '';
+          break;
+        case 'cursorOnly':
+          screen.setCursorOnly(cmd.row!, cmd.col!);
+          break;
+        case 'resetMdt':
+          screen.resetModifiedDataTags();
+          break;
+        case 'unlockKeyboard':
+          screen.keyboardLocked = false;
+          break;
+        case 'char':
+          screen.writeServerChar(cmd.char!);
+          break;
+      }
+    }
+
+    // Verify 24 unprotected fields exist on rows 0..23, each spanning cols 1..79 (length 79)
+    expect(screen.protectSubmode).toBe(true);
+    expect(screen.fields.length).toBe(24);
+    expect(screen.fields[0].startRow).toBe(0);
+    expect(screen.fields[0].startCol).toBe(1);
+    expect(screen.fields[0].endRow).toBe(0);
+    expect(screen.fields[0].endCol).toBe(79);
+    expect(screen.fields[0].length).toBe(79);
+
+    // Verify status message was captured cleanly without leaking into row 23 buffer
+    expect(screen.statusLine).toContain('$USER1.USNISI.A 1/24');
+    expect(screen.buffer[23][1].char).toBe(' ');
+
+    // Cursor is at row 0, col 1 (' ', '!')
+    expect(screen.cursorRow).toBe(0);
+    expect(screen.cursorCol).toBe(1);
+
+    // User types "HELLO TEDIT" into row 0 (starting at col 1) and presses Enter
+    for (const ch of 'HELLO TEDIT') {
+      expect(screen.writeUserChar(ch)).toBe(true);
+    }
+    const enterNotification = screen.generateWriteReadResponse('\r');
+    expect(enterNotification.startsWith('\x01v! ,')).toBe(true);
+
+    // TEDIT responds with 3-byte ESC - J (1B 2D 4A — Read With Address Extended, 0 params)
+    const parsedRead = translate6530ToAnsi('\x1b-J', true);
+    expect(parsedRead.screenCommands).toEqual([
+      { type: 'readWithAddress', row: 0, col: 0, endRow: 23, endCol: 79 },
+    ]);
+
+    // Terminal generates Read With Address response containing modified field 0 at DC1 (row 0, col 1 = ' ', '!')
+    const readReply = screen.generateReadBufferResponse(true, 0, 0, 23, 79, false);
+    expect(readReply).toBe(Screen6530.frameBlockMessage('\x02', '\x11 !HELLO TEDIT'));
+  });
+
+  it('supports FS (0x1C) fixed/variable field definitions, DC2/DC4 data compression, and ESC ] / ESC - K Read All Fields', () => {
+    const screen = new Screen6530();
+    screen.enterBlockMode();
+    screen.enterProtectSubmode();
+    screen.blockMode = true;
+
+    // FS at (0,0) with index 0x28 (protected, normal video) + DC2 repeat '*' 5 times
+    // + FS at (1,0) with index 0x20 (unprotected, normal video) + "INPUT"
+    // + ESC - K (Read With Address All Extended)
+    const packet = '\x1c  (\x12%*\x1c!  INPUT\x1b-K';
+    const res = translate6530ToAnsi(packet, true);
+
+    for (const cmd of res.screenCommands) {
+      if (cmd.type === 'defineFieldAttr') {
+        screen.defineFieldAttribute(cmd.row!, cmd.col!, cmd.dataAttr!);
+      } else if (cmd.type === 'char') {
+        screen.writeServerChar(cmd.char!);
+      }
+    }
+
+    // ESC - J (modified only) should return empty block since MDT is not set on either field
+    expect(screen.generateReadBufferResponse(true, 0, 0, 23, 79, false)).toBe(
+      Screen6530.frameBlockMessage('\x02', '')
+    );
+
+    // ESC - K / ESC ] (readAllFields = true) returns both protected and unprotected fields with DC1 addresses
+    const allFieldsReply = screen.generateReadBufferResponse(true, 0, 0, 23, 79, true);
+    expect(allFieldsReply).toBe(
+      Screen6530.frameBlockMessage('\x02', '\x11 !*****\x11!!INPUT')
+    );
+  });
 });

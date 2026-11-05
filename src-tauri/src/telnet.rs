@@ -356,9 +356,10 @@ impl TelnetManager {
                                                     will_ttype_sent = true; 
                                                     vec![IAC, WILL, opt] 
                                                 },
-                                                OPT_SUPPRESS_GO_AHEAD => { if will_sga_sent { vec![] } else { will_sga_sent = true; vec![IAC, WILL, opt] } },
-                                                OPT_BINARY => { if will_binary_sent { vec![] } else { will_binary_sent = true; vec![IAC, WILL, opt] } },
-                                                OPT_ECHO => { if will_echo_sent { vec![] } else { will_echo_sent = true; vec![IAC, WILL, opt] } },
+                                                OPT_SUPPRESS_GO_AHEAD => { will_sga_sent = true; vec![IAC, WILL, opt] },
+                                                OPT_BINARY => { will_binary_sent = true; vec![IAC, WILL, opt] },
+                                                OPT_ECHO => { will_echo_sent = true; vec![IAC, WILL, opt] },
+                                                OPT_EOR => { vec![IAC, WILL, opt] },
                                                 _ => {
                                                     if rejected_dos.contains(&opt) { vec![] } else { rejected_dos.push(opt); vec![IAC, WONT, opt] }
                                                 },
@@ -387,6 +388,8 @@ impl TelnetManager {
                                             } else if opt == OPT_ECHO && will_echo_sent {
                                                 will_echo_sent = false;
                                                 response = vec![IAC, WONT, opt];
+                                            } else if opt == OPT_EOR {
+                                                response = vec![IAC, WONT, opt];
                                             }
                                             if !response.is_empty() {
                                                 let _ = send_bytes(&mut *stream_writer.lock().unwrap(), &response);
@@ -400,9 +403,10 @@ impl TelnetManager {
                                         if i + 2 < incoming.len() {
                                             let opt = incoming[i + 2];
                                             let response = match opt {
-                                                OPT_SUPPRESS_GO_AHEAD => { if do_sga_sent { vec![] } else { do_sga_sent = true; vec![IAC, DO, opt] } },
-                                                OPT_ECHO => { if do_echo_sent { vec![] } else { do_echo_sent = true; vec![IAC, DO, opt] } },
-                                                OPT_BINARY => { if do_binary_sent { vec![] } else { do_binary_sent = true; vec![IAC, DO, opt] } },
+                                                OPT_SUPPRESS_GO_AHEAD => { do_sga_sent = true; vec![IAC, DO, opt] },
+                                                OPT_ECHO => { do_echo_sent = true; vec![IAC, DO, opt] },
+                                                OPT_BINARY => { do_binary_sent = true; vec![IAC, DO, opt] },
+                                                OPT_EOR => { vec![IAC, DO, opt] },
                                                 _ => {
                                                     if rejected_wills.contains(&opt) { vec![] } else { rejected_wills.push(opt); vec![IAC, DONT, opt] }
                                                 },
@@ -427,6 +431,8 @@ impl TelnetManager {
                                                 response = vec![IAC, DONT, opt];
                                             } else if opt == OPT_BINARY && do_binary_sent {
                                                 do_binary_sent = false;
+                                                response = vec![IAC, DONT, opt];
+                                            } else if opt == OPT_EOR {
                                                 response = vec![IAC, DONT, opt];
                                             }
                                             if !response.is_empty() {

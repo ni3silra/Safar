@@ -123,4 +123,63 @@ describe('TerminalComponent', () => {
       })
     );
   });
+
+  it('answers 3-byte ESC - J (1B 2D 4A) from TEDIT after user types and presses Enter in Block Mode', async () => {
+    let eventHandler: (event: any) => void = () => {};
+    (listen as any).mockImplementation((name: string, cb: any) => {
+      if (name === 'terminal-data') {
+        eventHandler = cb;
+      }
+      return Promise.resolve(() => {});
+    });
+
+    render(<TerminalComponent {...defaultProps} protocol="telnet" isNonStop={true} />);
+
+    await waitFor(() => {
+      expect(Terminal).toHaveBeenCalled();
+    });
+
+    const terminalInstance = (Terminal as any).mock.results[0].value;
+    const onDataCallback = terminalInstance.onData.mock.calls[0][0];
+
+    // Send TEDIT initialization packet (ESC W + row 0 unprotected field + ESC o status + DC3 row 0 col 1 + ESC > + ESC b)
+    eventHandler({
+      payload: {
+        session_id: 'test-session',
+        data: '\x04\x01B\x03\x00\x1bW\x11  \x1d @\x1bo\x1b6%1) $USER1.USNISI.A 1/24\r\x13 !\x1b>\x1bb\x04',
+      },
+    });
+
+    // User types "ABC" and presses Enter
+    onDataCallback('ABC');
+    onDataCallback('\r');
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'telnet_send',
+        expect.objectContaining({
+          sessionId: 'test-session',
+          data: expect.stringMatching(/^\x01v! \$\x03/),
+        })
+      );
+    });
+
+    // Host (TEDIT) sends 3-byte ESC - J (1B 2D 4A) to read modified fields
+    eventHandler({
+      payload: {
+        session_id: 'test-session',
+        data: '\x1b-J',
+      },
+    });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'telnet_send',
+        expect.objectContaining({
+          sessionId: 'test-session',
+          data: expect.stringMatching(/^\x02\x11 !ABC\x03/),
+        })
+      );
+    });
+  });
 });
