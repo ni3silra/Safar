@@ -97,8 +97,8 @@ describe("CopilotPanel Component", () => {
         expect(screen.getByText("@octocat")).toBeInTheDocument();
         expect(screen.getByText("GPT-4o")).toBeInTheDocument();
         expect(screen.getByPlaceholderText(/Ask Copilot about your terminal/i)).toBeInTheDocument();
-        expect(screen.getByText("🔍 Explain Terminal Error")).toBeInTheDocument();
-        expect(screen.getByText("🩺 Diagnose Health")).toBeInTheDocument();
+        expect(screen.getByText("HP NS Expert Terminal Analysis")).toBeInTheDocument();
+        expect(screen.getByText("OSS / Unix Terminal Analysis")).toBeInTheDocument();
     });
 
     it("sends prompt and attaches terminal context", async () => {

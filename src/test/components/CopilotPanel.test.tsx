@@ -93,6 +93,49 @@ describe('CopilotPanel', () => {
     expect(userPill).toBeInTheDocument();
   });
 
+  it('renders HP NonStop & OSS/Unix pills and captures last 50 lines on click', async () => {
+    localStorage.setItem(
+      'safar_copilot_auth',
+      JSON.stringify({
+        isAuthenticated: true,
+        provider: 'github',
+        isCopilotSubscriber: true,
+        copilotToken: 'tid=123',
+        user: { login: 'tandem-user' },
+      })
+    );
+
+    (invoke as any).mockImplementation((cmd: string) => {
+      if (cmd === 'copilot_chat') {
+        return Promise.resolve({ success: true, data: 'Analysis complete.' });
+      }
+      return Promise.resolve({ success: true, data: [] });
+    });
+
+    render(<CopilotPanel {...defaultProps} />);
+
+    expect(screen.getByText('HP NS Expert Terminal Analysis')).toBeInTheDocument();
+    expect(screen.getByText('OSS / Unix Terminal Analysis')).toBeInTheDocument();
+
+    // Click HP NS analysis pill
+    fireEvent.click(screen.getByText('HP NS Expert Terminal Analysis'));
+
+    await waitFor(() => {
+      expect(defaultProps.getTerminalOutput).toHaveBeenCalledWith(50);
+      expect(invoke).toHaveBeenCalledWith(
+        'copilot_chat',
+        expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              role: 'user',
+              content: expect.stringContaining('HP NonStop (Tandem) System Administrator'),
+            }),
+          ]),
+        })
+      );
+    });
+  });
+
   it('uses custom system prompt override when specified', async () => {
     localStorage.setItem(
       'safar_copilot_auth',

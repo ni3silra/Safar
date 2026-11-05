@@ -166,10 +166,10 @@ export const CopilotMessageItem: React.FC<CopilotMessageItemProps> = ({
 
             {/* Context tag if terminal output was attached */}
             {message.terminalContextSnippet && (
-                <div className="copilot-terminal-context-tag" title="Attached 60 lines of remote terminal buffer">
+                <div className="copilot-terminal-context-tag" title="Attached last 50 lines of remote terminal buffer">
                     <span className="copilot-context-dot" />
                     <Icons.Terminal style={{ width: 11, height: 11 }} />
-                    <span>Terminal Buffer Attached</span>
+                    <span>Terminal Buffer (Last 50 Lines) Attached</span>
                 </div>
             )}
 

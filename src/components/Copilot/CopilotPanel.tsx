@@ -423,7 +423,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
 
     // ─── Sending AI Queries ───
 
-    const handleSendMessage = async (promptText?: string) => {
+    const handleSendMessage = async (promptText?: string, maxLines: number = 50) => {
         const query = (promptText || inputPrompt).trim();
         if (!query || isLoading) return;
 
@@ -442,7 +442,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
             return;
         }
 
-        const terminalOutput = includeTerminalContext ? getTerminalOutput(60) : "";
+        const terminalOutput = includeTerminalContext ? getTerminalOutput(maxLines) : "";
 
         const userMsg: CopilotMessage = {
             id: crypto.randomUUID(),
@@ -1044,20 +1044,22 @@ When suggesting terminal commands to fix problems, inspect logs, or configure se
                                     server, diagnose errors, or run commands directly into your terminal.
                                 </p>
 
-                                {/* JetBrains Action Cards (2x2 Grid) */}
+                                {/* JetBrains Action Cards (HP NonStop & OSS/Unix Terminal Analysis) */}
                                 <div className="copilot-idea-cards-grid">
                                     <button
                                         className="copilot-idea-card"
                                         onClick={() =>
                                             handleSendMessage(
-                                                "Explain what is currently displayed in the terminal and diagnose any errors."
+                                                "Act as an expert HP NonStop (Tandem) System Administrator and Guardian/TACL specialist. Analyze the last 50 lines of the terminal buffer: diagnose any Guardian errors, EMS events, file system issues, or process states, and recommend exact TACL / NonStop commands to resolve them.",
+                                                50
                                             )
                                         }
                                     >
+                                        <div className="copilot-idea-card-icon">⚡</div>
                                         <div className="copilot-idea-card-text">
-                                            <div className="copilot-idea-card-title">🔍 Explain Terminal Error</div>
+                                            <div className="copilot-idea-card-title">HP NS Expert Terminal Analysis</div>
                                             <div className="copilot-idea-card-desc">
-                                                Inspect recent screen & explain errors
+                                                Analyze TACL commands, Guardian processes, EMS event logs & NonStop system states (Last 50 lines)
                                             </div>
                                         </div>
                                     </button>
@@ -1066,46 +1068,16 @@ When suggesting terminal commands to fix problems, inspect logs, or configure se
                                         className="copilot-idea-card"
                                         onClick={() =>
                                             handleSendMessage(
-                                                "Check server health: uptime, CPU load average, memory usage, and free disk space."
+                                                "Act as an expert Unix / Linux / Open System Services (OSS) Administrator. Analyze the last 50 lines of the terminal buffer: diagnose any command failures, shell errors, permissions, or system issues, and recommend exact terminal commands to resolve them.",
+                                                50
                                             )
                                         }
                                     >
+                                        <div className="copilot-idea-card-icon">🐧</div>
                                         <div className="copilot-idea-card-text">
-                                            <div className="copilot-idea-card-title">🩺 Diagnose Health</div>
+                                            <div className="copilot-idea-card-title">OSS / Unix Terminal Analysis</div>
                                             <div className="copilot-idea-card-desc">
-                                                Uptime, CPU, RAM, & disk capacity
-                                            </div>
-                                        </div>
-                                    </button>
-
-                                    <button
-                                        className="copilot-idea-card"
-                                        onClick={() =>
-                                            handleSendMessage(
-                                                "Show me listening ports, active TCP sockets, and running network services on this host."
-                                            )
-                                        }
-                                    >
-                                        <div className="copilot-idea-card-text">
-                                            <div className="copilot-idea-card-title">🌐 Check Ports</div>
-                                            <div className="copilot-idea-card-desc">
-                                                List listening sockets & services
-                                            </div>
-                                        </div>
-                                    </button>
-
-                                    <button
-                                        className="copilot-idea-card"
-                                        onClick={() =>
-                                            handleSendMessage(
-                                                "Find large files taking up disk space over 500MB on this system."
-                                            )
-                                        }
-                                    >
-                                        <div className="copilot-idea-card-text">
-                                            <div className="copilot-idea-card-title">💾 Find Large Files</div>
-                                            <div className="copilot-idea-card-desc">
-                                                Locate disk usage hogs over 500MB
+                                                Diagnose POSIX shell, OSS commands, systemd services, CPU/RAM & error logs (Last 50 lines)
                                             </div>
                                         </div>
                                     </button>
@@ -1160,7 +1132,7 @@ When suggesting terminal commands to fix problems, inspect logs, or configure se
                                     className={`copilot-idea-chip ${
                                         includeTerminalContext ? "active" : ""
                                     }`}
-                                    title="Toggle attaching active remote terminal buffer to query"
+                                    title="Toggle attaching last 50 lines of remote terminal buffer to query"
                                 >
                                     <input
                                         type="checkbox"
@@ -1170,7 +1142,7 @@ When suggesting terminal commands to fix problems, inspect logs, or configure se
                                     />
                                     <span className="copilot-chip-indicator" />
                                     <Icons.Terminal style={{ width: 11, height: 11 }} />
-                                    <span>Terminal Context</span>
+                                    <span>Terminal Context (Last 50 Lines)</span>
                                 </label>
 
                                 {messages.length > 0 && (
