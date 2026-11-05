@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -53,6 +53,7 @@ const OPT_TERMINAL_TYPE: u8 = 24;
 const OPT_EOR: u8 = 25; // Telnet End of Record (used by TELSERV for TN6530 block frames)
 #[allow(dead_code)] // Used by the NAWS code in resize(), currently disabled for HP NonStop
 const OPT_NAWS: u8 = 31; // Negotiate About Window Size
+const OPT_LINEMODE: u8 = 34; // Telnet Line Mode (RFC 1184) — disabled in Block Mode, enabled in Conv Mode
 
 // ============================================
 // ERROR TYPES
@@ -158,6 +159,7 @@ pub struct TelnetSession {
     pub running: Arc<RwLock<bool>>,
     pub cols: Arc<AtomicU32>,
     pub rows: Arc<AtomicU32>,
+    pub linemode_enabled: Arc<AtomicBool>,
     pub app_handle: AppHandle,
 }
 
@@ -249,6 +251,7 @@ impl TelnetManager {
         let running = Arc::new(RwLock::new(true));
         let cols = Arc::new(AtomicU32::new(80));
         let rows = Arc::new(AtomicU32::new(24));
+        let linemode_enabled = Arc::new(AtomicBool::new(false));
 
         let stream_arc = Arc::new(Mutex::new(net_stream));
         let session = TelnetSession {
@@ -257,6 +260,7 @@ impl TelnetManager {
             running: running.clone(),
             cols: cols.clone(),
             rows: rows.clone(),
+            linemode_enabled: linemode_enabled.clone(),
             app_handle: app_handle.clone(),
         };
 
@@ -672,6 +676,35 @@ impl TelnetManager {
         */
         Ok(())
     }
+
+    /// Negotiate Telnet LINEMODE (RFC 1184, Option 34):
+    /// - Entering Block Mode (`enabled = false`): sends `IAC WONT LINEMODE` so character/block frames bypass network line editing.
+    /// - Entering Conversational Mode (`enabled = true`): sends `IAC WILL LINEMODE` if not already active.
+    pub fn set_linemode(&self, session_id: &str, enabled: bool) -> Result<(), TelnetError> {
+        let sessions = self.sessions.read();
+        let session = sessions
+            .get(session_id)
+            .ok_or_else(|| TelnetError::SessionNotFound(session_id.to_string()))?;
+
+        if enabled {
+            if session.linemode_enabled.swap(true, Ordering::SeqCst) {
+                return Ok(());
+            }
+            let bytes = [IAC, WILL, OPT_LINEMODE];
+            let mut stream = session.stream.lock().unwrap();
+            stream.write_all(&bytes)?;
+            stream.flush()?;
+            log_hex(&session.app_handle, session_id, "SEND", &bytes, "WILL LINEMODE (Conv Mode)");
+        } else {
+            session.linemode_enabled.store(false, Ordering::SeqCst);
+            let bytes = [IAC, WONT, OPT_LINEMODE];
+            let mut stream = session.stream.lock().unwrap();
+            stream.write_all(&bytes)?;
+            stream.flush()?;
+            log_hex(&session.app_handle, session_id, "SEND", &bytes, "WONT LINEMODE (Block Mode)");
+        }
+        Ok(())
+    }
 }
 
 /// Encodes user input for the Telnet wire, mirroring `decode_terminal_bytes`.
@@ -971,5 +1004,10 @@ mod tests {
         let raw = [0x01, b'B', 0x03, 0x41, 0xe4, 0xf6, 0xfc];
         let decoded = decode_terminal_bytes(&raw);
         assert_eq!(decoded, "\x01B\x03Aäöü");
+    }
+
+    #[test]
+    fn test_opt_linemode_constant_and_negotiation() {
+        assert_eq!(OPT_LINEMODE, 34);
     }
 }

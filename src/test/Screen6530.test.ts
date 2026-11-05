@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { Screen6530 } from '../lib/Screen6530';
+import { Screen6530, EmulChar6530, createDefaultDataTypeTable } from '../lib/Screen6530';
 import { translate6530ToAnsi } from '../components/Terminal';
 
 describe('Screen6530 Engine', () => {
@@ -505,5 +505,185 @@ describe('translate6530ToAnsi Protocol Parser', () => {
     expect(allFieldsReply).toBe(
       Screen6530.frameBlockMessage('\x02', '\x11 !*****\x11!!INPUT')
     );
+  });
+
+  describe('6530 Block Mode Deep Technical Walkthrough Specifications', () => {
+    it('Part 1.1 & 1.2 — EmulChar and EmulChar6530 cell bitmask attribute packing', () => {
+      const cell = {
+        char: 'A',
+        charValue: 0x0041,
+        baseData: 0,
+        markData: 0,
+        dataAttr: 0x20,
+        extAttr: 0,
+        protected: false,
+        fieldId: -1,
+        attribute: 0,
+        modified: false,
+      };
+
+      // Base video attribute (bits 0..4, mask 0x1F)
+      EmulChar6530.setVideoAttribute(cell, 0x15);
+      expect(EmulChar6530.getVideoAttribute(cell)).toBe(0x15);
+      expect(cell.attribute).toBe(0x15);
+
+      // Selected flag (bit 5, mask 0x20)
+      expect(EmulChar6530.isSelected(cell)).toBe(false);
+      EmulChar6530.setSelected(cell, true);
+      expect(EmulChar6530.isSelected(cell)).toBe(true);
+      expect(EmulChar6530.getVideoAttribute(cell)).toBe(0x15); // video attribute preserved
+      EmulChar6530.setSelected(cell, false);
+      expect(EmulChar6530.isSelected(cell)).toBe(false);
+
+      // Underlined flag (bit 6, mask 0x40)
+      expect(EmulChar6530.isUnderlined(cell)).toBe(false);
+      EmulChar6530.setUnderlined(cell, true);
+      expect(EmulChar6530.isUnderlined(cell)).toBe(true);
+      expect(EmulChar6530.getVideoAttribute(cell)).toBe(0x15);
+      EmulChar6530.setUnderlined(cell, false);
+      expect(EmulChar6530.isUnderlined(cell)).toBe(false);
+
+      // Mark attribute (mask 0x83, preserves bits 2..6)
+      cell.markData = 0x34; // bits 2..6 = 0x34
+      EmulChar6530.setMarkAttribute(cell, 0x83);
+      expect(EmulChar6530.getMarkAttribute(cell)).toBe(0x83);
+      expect(cell.markData & 0x7c).toBe(0x34); // preserved bits 2..6
+
+      // Extended attribute (mask 0x28, read shifted right by 2 masked to 3 bits)
+      EmulChar6530.setExtAttribute(cell, 0x07);
+      expect(EmulChar6530.getExtAttribute(cell)).toBe(0x02); // (0x28 >> 2) & 0x7 is 0x02
+    });
+
+    it('Part 1.3 — Data-Type Table 96 rows and character validation', () => {
+      const table = createDefaultDataTypeTable();
+      expect(table.length).toBe(96); // 0x20..0x7F
+
+      // Row for '0' (0x30, index 16)
+      const zeroRow = table[0x30 - 0x20];
+      expect(zeroRow[0]).toBe('0');
+      expect(zeroRow[1]).toBe(1);
+      expect(zeroRow[2]).toBe(0);
+      expect(zeroRow[3]).toBe(1); // numeric allowed
+      expect(zeroRow[8]).toBe(1); // printable
+
+      // Row for 'A' (0x41, index 33)
+      const aRow = table[0x41 - 0x20];
+      expect(aRow[0]).toBe('A');
+      expect(aRow[1]).toBe(1);
+      expect(aRow[2]).toBe(1); // alphabetic
+      expect(aRow[3]).toBe(0); // not numeric
+      expect(aRow[8]).toBe(1); // printable
+
+      const screen = new Screen6530();
+      // Validating against numeric-restricted field (dataAttr 0x44 -> typeBits = 2)
+      expect(screen.validateCharForField('5', 0x44)).toBe(true);
+      expect(screen.validateCharForField('Z', 0x44)).toBe(false);
+
+      // Validating against alphabetic-restricted field (dataAttr 0x42 -> typeBits = 1)
+      expect(screen.validateCharForField('Z', 0x42)).toBe(true);
+      expect(screen.validateCharForField('5', 0x42)).toBe(false);
+    });
+
+    it('Part 2 — Conversational -> Block mode 16-step transition', () => {
+      const screen = new Screen6530();
+      expect(screen.mode).toBe(0);
+      expect(screen.blockMode).toBe(false);
+      expect(screen.screenDelay).toBe(0);
+
+      // Pre-fill some conversational content on Page 1
+      screen.writeServerChar('H');
+      screen.writeServerChar('I');
+
+      screen.enterBlockMode();
+
+      // Step 1: Mode flag flipped to 2 (block)
+      expect(screen.mode).toBe(2);
+      expect(screen.blockMode).toBe(true);
+
+      // Step 2: Screen-update batching enabled (screenDelay = 15)
+      expect(screen.screenDelay).toBe(15);
+
+      // Step 4: Protected flag reset to false
+      expect(screen.protectSubmode).toBe(false);
+
+      // Step 7 & 8: Displayed & selected page = 1
+      expect(screen.selectedPage).toBe(1);
+      expect(screen.displayPage).toBe(1);
+
+      // Step 9: Tab stops reset & line edit enabled
+      expect(screen.tabStops).toEqual([]);
+      expect(screen.disableLineEdit).toBe(false);
+
+      // Step 12: Block cursor homed to (0, 0)
+      expect(screen.cursorRow).toBe(0);
+      expect(screen.cursorCol).toBe(0);
+      expect(screen.bufferRow).toBe(0);
+      expect(screen.bufferCol).toBe(0);
+
+      // Step 13: Keyboard locked
+      expect(screen.keyboardLocked).toBe(true);
+
+      // Idempotency: Calling enterBlockMode again while in Block mode is a no-op
+      screen.keyboardLocked = false;
+      screen.enterBlockMode();
+      // Should not re-lock keyboard because transition is skipped when already in block mode
+      expect(screen.keyboardLocked).toBe(false);
+    });
+
+    it('Part 2b — Block -> Conversational mode 12-step transition', () => {
+      const screen = new Screen6530();
+      screen.enterBlockMode();
+      expect(screen.mode).toBe(2);
+
+      screen.enterConversationalMode();
+
+      // Step 1: Mode flag flipped back to 0 (conversational)
+      expect(screen.mode).toBe(0);
+      expect(screen.blockMode).toBe(false);
+
+      // Step 2: Screen-update batching disabled (screenDelay = 0)
+      expect(screen.screenDelay).toBe(0);
+
+      // Step 3 & 4: Screen buffer cleared and cursor homed to (0, 0)
+      expect(screen.cursorRow).toBe(0);
+      expect(screen.cursorCol).toBe(0);
+      expect(screen.buffer[0][0].char).toBe(' ');
+
+      // Step 5: Tab stops reset
+      expect(screen.tabStops).toEqual([]);
+
+      // Step 6: Prior video attribute reset to 0
+      expect(screen.priorVideoAttr).toBe(0);
+
+      // Step 7: Keyboard unlocked
+      expect(screen.keyboardLocked).toBe(false);
+    });
+
+    it('supports tab stops setting (ESC 0) and clearing (ESC 2) and findFieldStart', () => {
+      const screen = new Screen6530();
+      screen.setTabStop(10);
+      screen.setTabStop(25);
+      expect(screen.tabStops).toEqual([10, 25]);
+
+      screen.cursorCol = 0;
+      screen.tabToNextField();
+      expect(screen.cursorCol).toBe(10);
+
+      screen.tabToNextField();
+      expect(screen.cursorCol).toBe(25);
+
+      screen.tabToPrevField();
+      expect(screen.cursorCol).toBe(10);
+
+      screen.clearAllTabStops();
+      expect(screen.tabStops).toEqual([]);
+
+      // Test findFieldStart
+      screen.enterProtectSubmode();
+      screen.setBufferAddress(2, 5);
+      screen.startField(0x20, 0x40); // Field starts at (2, 5), text at (2, 6)
+      const fieldStart = screen.findFieldStart(2, 10);
+      expect(fieldStart).toEqual({ row: 2, col: 6 });
+    });
   });
 });

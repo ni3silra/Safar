@@ -135,6 +135,7 @@ pub fn run() {
             telnet_send,
             telnet_disconnect,
             telnet_resize,
+            telnet_set_linemode,
             // Session storage commands
             sessions_get_all,
             sessions_get_favorites,

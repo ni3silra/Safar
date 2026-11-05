@@ -64,3 +64,12 @@ pub fn telnet_resize(state: State<AppState>, session_id: String, cols: u32, rows
         Err(e) => CommandResponse::err(e.to_string()),
     }
 }
+
+/// Negotiate Telnet LINEMODE (Option 34) on mode transitions (WONT in Block Mode, WILL in Conversational Mode)
+#[tauri::command]
+pub fn telnet_set_linemode(state: State<AppState>, session_id: String, enabled: bool) -> CommandResponse<()> {
+    match state.telnet_manager.set_linemode(&session_id, enabled) {
+        Ok(()) => CommandResponse::ok(()),
+        Err(e) => CommandResponse::err(e.to_string()),
+    }
+}

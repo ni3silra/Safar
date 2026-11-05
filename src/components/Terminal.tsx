@@ -120,6 +120,8 @@ export interface ScreenCommand {
     | 'videoAttr'
     | 'protectStart'
     | 'protectEnd'
+    | 'setTabStop'
+    | 'clearTabStops'
     | 'unlockKeyboard'
     | 'lockKeyboard'
     | 'eraseEop'
@@ -700,8 +702,14 @@ export function translate6530ToAnsi(data: string, initialBlockMode = false): Tra
         // Tab operations
         case 'i': result += '\t'; i += 2; continue;
         case '1': result += '\x1b[Z'; i += 2; continue;
-        case '2': i += 2; continue; // Clear all tab stops
-        case '0': i += 2; continue; // Set tab stop
+        case '2':
+          screenCommands.push({ type: 'clearTabStops' });
+          i += 2;
+          continue;
+        case '0':
+          screenCommands.push({ type: 'setTabStop' });
+          i += 2;
+          continue;
 
         // Line / scroll operations
         case 'T': result += '\x1b[1S'; i += 2; continue;
@@ -1204,6 +1212,10 @@ export function TerminalComponent({
   const [showToolbar, setShowToolbar] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [isBlockMode, setIsBlockMode] = useState(false);
+  const [isKeyboardLocked, setIsKeyboardLocked] = useState(false);
+  const [isInsertMode, setIsInsertMode] = useState(false);
+  const [statusLineText, setStatusLineText] = useState("");
+  const [cursorPos, setCursorPos] = useState({ row: 0, col: 0 });
   const isBlockModeRef = useRef(false);
   const historyBufferRef = useRef("");
   const hpNsUserRef = useRef("");
@@ -1421,6 +1433,21 @@ export function TerminalComponent({
 
       // HP 6530 navigation & function keys
       if (is6530Ref.current && e.type === "keydown") {
+        // Insert key in Block Mode toggles local insert mode
+        if (isBlockModeRef.current && e.key === "Insert" && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+          e.preventDefault();
+          const screen = screen6530Ref.current;
+          screen.insertMode = !screen.insertMode;
+          setIsInsertMode(screen.insertMode);
+          return false;
+        }
+
+        // Lock Keyboard enforcement in Block Mode (Part 2 Step 13)
+        if (isBlockModeRef.current && screen6530Ref.current.keyboardLocked && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          return false;
+        }
+
         // Local cursor navigation in Block Mode (both Protect Submode forms and TEDIT/EDIT Page Mode)
         if (isBlockModeRef.current) {
           const screen = screen6530Ref.current;
@@ -1594,11 +1621,6 @@ export function TerminalComponent({
 
       // LINE / CONVERSATIONAL MODE
       if (!isBlock) {
-        if (is6530Ref.current && data !== "\r" && data !== "\n" && !isEscapeSequence) {
-          for (const ch of data) {
-            screen.writeServerChar(ch);
-          }
-        }
         sendData(data);
         return;
       }
@@ -1612,6 +1634,11 @@ export function TerminalComponent({
         if (!is6530Ref.current) {
           sendData(data);
         }
+        return;
+      }
+
+      // Step 13: Keyboard Lock enforcement in Block Mode
+      if (screen.keyboardLocked) {
         return;
       }
 
@@ -1729,23 +1756,46 @@ export function TerminalComponent({
                 screen.enterBlockMode();
                 isBlockModeRef.current = true;
                 setIsBlockMode(true);
+                setIsKeyboardLocked(true);
                 blockBufferRef.current = "";
+                if (terminal) {
+                  terminal.options.scrollback = 0;
+                  terminal.write("\x1b[3J");
+                }
+                if (protocol === "telnet") {
+                  invoke("telnet_set_linemode", { sessionId, enabled: false }).catch(() => {});
+                }
                 break;
               case 'enterConvMode':
                 screen.enterConversationalMode();
                 isBlockModeRef.current = false;
                 setIsBlockMode(false);
+                setIsKeyboardLocked(false);
                 blockBufferRef.current = "";
+                if (terminal) {
+                  terminal.options.scrollback = scrollback;
+                  terminal.write("\x1b[0m\x1b[2J\x1b[3J\x1b[H");
+                }
+                if (protocol === "telnet") {
+                  invoke("telnet_set_linemode", { sessionId, enabled: true }).catch(() => {});
+                }
                 break;
               case 'protectSubEnter':
                 screen.enterProtectSubmode();
                 screen.blockMode = true;
                 isBlockModeRef.current = true;
                 setIsBlockMode(true);
+                setIsKeyboardLocked(true);
                 blockBufferRef.current = "";
                 break;
               case 'protectSubExit':
                 screen.exitProtectSubmode();
+                break;
+              case 'setTabStop':
+                screen.setTabStop();
+                break;
+              case 'clearTabStops':
+                screen.clearAllTabStops();
                 break;
               case 'selectPage':
                 screen.selectWritePage(cmd.page!);
@@ -1785,9 +1835,11 @@ export function TerminalComponent({
                 break;
               case 'unlockKeyboard':
                 screen.keyboardLocked = false;
+                setIsKeyboardLocked(false);
                 break;
               case 'lockKeyboard':
                 screen.keyboardLocked = true;
+                setIsKeyboardLocked(true);
                 break;
               case 'eraseEop':
                 screen.eraseToEndOfPage();
@@ -1853,6 +1905,7 @@ export function TerminalComponent({
                 break;
               case 'statusMessage':
                 screen.statusLine = cmd.char ?? '';
+                setStatusLineText(screen.statusLine);
                 break;
               case 'enq':
                 sendData("\x06"); // ACK
@@ -1865,6 +1918,11 @@ export function TerminalComponent({
                 break;
             }
           }
+
+          setCursorPos({ row: screen.cursorRow, col: screen.cursorCol });
+          setStatusLineText(screen.statusLine);
+          setIsKeyboardLocked(screen.keyboardLocked);
+          setIsInsertMode(screen.insertMode);
 
           // Auto-answer Terminal Type if host prompts in conversational stream (SSH only)
           if (
@@ -2188,6 +2246,40 @@ export function TerminalComponent({
         className="xterm-wrapper"
         onClick={() => xtermRef.current?.focus()}
       />
+
+      {/* 6530 25th Row Status Line */}
+      {is6530Session && (
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "3px 12px",
+          background: "rgba(0, 0, 0, 0.45)",
+          borderTop: "1px solid rgba(255, 255, 255, 0.1)",
+          fontFamily: fontFamily || "monospace",
+          fontSize: "11px",
+          color: "#94a3b8",
+          userSelect: "none",
+          flexShrink: 0,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ fontWeight: 600, color: isBlockMode ? "#60a5fa" : "#34d399" }}>
+              {isBlockMode ? (screen6530Ref.current.protectSubmode ? "BLOCK [PROT]" : "BLOCK [UNPROT]") : "CONVERSATIONAL"}
+            </span>
+            <span>Page {screen6530Ref.current.displayPage}/{screen6530Ref.current.maxPages}</span>
+            <span>R:{cursorPos.row + 1} C:{cursorPos.col + 1}</span>
+            <span style={{ color: isKeyboardLocked ? "#f87171" : "#4ade80", fontWeight: 600 }}>
+              {isKeyboardLocked ? "LOCKED" : "READY"}
+            </span>
+            <span style={{ color: isInsertMode ? "#fbbf24" : "inherit" }}>
+              {isInsertMode ? "INS" : "OVR"}
+            </span>
+          </div>
+          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#e2e8f0" }}>
+            {statusLineText || screen6530Ref.current.statusLine}
+          </div>
+        </div>
+      )}
 
       {/* Search Bar */}
       {

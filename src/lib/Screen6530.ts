@@ -14,11 +14,93 @@ const FIELD_SEPARATOR = '\x1c'; // FS (0x1C) — standard 6530 field separator
 
 // ─── Types ───
 export interface ScreenCell {
-  char: string;        // The character at this position
+  char: string;        // The character at this position (display value)
+  charValue?: number;  // 16-bit glyph code (default 0x0000 NUL = empty cell per EmulChar spec)
+  baseData?: number;   // Base packed attribute byte: bits 0..4 (0x1F) video, bit 5 (0x20) selected, bit 6 (0x40) underlined
+  markData?: number;   // 6530 mark attribute byte (mask 0x83: bit 0 protected, bit 1 field start, bit 7 mark)
+  dataAttr?: number;   // 6530 data-type attribute (default 0x20 space) linking to 96-row data-type table
+  extAttr?: number;    // 6530 extended attribute (mask 0x28: bits 3 and 5, read as (extAttr >> 2) & 0x7)
   protected: boolean;  // true = protected (user can't type here)
   fieldId: number;     // -1 = no field, 0+ = unprotected field index
-  attribute: number;   // 6530 display attribute bitmask
+  attribute: number;   // 6530 display attribute bitmask (bits 0..4 = 0x1F)
   modified: boolean;   // true if user has modified this cell (MDT)
+}
+
+export class EmulChar6530 {
+  static getVideoAttribute(cell: ScreenCell): number {
+    return (cell.baseData ?? cell.attribute ?? 0) & 0x1f;
+  }
+
+  static setVideoAttribute(cell: ScreenCell, attr: number): void {
+    const v = attr & 0x1f;
+    cell.attribute = v;
+    cell.baseData = ((cell.baseData ?? 0) & ~0x1f) | v;
+  }
+
+  static isSelected(cell: ScreenCell): boolean {
+    return ((cell.baseData ?? 0) & 0x20) !== 0;
+  }
+
+  static setSelected(cell: ScreenCell, selected: boolean): void {
+    const base = cell.baseData ?? (cell.attribute & 0x1f);
+    cell.baseData = selected ? (base | 0x20) : (base & ~0x20);
+  }
+
+  static isUnderlined(cell: ScreenCell): boolean {
+    return ((cell.baseData ?? 0) & 0x40) !== 0;
+  }
+
+  static setUnderlined(cell: ScreenCell, underlined: boolean): void {
+    const base = cell.baseData ?? (cell.attribute & 0x1f);
+    cell.baseData = underlined ? (base | 0x40) : (base & ~0x40);
+  }
+
+  static getMarkAttribute(cell: ScreenCell): number {
+    return (cell.markData ?? 0) & 0x83;
+  }
+
+  static setMarkAttribute(cell: ScreenCell, mark: number): void {
+    cell.markData = ((cell.markData ?? 0) & 0x7c) | (mark & 0x83);
+  }
+
+  static getExtAttribute(cell: ScreenCell): number {
+    return ((cell.extAttr ?? 0) >> 2) & 0x07;
+  }
+
+  static setExtAttribute(cell: ScreenCell, ext: number): void {
+    cell.extAttr = (ext & 0x28) !== 0 ? (ext & 0x28) : ((ext & 0x07) << 2) & 0x28;
+  }
+}
+
+// 96-row × 9-column Data-Type Table (printable ASCII 0x20..0x7F)
+// Column 0: character glyph; Columns 1..8: permission/behavior flags per 6530 spec Part 1.3:
+//   Digits 0..9:  [ch, 1, 0, 1, 1, 1, 1, 0, 1]
+//   Letters A..Z/a..z: [ch, 1, 1, 0, 0, 1, 0, 1, 1]
+//   Spaces/Punctuation: [ch, 0, 0, 0, 0, 0, 0, 0, 1] (with space/minus/dot allowed in numeric/alpha contexts)
+export type DataTypeRow = [string, number, number, number, number, number, number, number, number];
+
+export function createDefaultDataTypeTable(): DataTypeRow[] {
+  const table: DataTypeRow[] = [];
+  for (let code = 0x20; code <= 0x7f; code++) {
+    const ch = String.fromCharCode(code);
+    if (code >= 0x30 && code <= 0x39) {
+      // Digits 0–9: pattern 1 0 1 1 1 1 0 1
+      table.push([ch, 1, 0, 1, 1, 1, 1, 0, 1]);
+    } else if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) {
+      // Letters A–Z / a–z: pattern 1 1 0 0 1 0 1 1
+      table.push([ch, 1, 1, 0, 0, 1, 0, 1, 1]);
+    } else if (code === 0x20) {
+      // Space: allowed in alpha and general printable fields
+      table.push([ch, 1, 1, 0, 0, 1, 0, 1, 1]);
+    } else if (code === 0x2b || code === 0x2d || code === 0x2e) {
+      // '+', '-', '.': signed/decimal numeric allowed + printable
+      table.push([ch, 0, 0, 1, 1, 1, 1, 0, 1]);
+    } else {
+      // Other punctuation/symbols: printable flag set
+      table.push([ch, 0, 0, 0, 0, 0, 0, 0, 1]);
+    }
+  }
+  return table;
 }
 
 export interface Field {
@@ -86,40 +168,65 @@ export class Screen6530 {
   selectedPage: number;      // I/O write/read page register (set by ESC : <page>), default 1
   displayPage: number;       // Displayed page register (set by ESC ; <page>), default 1
   maxPages: number;          // Max allocated pages in block mode (set by ESC p <n>), default 7
+  mode: 0 | 2;               // 0 = conversational, 2 = block
   blockMode: boolean;        // true after SOH B ETX LRC or ESC W
+  screenDelay: number;       // Update delay counter: 0 in conversational, 15 in block
   protectSubmode: boolean;   // true after ESC W
   keyboardLocked: boolean;   // true after ESC c or block submission; false after ESC b
   statusLine: string;        // 25th row message/status line
+  tabStops: number[];        // Column tab stops (set by ESC 0, cleared by ESC 2 / mode switch)
+  disableLineEdit: boolean;  // Local line editing flag
+  insertMode: boolean;       // Insert mode toggle
+  priorVideoAttr: number;    // Prior video attribute
+  dataTypeTable: DataTypeRow[]; // 96-row Data-Type Table (ASCII 0x20..0x7F)
   variableFieldTable: { va: number; d1: number; d2: number }[];
+  scrollbackRows: ScreenCell[][]; // Conversational scrollback rows above page
 
   constructor() {
     this.pages = [];
     this.selectedPage = 1;
     this.displayPage = 1;
     this.maxPages = 7;
+    this.mode = 0;
     this.blockMode = false;
+    this.screenDelay = 0;
     this.protectSubmode = false;
     this.keyboardLocked = false;
     this.statusLine = '';
+    this.tabStops = [];
+    this.disableLineEdit = false;
+    this.insertMode = false;
+    this.priorVideoAttr = 0;
+    this.dataTypeTable = createDefaultDataTypeTable();
     this.variableFieldTable = createDefaultVariableFieldTable();
+    this.scrollbackRows = [];
     this._initAllPages();
   }
 
   // ─── Page Helpers ───
+  private _createEmptyRow(defaultProtected = false): ScreenCell[] {
+    const row: ScreenCell[] = [];
+    for (let c = 0; c < SCREEN_COLS; c++) {
+      row.push({
+        char: ' ',
+        charValue: 0x0000,
+        baseData: 0,
+        markData: defaultProtected ? 0x01 : 0x00,
+        dataAttr: 0x20,
+        extAttr: 0,
+        protected: defaultProtected,
+        fieldId: -1,
+        attribute: 0,
+        modified: false,
+      });
+    }
+    return row;
+  }
+
   private _createEmptyPage(defaultProtected = false): PageState {
     const buffer: ScreenCell[][] = [];
     for (let r = 0; r < SCREEN_ROWS; r++) {
-      const row: ScreenCell[] = [];
-      for (let c = 0; c < SCREEN_COLS; c++) {
-        row.push({
-          char: ' ',
-          protected: defaultProtected,
-          fieldId: -1,
-          attribute: 0,
-          modified: false,
-        });
-      }
-      buffer.push(row);
+      buffer.push(this._createEmptyRow(defaultProtected));
     }
     return {
       buffer,
@@ -230,10 +337,28 @@ export class Screen6530 {
     this._initAllPages(false);
     this.selectedPage = 1;
     this.displayPage = 1;
+    this.mode = 0;
+    this.blockMode = false;
+    this.screenDelay = 0;
     this.protectSubmode = false;
     this.keyboardLocked = false;
     this.statusLine = '';
+    this.tabStops = [];
+    this.disableLineEdit = false;
+    this.insertMode = false;
+    this.priorVideoAttr = 0;
+    this.dataTypeTable = createDefaultDataTypeTable();
     this.variableFieldTable = createDefaultVariableFieldTable();
+    this.scrollbackRows = [];
+  }
+
+  reinitialize(): void {
+    this.dataTypeTable = createDefaultDataTypeTable();
+    this.variableFieldTable = createDefaultVariableFieldTable();
+    this.tabStops = [];
+    this.insertMode = false;
+    this.disableLineEdit = false;
+    this.priorVideoAttr = 0;
   }
 
   // ─── Clear Current Selected Page (ESC I / ESC K) ───
@@ -268,11 +393,14 @@ export class Screen6530 {
       if (this.protectSubmode) {
         if (!cell.protected && (page.allFields.length === 0 || cell.fieldId >= 0)) {
           cell.char = ' ';
+          cell.charValue = 0x0000;
           cell.modified = false;
         }
       } else {
         cell.char = ' ';
+        cell.charValue = 0x0000;
         cell.attribute = 0;
+        EmulChar6530.setVideoAttribute(cell, 0);
         cell.modified = false;
       }
     }
@@ -304,13 +432,34 @@ export class Screen6530 {
   }
 
   // ─── Enter Block Mode (SOH B ETX LRC) ───
-  // Per 6530 Programmer's Guide:
-  // Locks keyboard, sets nonprotect submode, selects & displays Page 1,
-  // retains Page 1 data from conversational mode, clears Pages 2+, resets cursor & buffer to (0,0).
-  enterBlockMode(): void {
+  // Per 6530 Programmer's Guide & Deep Technical Walkthrough Part 2 (Steps 1–16):
+  // Guard: if already in block mode, transition is skipped.
+  // 1. Flip mode flag (0 -> 2)
+  // 2. Turn on screen-update batching (screenDelay = 15)
+  // 3. Force page geometry 80x24
+  // 4. Clear protected flag
+  // 5. Drop scrollback above page
+  // 6. Trim buffer down to 1 page (24 rows)
+  // 7 & 8. Set displayed and selected page to 1, clear pages 2..7, clear protection on Page 1
+  // 9. Re-enable line editing & reset tab stops
+  // 10. Rebuild 96-row data-type table
+  // 11. Maintain status line
+  // 12. Home block cursor to (0, 0)
+  // 13. Lock keyboard
+  // 16. Optional re-initialize
+  enterBlockMode(forceReinit = false): void {
+    if (this.blockMode) {
+      if (forceReinit) {
+        this.reinitialize();
+      }
+      return;
+    }
+
+    this.mode = 2;
     this.blockMode = true;
+    this.screenDelay = 15;
     this.protectSubmode = false;
-    this.keyboardLocked = true;
+    this.scrollbackRows = [];
     this.selectedPage = 1;
     this.displayPage = 1;
 
@@ -324,27 +473,74 @@ export class Screen6530 {
     page1.fields = [];
     page1.allFields = [];
     page1.nextFieldId = 0;
+
     for (let r = 0; r < SCREEN_ROWS; r++) {
       for (let c = 0; c < SCREEN_COLS; c++) {
-        page1.buffer[r][c].protected = false;
-        page1.buffer[r][c].fieldId = -1;
-        page1.buffer[r][c].modified = false;
+        const cell = page1.buffer[r][c];
+        cell.protected = false;
+        cell.fieldId = -1;
+        cell.modified = false;
+        cell.markData = 0;
+        cell.dataAttr = 0x20;
+        cell.extAttr = 0;
       }
     }
 
     for (let p = 2; p < MAX_PAGES; p++) {
       this.pages[p] = this._createEmptyPage(false);
     }
+
+    this.disableLineEdit = false;
+    this.tabStops = [];
+    this.insertMode = false;
+    this.dataTypeTable = createDefaultDataTypeTable();
+    this.variableFieldTable = createDefaultVariableFieldTable();
+    this.keyboardLocked = true;
+
+    if (forceReinit) {
+      this.reinitialize();
+    }
   }
 
   // ─── Enter Conversational Mode (SOH C ETX LRC) ───
-  enterConversationalMode(): void {
+  // Per 6530 Programmer's Guide & Deep Technical Walkthrough Part 2b (Steps 1–12):
+  // Guard: proceeds if currently in block mode, or if forced (new connection).
+  // 1. Flip mode flag back (2 -> 0)
+  // 2. Turn off screen-update batching (screenDelay = 0)
+  // 3. Clear screen buffer
+  // 4. Home conversational cursor to (0, 0)
+  // 5. Reset tab stops
+  // 6. Reset prior video attribute to 0
+  // 7. Unlock keyboard
+  // 8. Maintain status line
+  // 9. Rebuild 96-row data-type table
+  enterConversationalMode(force = false): void {
+    if (!this.blockMode && !force) {
+      return;
+    }
+
+    this.mode = 0;
     this.blockMode = false;
-    this.protectSubmode = false;
-    this.keyboardLocked = false;
+    this.screenDelay = 0;
+    this._initAllPages(false);
+    this.scrollbackRows = [];
     this.selectedPage = 1;
     this.displayPage = 1;
-    this._initAllPages(false);
+
+    const page1 = this.pages[1];
+    page1.cursorRow = 0;
+    page1.cursorCol = 0;
+    page1.bufferRow = 0;
+    page1.bufferCol = 0;
+
+    this.tabStops = [];
+    this.insertMode = false;
+    this.disableLineEdit = false;
+    this.priorVideoAttr = 0;
+    page1.currentAttribute = 0;
+    this.keyboardLocked = false;
+    this.dataTypeTable = createDefaultDataTypeTable();
+    this.variableFieldTable = createDefaultVariableFieldTable();
   }
 
   // ─── Enter Protect Submode (ESC W) ───
@@ -402,6 +598,10 @@ export class Screen6530 {
         attrCell.protected = true;
         attrCell.fieldId = -1;
         attrCell.attribute = (field.videoAttr ?? 0) & 0x1f;
+        attrCell.dataAttr = field.dataAttr ?? 0x20;
+        EmulChar6530.setVideoAttribute(attrCell, attrCell.attribute);
+        EmulChar6530.setMarkAttribute(attrCell, 0x03); // bit 1: field start, bit 0: protected
+        EmulChar6530.setExtAttribute(attrCell, field.extAttr ?? 0);
       }
 
       const startPos = attrPos + 1;
@@ -425,6 +625,10 @@ export class Screen6530 {
           const cell = page.buffer[r][c];
           cell.protected = Boolean(field.protected);
           cell.fieldId = field.protected ? -1 : field.id;
+          cell.dataAttr = field.dataAttr ?? 0x20;
+          EmulChar6530.setExtAttribute(cell, field.extAttr ?? 0);
+          const markBits = (pos === startPos ? 0x02 : 0x00) | (field.protected ? 0x01 : 0x00);
+          EmulChar6530.setMarkAttribute(cell, markBits);
         }
       } else {
         field.startRow = Math.min(SCREEN_ROWS - 1, Math.floor(startPos / SCREEN_COLS));
@@ -436,6 +640,21 @@ export class Screen6530 {
     }
 
     page.fields = page.allFields.filter(f => !f.protected && f.length > 0);
+  }
+
+  // ─── Find Field Start (Scans using 6530 mark attribute bit 1) ───
+  findFieldStart(row: number, col: number): { row: number; col: number } | null {
+    const page = this._activeDisplayPage;
+    const targetPos = Math.max(0, Math.min(SCREEN_ROWS * SCREEN_COLS - 1, row * SCREEN_COLS + col));
+    for (let pos = targetPos; pos >= 0; pos--) {
+      const r = Math.floor(pos / SCREEN_COLS);
+      const c = pos % SCREEN_COLS;
+      const cell = page.buffer[r][c];
+      if ((EmulChar6530.getMarkAttribute(cell) & 0x02) !== 0) {
+        return { row: r, col: c };
+      }
+    }
+    return null;
   }
 
   // ─── Start Field in Protect Submode (GS 0x1D or ESC [) ───
@@ -469,9 +688,14 @@ export class Screen6530 {
     if (attrRow < SCREEN_ROWS && attrCol < SCREEN_COLS) {
       const attrCell = page.buffer[attrRow][attrCol];
       attrCell.char = ' ';
+      attrCell.charValue = 0x0000;
       attrCell.protected = true;
       attrCell.fieldId = -1;
       attrCell.attribute = videoAttr & 0x1f;
+      attrCell.dataAttr = dataAttr;
+      EmulChar6530.setVideoAttribute(attrCell, attrCell.attribute);
+      EmulChar6530.setMarkAttribute(attrCell, 0x03);
+      EmulChar6530.setExtAttribute(attrCell, extAttr);
       attrCell.modified = false;
     }
     this._advanceBufferAddress();
@@ -675,8 +899,19 @@ export class Screen6530 {
       return;
     }
     if (ch === '\n') {
-      page.bufferRow = Math.min(SCREEN_ROWS - 1, page.bufferRow + 1);
-      if (!this.blockMode) page.cursorRow = page.bufferRow;
+      if (!this.blockMode && page.bufferRow >= SCREEN_ROWS - 1) {
+        // Conversational scroll up by 1 line
+        this.scrollbackRows.push(page.buffer[0].map(c => ({ ...c })));
+        for (let r = 0; r < SCREEN_ROWS - 1; r++) {
+          page.buffer[r] = page.buffer[r + 1];
+        }
+        page.buffer[SCREEN_ROWS - 1] = this._createEmptyRow(false);
+        page.bufferRow = SCREEN_ROWS - 1;
+        page.cursorRow = SCREEN_ROWS - 1;
+      } else {
+        page.bufferRow = Math.min(SCREEN_ROWS - 1, page.bufferRow + 1);
+        if (!this.blockMode) page.cursorRow = page.bufferRow;
+      }
       return;
     }
     if (ch === '\b') {
@@ -685,7 +920,12 @@ export class Screen6530 {
       return;
     }
     if (ch === '\t') {
-      page.bufferCol = Math.min(SCREEN_COLS - 1, (Math.floor(page.bufferCol / 8) + 1) * 8);
+      if (this.tabStops.length > 0) {
+        const nextStop = this.tabStops.find(c => c > page.bufferCol);
+        page.bufferCol = nextStop !== undefined ? nextStop : Math.min(SCREEN_COLS - 1, (Math.floor(page.bufferCol / 8) + 1) * 8);
+      } else {
+        page.bufferCol = Math.min(SCREEN_COLS - 1, (Math.floor(page.bufferCol / 8) + 1) * 8);
+      }
       if (!this.blockMode) page.cursorCol = page.bufferCol;
       return;
     }
@@ -695,7 +935,9 @@ export class Screen6530 {
 
     const cell = page.buffer[page.bufferRow][page.bufferCol];
     cell.char = ch;
+    cell.charValue = ch.charCodeAt(0);
     cell.attribute = page.currentAttribute;
+    EmulChar6530.setVideoAttribute(cell, page.currentAttribute);
     cell.modified = false;
 
     if (!this.protectSubmode || page.allFields.length === 0) {
@@ -831,15 +1073,66 @@ export class Screen6530 {
     page.bufferCol++;
     if (page.bufferCol >= SCREEN_COLS) {
       page.bufferCol = 0;
-      page.bufferRow++;
-      if (page.bufferRow >= SCREEN_ROWS) {
+      if (!this.blockMode && page.bufferRow >= SCREEN_ROWS - 1) {
+        this.scrollbackRows.push(page.buffer[0].map(c => ({ ...c })));
+        for (let r = 0; r < SCREEN_ROWS - 1; r++) {
+          page.buffer[r] = page.buffer[r + 1];
+        }
+        page.buffer[SCREEN_ROWS - 1] = this._createEmptyRow(false);
         page.bufferRow = SCREEN_ROWS - 1;
+      } else {
+        page.bufferRow++;
+        if (page.bufferRow >= SCREEN_ROWS) {
+          page.bufferRow = SCREEN_ROWS - 1;
+        }
       }
     }
     if (!this.blockMode) {
       page.cursorRow = page.bufferRow;
       page.cursorCol = page.bufferCol;
     }
+  }
+
+  // ─── Data-Type Table Validation ───
+  validateCharForField(ch: string, dataAttr = 0x20): boolean {
+    if (!ch || ch.length !== 1) return false;
+    const code = ch.charCodeAt(0);
+    if (code < 0x20 || code > 0x7f) return false;
+    const row = this.dataTypeTable[code - 0x20];
+    if (!row) return false;
+
+    // Col 8 is printable flag
+    if (row[8] !== 1) return false;
+
+    // Check dataAttr restrictions (6530 Table 3-6 / Table 3-7)
+    if ((dataAttr & 0x40) !== 0) {
+      const typeBits = (dataAttr >> 1) & 0x07;
+      if (typeBits === 0x01) {
+        // Alphabetic only: row[2] must be 1
+        return row[2] === 1;
+      } else if (typeBits === 0x02) {
+        // Numeric only: row[3] must be 1
+        return row[3] === 1;
+      } else if (typeBits === 0x03) {
+        // Alphanumeric: row[1] must be 1
+        return row[1] === 1;
+      }
+    }
+    return true;
+  }
+
+  // ─── Tab Stops Management (ESC 0 / ESC 2) ───
+  setTabStop(col?: number): void {
+    const page = this._activeWritePage;
+    const targetCol = Math.max(0, Math.min(SCREEN_COLS - 1, col ?? page.cursorCol));
+    if (!this.tabStops.includes(targetCol)) {
+      this.tabStops.push(targetCol);
+      this.tabStops.sort((a, b) => a - b);
+    }
+  }
+
+  clearAllTabStops(): void {
+    this.tabStops = [];
   }
 
   // ─── Write Character (User Input on Displayed Page) ───
@@ -868,10 +1161,24 @@ export class Screen6530 {
       }
 
       const field = page.fields.find(f => f.id === cell.fieldId);
-      if (field) field.mdt = true;
+      if (field) {
+        if (!this.validateCharForField(ch, field.dataAttr ?? cell.dataAttr ?? 0x20)) {
+          return false;
+        }
+        field.mdt = true;
+      }
+    } else {
+      if (!this.validateCharForField(ch, cell.dataAttr ?? 0x20)) {
+        return false;
+      }
+    }
+
+    if (this.insertMode) {
+      this.insertChar();
     }
 
     cell.char = ch;
+    cell.charValue = ch.charCodeAt(0);
     cell.modified = true;
 
     const fieldId = cell.fieldId;
@@ -977,7 +1284,12 @@ export class Screen6530 {
   tabToNextField(): { row: number; col: number } | null {
     const page = this._activeDisplayPage;
     if (page.fields.length === 0) {
-      page.cursorCol = Math.min(SCREEN_COLS - 1, (Math.floor(page.cursorCol / 8) + 1) * 8);
+      if (this.tabStops.length > 0) {
+        const nextStop = this.tabStops.find(c => c > page.cursorCol);
+        page.cursorCol = nextStop !== undefined ? nextStop : Math.min(SCREEN_COLS - 1, (Math.floor(page.cursorCol / 8) + 1) * 8);
+      } else {
+        page.cursorCol = Math.min(SCREEN_COLS - 1, (Math.floor(page.cursorCol / 8) + 1) * 8);
+      }
       return { row: page.cursorRow, col: page.cursorCol };
     }
 
@@ -1012,7 +1324,12 @@ export class Screen6530 {
   tabToPrevField(): { row: number; col: number } | null {
     const page = this._activeDisplayPage;
     if (page.fields.length === 0) {
-      page.cursorCol = Math.max(0, (Math.ceil(page.cursorCol / 8) - 1) * 8);
+      if (this.tabStops.length > 0) {
+        const prevStops = this.tabStops.filter(c => c < page.cursorCol);
+        page.cursorCol = prevStops.length > 0 ? prevStops[prevStops.length - 1] : Math.max(0, (Math.ceil(page.cursorCol / 8) - 1) * 8);
+      } else {
+        page.cursorCol = Math.max(0, (Math.ceil(page.cursorCol / 8) - 1) * 8);
+      }
       return { row: page.cursorRow, col: page.cursorCol };
     }
 
