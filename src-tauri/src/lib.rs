@@ -163,6 +163,7 @@ pub fn run() {
             storage_set_password,
             storage_remove_password,
             // Copilot commands
+            copilot_test_proxy,
             copilot_device_code,
             copilot_poll_auth,
             copilot_get_user,

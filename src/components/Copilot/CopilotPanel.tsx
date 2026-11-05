@@ -76,6 +76,8 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     const [settingProxyLogin, setSettingProxyLogin] = useState(auth.proxyLogin || "");
     const [settingProxyPassword, setSettingProxyPassword] = useState(auth.proxyPassword || "");
     const [settingIgnoreSsl, setSettingIgnoreSsl] = useState(auth.ignoreSslErrors ?? false);
+    const [isCheckingProxy, setIsCheckingProxy] = useState(false);
+    const [proxyCheckResult, setProxyCheckResult] = useState<{ success: boolean; message: string } | null>(null);
 
     // Manual PAT Option on login screen
     const [showManualToken, setShowManualToken] = useState(false);
@@ -191,6 +193,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
             setSettingProxyLogin(auth.proxyLogin || "");
             setSettingProxyPassword(auth.proxyPassword || "");
             setSettingIgnoreSsl(auth.ignoreSslErrors ?? false);
+            setProxyCheckResult(null);
         }
     }, [showSettings, auth]);
 
@@ -407,6 +410,45 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
 
     // ─── Test Connection & Settings ───
 
+    const handleCheckProxy = async () => {
+        setIsCheckingProxy(true);
+        setProxyCheckResult(null);
+        try {
+            const testProxy = buildProxyUrl({
+                useProxy: settingUseProxy,
+                proxyHost: settingProxyHost,
+                proxyPort: settingProxyPort,
+                proxyAuthEnabled: settingProxyAuthEnabled,
+                proxyLogin: settingProxyLogin,
+                proxyPassword: settingProxyPassword,
+            });
+            const testProxyUser = settingUseProxy && settingProxyAuthEnabled ? settingProxyLogin.trim() : undefined;
+            const testProxyPass = settingUseProxy && settingProxyAuthEnabled ? settingProxyPassword : undefined;
+            const testIgnoreSsl = settingIgnoreSsl;
+
+            const resp: any = await invoke("copilot_test_proxy", {
+                proxy: testProxy,
+                proxyUser: testProxyUser,
+                proxyPass: testProxyPass,
+                ignoreSsl: testIgnoreSsl,
+            });
+
+            if (resp.success) {
+                setProxyCheckResult({ success: true, message: resp.data || "Connection successful" });
+                toast.success(resp.data || "Proxy connection verified! GitHub is reachable.");
+            } else {
+                setProxyCheckResult({ success: false, message: resp.error || "Connection failed" });
+                toast.error(`Proxy check failed: ${resp.error}`);
+            }
+        } catch (err: any) {
+            const msg = err.message || String(err);
+            setProxyCheckResult({ success: false, message: msg });
+            toast.error(msg);
+        } finally {
+            setIsCheckingProxy(false);
+        }
+    };
+
     const handleTestConnection = async () => {
         setIsTestingConnection(true);
         try {
@@ -430,12 +472,6 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 endpointToTest = settingEndpoint.trim();
             }
 
-            if (!tokenToTest) {
-                toast.error("Please enter an API key or log in with GitHub first.");
-                setIsTestingConnection(false);
-                return;
-            }
-
             const testProxy = buildProxyUrl({
                 useProxy: settingUseProxy,
                 proxyHost: settingProxyHost,
@@ -447,6 +483,29 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
             const testProxyUser = settingUseProxy && settingProxyAuthEnabled ? settingProxyLogin.trim() : undefined;
             const testProxyPass = settingUseProxy && settingProxyAuthEnabled ? settingProxyPassword : undefined;
             const testIgnoreSsl = settingIgnoreSsl;
+
+            // If using GitHub and not authenticated yet, test proxy connectivity to GitHub
+            if (settingProvider === "github" && !tokenToTest) {
+                const resp: any = await invoke("copilot_test_proxy", {
+                    proxy: testProxy,
+                    proxyUser: testProxyUser,
+                    proxyPass: testProxyPass,
+                    ignoreSsl: testIgnoreSsl,
+                });
+
+                if (resp.success) {
+                    toast.success(resp.data || "Proxy connection verified! GitHub is reachable.");
+                } else {
+                    toast.error(`Proxy connection test failed: ${resp.error}`);
+                }
+                return;
+            }
+
+            if (!tokenToTest) {
+                toast.error("Please enter an API key or log in with GitHub first.");
+                setIsTestingConnection(false);
+                return;
+            }
 
             const resp: any = await invoke("copilot_chat", {
                 token: tokenToTest,
@@ -1060,6 +1119,10 @@ When suggesting terminal commands to fix problems, inspect logs, or configure se
                                                             style={{ flex: 1, fontSize: "12px" }}
                                                         />
                                                     </div>
+
+                                                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px", lineHeight: 1.4 }}>
+                                                        💡 If rejected with HTTP 407, try <code>DB\username</code> or short ID instead of email. If your proxy enforces NTLM SSO, use a local bridge like <strong>Px</strong> (<code>127.0.0.1:3128</code>) without authentication.
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
@@ -1090,6 +1153,42 @@ When suggesting terminal commands to fix problems, inspect logs, or configure se
                                                     </div>
                                                 </div>
                                             </label>
+                                        </div>
+
+                                        {/* Check Proxy Connection button */}
+                                        <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: "1px dashed var(--border-default)", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                                            <button
+                                                type="button"
+                                                onClick={handleCheckProxy}
+                                                disabled={isCheckingProxy}
+                                                style={{
+                                                    padding: "5px 12px",
+                                                    fontSize: "11px",
+                                                    borderRadius: "6px",
+                                                    background: "rgba(56, 189, 248, 0.12)",
+                                                    border: "1px solid rgba(56, 189, 248, 0.3)",
+                                                    color: "#38bdf8",
+                                                    cursor: isCheckingProxy ? "not-allowed" : "pointer",
+                                                    fontWeight: 500,
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    gap: "6px",
+                                                }}
+                                            >
+                                                {isCheckingProxy ? "Checking..." : "Check Proxy Connection"}
+                                            </button>
+                                            {proxyCheckResult && (
+                                                <span
+                                                    style={{
+                                                        fontSize: "11px",
+                                                        color: proxyCheckResult.success ? "#22c55e" : "#ef4444",
+                                                        lineHeight: 1.3,
+                                                        flex: 1,
+                                                    }}
+                                                >
+                                                    {proxyCheckResult.success ? "✓ Proxy reachable!" : `✗ ${proxyCheckResult.message}`}
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 )}

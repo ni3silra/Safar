@@ -81,13 +81,61 @@ pub fn format_reqwest_error(prefix: &str, e: &reqwest::Error) -> String {
             "{}: {}. Hint: If your corporate proxy uses TLS inspection / MITM root CA, ensure 'Accept corporate / self-signed TLS certificates' is checked in Copilot Settings (⚙️).",
             prefix, chain
         )
-    } else if chain.contains("407") || chain.contains("Proxy Authentication Required") {
+    } else if chain.contains("407") || chain.contains("proxy authorization required") || chain.contains("Proxy Authentication Required") {
         format!(
-            "{}: {}. Hint: Corporate proxy requires authentication. Please check 'Proxy authentication' and your login credentials in Copilot Settings (⚙️).",
+            "{}: {}. Hint: Corporate proxy returned 407 (Proxy Authentication Required). If your enterprise proxy enforces NTLM/Kerberos Single Sign-On (common in banks), it rejects Basic password authentication. Route through a local NTLM proxy bridge like Px (http://127.0.0.1:3128) with Proxy Authentication unchecked. If the proxy accepts Basic auth, verify your username (try 'username' or 'DOMAIN\\username' instead of full email).",
             prefix, chain
         )
     } else {
         format!("{}: {}", prefix, chain)
+    }
+}
+
+/// Probes the corporate proxy directly via raw TCP socket to inspect what authentication
+/// schemes the proxy advertises in its HTTP 407 response (e.g. Negotiate, NTLM, Basic).
+pub async fn probe_proxy_auth_challenge(proxy_url: &str) -> Option<String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let normalized = if !proxy_url.starts_with("http://") && !proxy_url.starts_with("https://") {
+        format!("http://{}", proxy_url)
+    } else {
+        proxy_url.to_string()
+    };
+
+    let parsed = url::Url::parse(&normalized).ok()?;
+    let host = parsed.host_str()?;
+    let port = parsed.port().unwrap_or(8080);
+
+    let mut stream = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tokio::net::TcpStream::connect(format!("{}:{}", host, port)),
+    )
+    .await
+    .ok()?
+    .ok()?;
+
+    let req = "CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\nProxy-Connection: close\r\n\r\n";
+    stream.write_all(req.as_bytes()).await.ok()?;
+
+    let mut buf = vec![0u8; 4096];
+    let n = tokio::time::timeout(std::time::Duration::from_secs(3), stream.read(&mut buf))
+        .await
+        .ok()?
+        .ok()?;
+
+    let response = String::from_utf8_lossy(&buf[..n]);
+    let mut schemes = Vec::new();
+    for line in response.lines() {
+        let trimmed = line.trim();
+        if trimmed.to_ascii_lowercase().starts_with("proxy-authenticate:") {
+            schemes.push(trimmed.to_string());
+        }
+    }
+
+    if !schemes.is_empty() {
+        Some(schemes.join(", "))
+    } else {
+        None
     }
 }
 
@@ -174,6 +222,48 @@ pub fn create_http_client(
     builder.build().map_err(|e| format!("Failed to build HTTP client: {}", e))
 }
 
+/// Step 0: Test proxy connectivity to GitHub before initiating device flow or chat
+#[tauri::command]
+pub async fn copilot_test_proxy(
+    proxy: Option<String>,
+    proxy_user: Option<String>,
+    proxy_pass: Option<String>,
+    ignore_ssl: Option<bool>,
+) -> CommandResponse<String> {
+    let client = match create_http_client(proxy.as_deref(), proxy_user.as_deref(), proxy_pass.as_deref(), ignore_ssl) {
+        Ok(c) => c,
+        Err(e) => return CommandResponse::err(e),
+    };
+
+    let target_test_url = "https://github.com";
+    let res = client
+        .get(target_test_url)
+        .header(USER_AGENT, "Safar-SSH-Copilot/1.0")
+        .send()
+        .await;
+
+    match res {
+        Ok(resp) => {
+            CommandResponse::ok(format!(
+                "Successfully reached {} through proxy (HTTP Status: {}).",
+                target_test_url,
+                resp.status()
+            ))
+        }
+        Err(e) => {
+            let mut err_msg = format_reqwest_error("Proxy test failed", &e);
+            if err_msg.contains("proxy authorization required") || err_msg.contains("407") {
+                if let Some(target) = proxy.as_deref() {
+                    if let Some(schemes) = probe_proxy_auth_challenge(target).await {
+                        err_msg.push_str(&format!(" [Proxy schemes advertised: {}]", schemes));
+                    }
+                }
+            }
+            CommandResponse::err(err_msg)
+        }
+    }
+}
+
 /// Step 1: Initiate GitHub Device Code Flow
 #[tauri::command]
 pub async fn copilot_device_code(
@@ -217,7 +307,17 @@ pub async fn copilot_device_code(
                 CommandResponse::err(format!("GitHub error (status {}): {}", status, err_text))
             }
         }
-        Err(e) => CommandResponse::err(format_reqwest_error("Network request failed", &e)),
+        Err(e) => {
+            let mut err_msg = format_reqwest_error("Network request failed", &e);
+            if err_msg.contains("proxy authorization required") || err_msg.contains("407") {
+                if let Some(target) = proxy.as_deref() {
+                    if let Some(schemes) = probe_proxy_auth_challenge(target).await {
+                        err_msg.push_str(&format!(" [Proxy schemes advertised: {}]", schemes));
+                    }
+                }
+            }
+            CommandResponse::err(err_msg)
+        }
     }
 }
 
@@ -307,7 +407,17 @@ pub async fn copilot_poll_auth(
                 Err(e) => CommandResponse::err(format!("Failed to parse GitHub JSON: {}", e)),
             }
         }
-        Err(e) => CommandResponse::err(format_reqwest_error("Auth polling failed", &e)),
+        Err(e) => {
+            let mut err_msg = format_reqwest_error("Auth polling failed", &e);
+            if err_msg.contains("proxy authorization required") || err_msg.contains("407") {
+                if let Some(target) = proxy.as_deref() {
+                    if let Some(schemes) = probe_proxy_auth_challenge(target).await {
+                        err_msg.push_str(&format!(" [Proxy schemes advertised: {}]", schemes));
+                    }
+                }
+            }
+            CommandResponse::err(err_msg)
+        }
     }
 }
 
@@ -345,7 +455,17 @@ pub async fn copilot_get_user(
                 CommandResponse::err(format!("GitHub user query failed (status {}): {}", status, err_text))
             }
         }
-        Err(e) => CommandResponse::err(format_reqwest_error("Network request failed", &e)),
+        Err(e) => {
+            let mut err_msg = format_reqwest_error("Network request failed", &e);
+            if err_msg.contains("proxy authorization required") || err_msg.contains("407") {
+                if let Some(target) = proxy.as_deref() {
+                    if let Some(schemes) = probe_proxy_auth_challenge(target).await {
+                        err_msg.push_str(&format!(" [Proxy schemes advertised: {}]", schemes));
+                    }
+                }
+            }
+            CommandResponse::err(err_msg)
+        }
     }
 }
 
@@ -407,7 +527,17 @@ pub async fn copilot_get_token(
 
             CommandResponse::err(format!("GitHub token exchange failed (status {}): {}", status, body))
         }
-        Err(e) => CommandResponse::err(format_reqwest_error("Network error contacting GitHub", &e)),
+        Err(e) => {
+            let mut err_msg = format_reqwest_error("Network error contacting GitHub", &e);
+            if err_msg.contains("proxy authorization required") || err_msg.contains("407") {
+                if let Some(target) = proxy.as_deref() {
+                    if let Some(schemes) = probe_proxy_auth_challenge(target).await {
+                        err_msg.push_str(&format!(" [Proxy schemes advertised: {}]", schemes));
+                    }
+                }
+            }
+            CommandResponse::err(err_msg)
+        }
     }
 }
 
@@ -444,7 +574,7 @@ async fn execute_chat_request(
     }
 
     let resp = req.json(&payload).send().await.map_err(|e| {
-        (reqwest::StatusCode::INTERNAL_SERVER_ERROR, format!("Network error: {}", e))
+        (reqwest::StatusCode::INTERNAL_SERVER_ERROR, format_reqwest_error("Network error", &e))
     })?;
 
     let status = resp.status();
@@ -818,6 +948,19 @@ mod tests {
     fn test_create_http_client_without_scheme_auto_prepends_http() {
         let client = create_http_client(Some("sp-surf-proxy.intranet.db.com:8080"), None, None, None);
         assert!(client.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_copilot_test_proxy_invalid_proxy() {
+        let res = copilot_test_proxy(
+            Some("http://[invalid-url-with-bad-ipv6".into()),
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(!res.success);
+        assert!(res.error.is_some());
     }
 
     #[test]
