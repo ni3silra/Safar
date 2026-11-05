@@ -259,16 +259,10 @@ pub fn storage_remove_password(state: State<AppState>) -> CommandResponse<()> {
 mod tests {
     use super::*;
     use crate::AppState;
-    use crate::ssh::SshManager;
-    use parking_lot::RwLock;
-    use std::sync::Arc;
     
     #[test]
     fn test_app_state_init() {
-        let state = AppState {
-            ssh_manager: Arc::new(SshManager::new()),
-            session_storage: RwLock::new(None),
-        };
+        let state = AppState::new();
         assert!(state.session_storage.read().is_none());
     }
 

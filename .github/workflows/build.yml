@@ -49,6 +49,11 @@ jobs:
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -75,7 +80,8 @@ jobs:
           $exe = Get-ChildItem -Path "src-tauri/target/release/*.exe" | Select-Object -First 1
           if ($exe) {
             Write-Host "Found executable: $($exe.Name)"
-            Compress-Archive -Path $exe.FullName -DestinationPath "src-tauri/target/release/Safar-portable-windows-x64.zip"
+            Copy-Item $exe.FullName "src-tauri/target/release/Safar.exe" -Force
+            Compress-Archive -Path "src-tauri/target/release/Safar.exe" -DestinationPath "src-tauri/target/release/Safar-portable-windows-x64.zip" -Force
           } else {
             Write-Error "No executable found in src-tauri/target/release/"
             Get-ChildItem -Path "src-tauri/target/release/" -Recurse

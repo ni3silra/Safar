@@ -20,9 +20,10 @@ interface CommandResponse<T> {
 interface CommandPaletteProps {
     sessionId: string | null;
     onExecute?: () => void;
+    protocol?: "ssh" | "telnet";
 }
 
-export function CommandPalette({ sessionId, onExecute }: CommandPaletteProps) {
+export function CommandPalette({ sessionId, onExecute, protocol = "ssh" }: CommandPaletteProps) {
     const [snippets, setSnippets] = useState<CommandSnippet[]>([]);
     const [showAdd, setShowAdd] = useState(false);
     const [editingSnippet, setEditingSnippet] = useState<CommandSnippet | null>(null);
@@ -115,7 +116,7 @@ export function CommandPalette({ sessionId, onExecute }: CommandPaletteProps) {
             // "none" = no suffix
 
             const dataToSend = snippet.command + suffix;
-            await invoke("ssh_send", { sessionId, data: dataToSend });
+            await invoke(protocol === "telnet" ? "telnet_send" : "ssh_send", { sessionId, data: dataToSend });
             toast.success(`Command "${snippet.name}" sent to terminal`);
             if (onExecute) onExecute();
         } catch (err) {
