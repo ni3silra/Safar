@@ -462,3 +462,141 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* Header Button */
+.copilot-header-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.copilot-header-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+}
+
+/* Subscription Warning Banner */
+.copilot-banner-warning {
+  margin: 10px 14px 0;
+  padding: 10px 12px;
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #fef08a;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.copilot-banner-btn {
+  align-self: flex-start;
+  background: #ca8a04;
+  color: #000000;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.copilot-banner-btn:hover {
+  background: #eab308;
+}
+
+/* Settings Modal Overlay */
+.copilot-settings-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(2px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.copilot-settings-modal {
+  width: 100%;
+  max-width: 360px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.copilot-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-default);
+  font-weight: 600;
+  font-size: 13px;
+  background: var(--bg-secondary);
+}
+
+.copilot-settings-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 450px;
+  overflow-y: auto;
+}
+
+.copilot-field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.copilot-field-input,
+.copilot-field-select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.copilot-field-input:focus,
+.copilot-field-select:focus {
+  border-color: var(--accent-primary);
+}
+
+.copilot-settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-secondary);
+}
+
+

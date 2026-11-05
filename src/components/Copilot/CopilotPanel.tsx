@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { Icons } from "../Icons";
 import {
+    AIProvider,
     CopilotAuthState,
     CopilotDeviceAuth,
     CopilotMessage,
@@ -30,10 +31,24 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     // Auth State
     const [auth, setAuth] = useState<CopilotAuthState>(() => {
         try {
-            const saved = localStorage.getItem(STORAGE_KEY);
-            return saved ? JSON.parse(saved) : { isAuthenticated: false };
+            const savedStr = localStorage.getItem(STORAGE_KEY);
+            if (!savedStr) return { isAuthenticated: false, provider: "github" };
+            const saved: CopilotAuthState = JSON.parse(savedStr);
+            if (!saved.provider) saved.provider = "github";
+            // Scrub deprecated / unresolvable endpoints
+            if (
+                saved.endpoint &&
+                (saved.endpoint.includes("models.inference.ai.azure.com") ||
+                    saved.endpoint.includes("models.github.ai") ||
+                    saved.endpoint.includes("azure.com"))
+            ) {
+                if (saved.provider === "openai") saved.endpoint = "https://api.openai.com/v1";
+                else if (saved.provider === "groq") saved.endpoint = "https://api.groq.com/openai/v1";
+                else saved.endpoint = "https://api.githubcopilot.com";
+            }
+            return saved;
         } catch {
-            return { isAuthenticated: false };
+            return { isAuthenticated: false, provider: "github" };
         }
     });
 
@@ -43,7 +58,14 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     const [codeCopied, setCodeCopied] = useState(false);
     const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Manual PAT / Custom Endpoint Option
+    // Settings Modal
+    const [showSettings, setShowSettings] = useState(false);
+    const [settingProvider, setSettingProvider] = useState<AIProvider>(auth.provider || "github");
+    const [settingApiKey, setSettingApiKey] = useState(auth.apiKey || "");
+    const [settingEndpoint, setSettingEndpoint] = useState(auth.customEndpoint || "");
+    const [isTestingConnection, setIsTestingConnection] = useState(false);
+
+    // Manual PAT Option on login screen
     const [showManualToken, setShowManualToken] = useState(false);
     const [manualTokenInput, setManualTokenInput] = useState("");
 
@@ -99,6 +121,15 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
             if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
         };
     }, []);
+
+    // Synchronize settings modal inputs with auth state when opening settings
+    useEffect(() => {
+        if (showSettings) {
+            setSettingProvider(auth.provider || "github");
+            setSettingApiKey(auth.apiKey || "");
+            setSettingEndpoint(auth.customEndpoint || "");
+        }
+    }, [showSettings, auth]);
 
     // ─── GitHub Device Flow Authentication ───
 
@@ -159,20 +190,28 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
 
                         // Fetch Copilot session token
                         const tokenResp: any = await invoke("copilot_get_token", { accessToken });
-                        const tokenData = tokenResp.success ? tokenResp.data : null;
+                        const hasCopilot = tokenResp.success && tokenResp.data?.is_copilot_token;
 
                         setAuth({
                             isAuthenticated: true,
+                            provider: "github",
                             accessToken,
-                            copilotToken: tokenData?.token || accessToken,
-                            isCopilotSubscriber: tokenData?.is_copilot_token ?? false,
-                            endpoint: tokenData?.endpoint || "https://models.inference.ai.azure.com",
+                            copilotToken: hasCopilot ? tokenResp.data.token : "",
+                            isCopilotSubscriber: !!hasCopilot,
+                            endpoint: hasCopilot ? tokenResp.data.endpoint : "https://api.githubcopilot.com",
                             user,
                         });
 
                         setDeviceAuth(null);
                         setIsPolling(false);
-                        toast.success(`Successfully signed in as @${user.login}!`);
+
+                        if (hasCopilot) {
+                            toast.success(`Successfully connected to Copilot as @${user.login}!`);
+                        } else {
+                            toast.warning(
+                                `Signed in as @${user.login}, but GitHub Copilot is not enabled on this account. You can enter an OpenAI or Groq key in Settings.`
+                            );
+                        }
                         return;
                     } else if (status === "pending") {
                         pollAuth(deviceCode, intervalSec);
@@ -203,18 +242,50 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
 
         try {
             setIsLoading(true);
+            if (token.startsWith("sk-")) {
+                // OpenAI API Key
+                setAuth({
+                    isAuthenticated: true,
+                    provider: "openai",
+                    apiKey: token,
+                    endpoint: "https://api.openai.com/v1",
+                    user: { login: "openai-user" },
+                });
+                setModel("gpt-4o");
+                setShowManualToken(false);
+                setManualTokenInput("");
+                toast.success("Connected to OpenAI successfully!");
+                return;
+            } else if (token.startsWith("gsk_")) {
+                // Groq API Key
+                setAuth({
+                    isAuthenticated: true,
+                    provider: "groq",
+                    apiKey: token,
+                    endpoint: "https://api.groq.com/openai/v1",
+                    user: { login: "groq-user" },
+                });
+                setModel("llama-3.3-70b-versatile");
+                setShowManualToken(false);
+                setManualTokenInput("");
+                toast.success("Connected to Groq AI successfully!");
+                return;
+            }
+
+            // Otherwise treat as GitHub Personal Access Token or Copilot session token
             const userResp: any = await invoke("copilot_get_user", { accessToken: token });
             const user = userResp.success ? userResp.data : { login: "user" };
 
             const tokenResp: any = await invoke("copilot_get_token", { accessToken: token });
-            const tokenData = tokenResp.success ? tokenResp.data : null;
+            const hasCopilot = tokenResp.success && tokenResp.data?.is_copilot_token;
 
             setAuth({
                 isAuthenticated: true,
+                provider: "github",
                 accessToken: token,
-                copilotToken: tokenData?.token || token,
-                isCopilotSubscriber: tokenData?.is_copilot_token ?? false,
-                endpoint: tokenData?.endpoint || "https://models.inference.ai.azure.com",
+                copilotToken: hasCopilot ? tokenResp.data.token : token,
+                isCopilotSubscriber: !!hasCopilot,
+                endpoint: hasCopilot ? tokenResp.data.endpoint : "https://api.githubcopilot.com",
                 user,
             });
 
@@ -229,11 +300,97 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     };
 
     const handleSignOut = () => {
-        setAuth({ isAuthenticated: false });
+        setAuth({ isAuthenticated: false, provider: "github" });
         setDeviceAuth(null);
         if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
         setIsPolling(false);
-        toast.info("Signed out of GitHub Copilot");
+        toast.info("Signed out of Safar Copilot");
+    };
+
+    // ─── Test Connection & Settings ───
+
+    const handleTestConnection = async () => {
+        setIsTestingConnection(true);
+        try {
+            let tokenToTest = "";
+            let endpointToTest = "";
+            let modelToTest = model;
+
+            if (settingProvider === "github") {
+                tokenToTest = auth.copilotToken || auth.accessToken || "";
+                endpointToTest = "https://api.githubcopilot.com";
+            } else if (settingProvider === "openai") {
+                tokenToTest = settingApiKey.trim();
+                endpointToTest = settingEndpoint.trim() || "https://api.openai.com/v1";
+                modelToTest = "gpt-4o-mini";
+            } else if (settingProvider === "groq") {
+                tokenToTest = settingApiKey.trim();
+                endpointToTest = settingEndpoint.trim() || "https://api.groq.com/openai/v1";
+                modelToTest = "llama-3.3-70b-versatile";
+            } else {
+                tokenToTest = settingApiKey.trim();
+                endpointToTest = settingEndpoint.trim();
+            }
+
+            if (!tokenToTest) {
+                toast.error("Please enter an API key or log in with GitHub first.");
+                setIsTestingConnection(false);
+                return;
+            }
+
+            const resp: any = await invoke("copilot_chat", {
+                token: tokenToTest,
+                model: modelToTest,
+                messages: [{ role: "user", content: "Ping: Respond with 'Safar AI Connected'." }],
+                endpoint: endpointToTest,
+            });
+
+            if (resp.success) {
+                toast.success("AI connection verified successfully!");
+            } else {
+                toast.error(`Connection test failed: ${resp.error}`);
+            }
+        } catch (err: any) {
+            toast.error(err.message || String(err));
+        } finally {
+            setIsTestingConnection(false);
+        }
+    };
+
+    const handleSaveSettings = () => {
+        const isAuthed =
+            settingProvider === "github" ? auth.isAuthenticated : !!settingApiKey.trim();
+
+        const resolvedEndpoint =
+            settingProvider === "openai"
+                ? settingEndpoint.trim() || "https://api.openai.com/v1"
+                : settingProvider === "groq"
+                ? settingEndpoint.trim() || "https://api.groq.com/openai/v1"
+                : settingProvider === "custom"
+                ? settingEndpoint.trim()
+                : "https://api.githubcopilot.com";
+
+        setAuth({
+            ...auth,
+            isAuthenticated: isAuthed,
+            provider: settingProvider,
+            apiKey: settingApiKey.trim(),
+            customEndpoint: settingEndpoint.trim(),
+            endpoint: resolvedEndpoint,
+            user:
+                auth.user || {
+                    login: settingProvider === "openai" ? "openai" : settingProvider === "groq" ? "groq" : "custom-ai",
+                },
+        });
+
+        if (settingProvider === "groq" && !model.includes("llama")) {
+            setModel("llama-3.3-70b-versatile");
+        } else if (settingProvider === "openai" && model.includes("claude")) {
+            setModel("gpt-4o");
+        }
+
+        setShowSettings(false);
+        toast.success("AI settings saved!");
     };
 
     // ─── Sending AI Queries ───
@@ -241,6 +398,22 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     const handleSendMessage = async (promptText?: string) => {
         const query = (promptText || inputPrompt).trim();
         if (!query || isLoading) return;
+
+        // Determine token to use
+        let activeToken = "";
+        let activeEndpoint = auth.endpoint || "";
+
+        if (auth.provider === "openai" || auth.provider === "groq" || auth.provider === "custom") {
+            activeToken = auth.apiKey || "";
+        } else {
+            activeToken = auth.copilotToken || auth.accessToken || "";
+        }
+
+        if (!activeToken) {
+            toast.error("Please configure an API key or log in to GitHub Copilot.");
+            setShowSettings(true);
+            return;
+        }
 
         const terminalOutput = includeTerminalContext ? getTerminalOutput(60) : "";
 
@@ -278,13 +451,11 @@ ${
                 })),
             ];
 
-            const activeToken = auth.copilotToken || auth.accessToken || "";
-
             const resp: any = await invoke("copilot_chat", {
                 token: activeToken,
                 model,
                 messages: chatMessages,
-                endpoint: auth.endpoint,
+                endpoint: activeEndpoint,
             });
 
             if (resp.success && resp.data) {
@@ -327,7 +498,7 @@ ${
                 command,
             });
 
-            const output = execResp.success ? (execResp.data || "(No output returned)") : `Error: ${execResp.error}`;
+            const output = execResp.success ? execResp.data || "(No output returned)" : `Error: ${execResp.error}`;
 
             // Add execution note and output to chat
             const userAnalysisPrompt = `I executed the following command on the server:\n\`\`\`bash\n${command}\n\`\`\`\n\nCommand output received from remote server:\n\`\`\`\n${output}\n\`\`\`\n\nPlease analyze this result and tell me what it means and what action I should take next.`;
@@ -338,6 +509,12 @@ ${
             setIsLoading(false);
         }
     };
+
+    const hasNoCopilotPlan =
+        auth.isAuthenticated &&
+        auth.provider === "github" &&
+        !auth.isCopilotSubscriber &&
+        !auth.apiKey;
 
     return (
         <div className="copilot-panel">
@@ -359,11 +536,34 @@ ${
                                 onChange={(e) => setModel(e.target.value as CopilotModel)}
                                 title="Select AI Model"
                             >
-                                <option value="gpt-4o">GPT-4o</option>
-                                <option value="claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-                                <option value="gpt-4o-mini">GPT-4o Mini</option>
-                                <option value="o1-mini">o1-mini</option>
+                                {auth.provider === "groq" ? (
+                                    <>
+                                        <option value="llama-3.3-70b-versatile">Llama 3.3 70B</option>
+                                        <option value="llama-3.1-8b-instant">Llama 3.1 8B</option>
+                                    </>
+                                ) : auth.provider === "openai" ? (
+                                    <>
+                                        <option value="gpt-4o">GPT-4o</option>
+                                        <option value="gpt-4o-mini">GPT-4o Mini</option>
+                                        <option value="o1-mini">o1-mini</option>
+                                    </>
+                                ) : (
+                                    <>
+                                        <option value="gpt-4o">GPT-4o</option>
+                                        <option value="claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+                                        <option value="gpt-4o-mini">GPT-4o Mini</option>
+                                        <option value="o1-mini">o1-mini</option>
+                                    </>
+                                )}
                             </select>
+
+                            <button
+                                className="copilot-header-btn"
+                                onClick={() => setShowSettings(true)}
+                                title="AI Settings & API Keys"
+                            >
+                                <Icons.Settings style={{ width: 14, height: 14 }} />
+                            </button>
 
                             <div
                                 className="copilot-user-pill"
@@ -395,23 +595,187 @@ ${
                         </>
                     )}
 
+                    {!auth.isAuthenticated && (
+                        <button
+                            className="copilot-header-btn"
+                            onClick={() => setShowSettings(true)}
+                            title="AI Settings & API Keys"
+                        >
+                            <Icons.Settings style={{ width: 14, height: 14 }} />
+                        </button>
+                    )}
+
                     <button
+                        className="copilot-header-btn"
                         onClick={onClose}
-                        style={{
-                            background: "transparent",
-                            border: "none",
-                            color: "var(--text-secondary)",
-                            cursor: "pointer",
-                            padding: "4px",
-                            display: "flex",
-                            borderRadius: "4px",
-                        }}
                         title="Close Copilot Panel [Ctrl+Shift+I]"
                     >
                         <Icons.X style={{ width: 13, height: 13 }} />
                     </button>
                 </div>
             </div>
+
+            {/* AI Settings Modal */}
+            {showSettings && (
+                <div className="copilot-settings-overlay">
+                    <div className="copilot-settings-modal">
+                        <div className="copilot-settings-header">
+                            <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                <Icons.Settings style={{ width: 14, height: 14 }} />
+                                AI Provider & Key Settings
+                            </span>
+                            <button
+                                onClick={() => setShowSettings(false)}
+                                style={{
+                                    background: "transparent",
+                                    border: "none",
+                                    color: "var(--text-muted)",
+                                    cursor: "pointer",
+                                }}
+                            >
+                                <Icons.X style={{ width: 12, height: 12 }} />
+                            </button>
+                        </div>
+
+                        <div className="copilot-settings-body">
+                            <div>
+                                <label className="copilot-field-label">AI Service Provider</label>
+                                <select
+                                    className="copilot-field-select"
+                                    value={settingProvider}
+                                    onChange={(e) => setSettingProvider(e.target.value as AIProvider)}
+                                >
+                                    <option value="github">GitHub Copilot (OAuth URL Login)</option>
+                                    <option value="openai">OpenAI (GPT-4o, GPT-4o Mini)</option>
+                                    <option value="groq">Groq (Ultra-fast, Free API)</option>
+                                    <option value="custom">Custom OpenAI-Compatible (Ollama, etc.)</option>
+                                </select>
+                            </div>
+
+                            {settingProvider === "github" ? (
+                                <div
+                                    style={{
+                                        padding: "10px",
+                                        borderRadius: "6px",
+                                        background: "var(--bg-primary)",
+                                        border: "1px solid var(--border-default)",
+                                        fontSize: "12px",
+                                        color: "var(--text-secondary)",
+                                        lineHeight: 1.5,
+                                    }}
+                                >
+                                    {auth.isAuthenticated && auth.user ? (
+                                        <div>
+                                            Signed in as <strong>@{auth.user.login}</strong>.
+                                            <div style={{ marginTop: "4px" }}>
+                                                Copilot Subscription:{" "}
+                                                <strong
+                                                    style={{
+                                                        color: auth.isCopilotSubscriber ? "#4ade80" : "#f87171",
+                                                    }}
+                                                >
+                                                    {auth.isCopilotSubscriber ? "Active" : "Not Found"}
+                                                </strong>
+                                            </div>
+                                            {!auth.isCopilotSubscriber && (
+                                                <div style={{ marginTop: "6px", color: "var(--text-muted)" }}>
+                                                    If your GitHub account does not have a Copilot subscription, switch to
+                                                    OpenAI, Groq (free), or Custom above.
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div>
+                                            Use GitHub Device Flow to sign in with your GitHub account.
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <>
+                                    <div>
+                                        <label className="copilot-field-label">
+                                            {settingProvider === "openai"
+                                                ? "OpenAI API Key (sk-...)"
+                                                : settingProvider === "groq"
+                                                ? "Groq API Key (gsk_...)"
+                                                : "API Key / Bearer Token"}
+                                        </label>
+                                        <input
+                                            type="password"
+                                            className="copilot-field-input"
+                                            placeholder={
+                                                settingProvider === "openai"
+                                                    ? "sk-proj-..."
+                                                    : settingProvider === "groq"
+                                                    ? "gsk_..."
+                                                    : "API Token or Key"
+                                            }
+                                            value={settingApiKey}
+                                            onChange={(e) => setSettingApiKey(e.target.value)}
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="copilot-field-label">
+                                            Endpoint URL{" "}
+                                            <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>
+                                                (Optional)
+                                            </span>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            className="copilot-field-input"
+                                            placeholder={
+                                                settingProvider === "openai"
+                                                    ? "https://api.openai.com/v1"
+                                                    : settingProvider === "groq"
+                                                    ? "https://api.groq.com/openai/v1"
+                                                    : "http://localhost:11434/v1"
+                                            }
+                                            value={settingEndpoint}
+                                            onChange={(e) => setSettingEndpoint(e.target.value)}
+                                        />
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        <div className="copilot-settings-footer">
+                            <button
+                                onClick={handleTestConnection}
+                                disabled={isTestingConnection}
+                                style={{
+                                    background: "transparent",
+                                    border: "1px solid var(--border-default)",
+                                    color: "var(--text-primary)",
+                                    padding: "6px 12px",
+                                    borderRadius: "6px",
+                                    fontSize: "12px",
+                                    cursor: "pointer",
+                                }}
+                            >
+                                {isTestingConnection ? "Testing..." : "Test Connection"}
+                            </button>
+
+                            <button
+                                onClick={handleSaveSettings}
+                                style={{
+                                    background: "var(--accent-primary)",
+                                    border: "none",
+                                    color: "white",
+                                    padding: "6px 14px",
+                                    borderRadius: "6px",
+                                    fontSize: "12px",
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                }}
+                            >
+                                Save Settings
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Authentication Screen if not logged in */}
             {!auth.isAuthenticated ? (
@@ -473,8 +837,8 @@ ${
                                         }}
                                     >
                                         {showManualToken
-                                            ? "Hide Token Input"
-                                            : "Or use Personal Access Token / Custom Key"}
+                                            ? "Hide Key Input"
+                                            : "Or enter OpenAI / Groq / Custom API Key"}
                                     </button>
                                 </div>
 
@@ -490,7 +854,7 @@ ${
                                     >
                                         <input
                                             type="password"
-                                            placeholder="Paste GitHub Token (ghp_... or ghu_...)"
+                                            placeholder="Paste OpenAI (sk-...) or Groq (gsk_...) Key"
                                             value={manualTokenInput}
                                             onChange={(e) => setManualTokenInput(e.target.value)}
                                             style={{
@@ -516,7 +880,7 @@ ${
                                                 cursor: "pointer",
                                             }}
                                         >
-                                            Connect Token
+                                            Connect API Key
                                         </button>
                                     </div>
                                 )}
@@ -586,6 +950,23 @@ ${
             ) : (
                 /* Authenticated Chat View */
                 <div className="copilot-chat-container">
+                    {/* Notice if GitHub account has no active Copilot subscription */}
+                    {hasNoCopilotPlan && (
+                        <div className="copilot-banner-warning">
+                            <div>
+                                ⚠️ <strong>Copilot Subscription Not Found</strong> for @{auth.user?.login}.
+                                GitHub Copilot requires a paid subscription. You can add a free Groq key or OpenAI key
+                                to chat with AI and analyze terminal commands.
+                            </div>
+                            <button
+                                className="copilot-banner-btn"
+                                onClick={() => setShowSettings(true)}
+                            >
+                                Configure API Key
+                            </button>
+                        </div>
+                    )}
+
                     <div className="copilot-messages-list">
                         {messages.map((message) => (
                             <CopilotMessageItem
@@ -620,7 +1001,9 @@ ${
                         <button
                             className="copilot-chip"
                             onClick={() =>
-                                handleSendMessage("Explain what is currently displayed in the terminal and if there are any errors.")
+                                handleSendMessage(
+                                    "Explain what is currently displayed in the terminal and if there are any errors."
+                                )
                             }
                             title="Inspect recent terminal buffer and explain any errors"
                         >
@@ -629,7 +1012,9 @@ ${
                         <button
                             className="copilot-chip"
                             onClick={() =>
-                                handleSendMessage("Check server health: uptime, CPU load, memory usage, and free disk space.")
+                                handleSendMessage(
+                                    "Check server health: uptime, CPU load, memory usage, and free disk space."
+                                )
                             }
                             title="Diagnose server health metrics"
                         >
@@ -638,7 +1023,9 @@ ${
                         <button
                             className="copilot-chip"
                             onClick={() =>
-                                handleSendMessage("Show me listening ports and running network services on this host.")
+                                handleSendMessage(
+                                    "Show me listening ports and running network services on this host."
+                                )
                             }
                             title="List listening network ports"
                         >

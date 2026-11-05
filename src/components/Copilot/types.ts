@@ -16,10 +16,15 @@ export interface CopilotDeviceAuth {
     interval: number;
 }
 
+export type AIProvider = "github" | "openai" | "groq" | "custom";
+
 export interface CopilotAuthState {
     isAuthenticated: boolean;
+    provider?: AIProvider;
     accessToken?: string;
     copilotToken?: string;
+    apiKey?: string;
+    customEndpoint?: string;
     isCopilotSubscriber?: boolean;
     endpoint?: string;
     user?: CopilotUser;
@@ -35,5 +40,12 @@ export interface CopilotMessage {
     commandOutput?: string;
 }
 
-export type CopilotModel = "gpt-4o" | "claude-3.5-sonnet" | "gpt-4o-mini" | "o1-mini";
+export type CopilotModel =
+    | "gpt-4o"
+    | "claude-3.5-sonnet"
+    | "gpt-4o-mini"
+    | "o1-mini"
+    | "llama-3.3-70b-versatile"
+    | "llama-3.1-8b-instant"
+    | string;
 

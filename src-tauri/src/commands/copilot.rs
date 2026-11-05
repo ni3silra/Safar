@@ -64,7 +64,7 @@ pub async fn copilot_device_code(use_cli_client: Option<bool>) -> CommandRespons
         .header(USER_AGENT, "Safar-SSH-Copilot/1.0")
         .json(&serde_json::json!({
             "client_id": client_id,
-            "scope": "read:user,copilot"
+            "scope": "read:user"
         }))
         .send()
         .await;
@@ -199,13 +199,12 @@ pub async fn copilot_get_user(access_token: String) -> CommandResponse<GitHubUse
 }
 
 /// Step 4: Exchange GitHub OAuth access token for Copilot internal session token
-/// If user has no active Copilot license, seamlessly falls back to GitHub Models inference endpoint!
 #[tauri::command]
 pub async fn copilot_get_token(access_token: String) -> CommandResponse<CopilotAuthResult> {
     let client = reqwest::Client::new();
     let res = client
         .get("https://api.github.com/copilot_internal/v2/token")
-        .header(AUTHORIZATION, format!("token {}", access_token))
+        .header(AUTHORIZATION, format!("Bearer {}", access_token))
         .header("Editor-Version", "vscode/1.95.0")
         .header("Editor-Plugin-Version", "copilot-chat/0.22.0")
         .header(USER_AGENT, "GithubCopilot/1.22.0")
@@ -215,8 +214,11 @@ pub async fn copilot_get_token(access_token: String) -> CommandResponse<CopilotA
 
     match res {
         Ok(resp) => {
-            if resp.status().is_success() {
-                if let Ok(json) = resp.json::<serde_json::Value>().await {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+
+            if status.is_success() {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
                     if let Some(token) = json.get("token").and_then(|v| v.as_str()) {
                         let expires_at = json.get("expires_at").and_then(|v| v.as_i64());
                         let endpoint = json
@@ -236,28 +238,20 @@ pub async fn copilot_get_token(access_token: String) -> CommandResponse<CopilotA
                 }
             }
 
-            // Fallback: If Copilot internal token is not granted (e.g. standard GitHub user),
-            // use the access_token with GitHub Models API endpoint!
-            CommandResponse::ok(CopilotAuthResult {
-                token: access_token,
-                is_copilot_token: false,
-                endpoint: "https://models.inference.ai.azure.com".to_string(),
-                expires_at: None,
-            })
+            if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND {
+                return CommandResponse::err(format!(
+                    "GitHub Copilot is not enabled for this account (status {}). Please ensure your GitHub account has an active GitHub Copilot subscription, or enter an API key.",
+                    status
+                ));
+            }
+
+            CommandResponse::err(format!("GitHub token exchange failed (status {}): {}", status, body))
         }
-        Err(_) => {
-            // Fallback on network error to GitHub Models
-            CommandResponse::ok(CopilotAuthResult {
-                token: access_token,
-                is_copilot_token: false,
-                endpoint: "https://models.inference.ai.azure.com".to_string(),
-                expires_at: None,
-            })
-        }
+        Err(e) => CommandResponse::err(format!("Network error contacting GitHub: {}", e)),
     }
 }
 
-/// Step 5: Send chat completions query to Copilot Chat or GitHub Models
+/// Step 5: Send chat completions query to Copilot Chat or OpenAI/Custom API
 #[tauri::command]
 pub async fn copilot_chat(
     token: String,
@@ -266,14 +260,50 @@ pub async fn copilot_chat(
     endpoint: Option<String>,
 ) -> CommandResponse<String> {
     let client = reqwest::Client::new();
+    let mut active_token = token.trim().to_string();
 
-    let base_endpoint = endpoint.unwrap_or_else(|| {
-        if token.starts_with("tid=") {
-            "https://api.githubcopilot.com".to_string()
-        } else {
-            "https://models.inference.ai.azure.com".to_string()
+    // If the token is a GitHub OAuth token (ghu_... or gho_...), auto-exchange it for a Copilot internal token
+    if (active_token.starts_with("ghu_") || active_token.starts_with("gho_")) && !active_token.starts_with("tid=") {
+        match copilot_get_token(active_token.clone()).await {
+            CommandResponse {
+                success: true,
+                data: Some(auth_res),
+                ..
+            } => {
+                active_token = auth_res.token;
+            }
+            CommandResponse {
+                error: Some(err), ..
+            } => {
+                return CommandResponse::err(format!(
+                    "GitHub Copilot subscription required: {}. You can configure an OpenAI, Groq, or custom API key in Settings (⚙️).",
+                    err
+                ));
+            }
+            _ => {
+                return CommandResponse::err(
+                    "Unable to exchange GitHub OAuth token for Copilot session token. Please ensure your account has Copilot access or configure an API key in Settings (⚙️).".to_string(),
+                );
+            }
         }
-    });
+    }
+
+    // Determine target endpoint
+    let raw_endpoint = endpoint.unwrap_or_default().trim().to_string();
+    let base_endpoint = if raw_endpoint.is_empty()
+        || raw_endpoint.contains("models.inference.ai.azure.com")
+        || raw_endpoint.contains("models.github.ai")
+    {
+        if active_token.starts_with("sk-") {
+            "https://api.openai.com/v1".to_string()
+        } else if active_token.starts_with("gsk_") {
+            "https://api.groq.com/openai/v1".to_string()
+        } else {
+            "https://api.githubcopilot.com".to_string()
+        }
+    } else {
+        raw_endpoint
+    };
 
     let full_url = if base_endpoint.ends_with("/chat/completions") {
         base_endpoint.clone()
@@ -290,7 +320,7 @@ pub async fn copilot_chat(
 
     let mut req = client
         .post(&full_url)
-        .header(AUTHORIZATION, format!("Bearer {}", token))
+        .header(AUTHORIZATION, format!("Bearer {}", active_token))
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json");
 
@@ -308,29 +338,45 @@ pub async fn copilot_chat(
     match req.json(&payload).send().await {
         Ok(resp) => {
             let status = resp.status();
+            let raw_text = resp.text().await.unwrap_or_default();
+
             if status.is_success() {
-                match resp.json::<serde_json::Value>().await {
-                    Ok(json) => {
-                        if let Some(content) = json
-                            .get("choices")
-                            .and_then(|c| c.get(0))
-                            .and_then(|c0| c0.get("message"))
-                            .and_then(|m| m.get("content"))
-                            .and_then(|t| t.as_str())
-                        {
-                            CommandResponse::ok(content.to_string())
-                        } else {
-                            CommandResponse::err("Could not find content in AI response choices".into())
-                        }
+                // Parse standard OpenAI chat completion JSON response
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw_text) {
+                    if let Some(content) = json
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c0| c0.get("message"))
+                        .and_then(|m| m.get("content"))
+                        .and_then(|t| t.as_str())
+                    {
+                        return CommandResponse::ok(content.to_string());
+                    } else if let Some(content) = json
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c0| c0.get("text"))
+                        .and_then(|t| t.as_str())
+                    {
+                        return CommandResponse::ok(content.to_string());
                     }
-                    Err(e) => CommandResponse::err(format!("Failed to parse AI JSON response: {}", e)),
                 }
+
+                // If response is not JSON choices but non-empty text, return as string
+                if !raw_text.trim().is_empty() && raw_text.trim() != "OK" {
+                    return CommandResponse::ok(raw_text);
+                }
+
+                CommandResponse::err(format!("Unexpected response format from AI service: {}", raw_text))
+            } else if status == reqwest::StatusCode::UNAUTHORIZED {
+                CommandResponse::err(format!(
+                    "AI service returned 401 Unauthorized ({}): {}. Your token may have expired or is invalid. Please sign in again or verify your API key.",
+                    full_url, raw_text
+                ))
             } else {
-                let err_text = resp.text().await.unwrap_or_default();
-                CommandResponse::err(format!("AI service returned error {}: {}", status, err_text))
+                CommandResponse::err(format!("AI service ({}) returned error {}: {}", full_url, status, raw_text))
             }
         }
-        Err(e) => CommandResponse::err(format!("Failed to contact AI service: {}", e)),
+        Err(e) => CommandResponse::err(format!("Failed to contact AI service ({}): {}", full_url, e)),
     }
 }
 
