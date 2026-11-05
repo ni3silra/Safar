@@ -16,6 +16,7 @@ use storage::SessionStorage;
 use tauri::Manager;
 
 // Import commands
+use commands::copilot::*;
 use commands::ssh::*;
 use commands::telnet::*;
 use commands::storage::*;
@@ -161,6 +162,12 @@ pub fn run() {
             storage_unlock,
             storage_set_password,
             storage_remove_password,
+            // Copilot commands
+            copilot_device_code,
+            copilot_poll_auth,
+            copilot_get_user,
+            copilot_get_token,
+            copilot_chat,
 
         ])
         .run(tauri::generate_context!())

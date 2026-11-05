@@ -11,6 +11,7 @@ import { TERMINAL_THEMES } from "../config/themes";
 import { CommandHistoryModal } from "./CommandHistoryModal";
 import { addHistory } from "../utils/history";
 import { Screen6530 } from "../lib/Screen6530";
+import { CopilotPanel } from "./Copilot/CopilotPanel";
 
 interface TerminalProps {
   sessionId: string;
@@ -1245,6 +1246,11 @@ export function TerminalComponent({
   const lastReportedTitleRef = useRef("");
   const lastTermTypePromptReplyRef = useRef(0);
 
+  // GitHub Copilot Side Panel State (SSH Only)
+  const [showCopilot, setShowCopilot] = useState(false);
+  const [copilotWidth, setCopilotWidth] = useState(380);
+  const [isResizingCopilot, setIsResizingCopilot] = useState(false);
+
   // Disconnect State
   const [isDisconnected, setIsDisconnected] = useState(false);
   const onDisconnectRef = useRef(_onDisconnect);
@@ -1304,6 +1310,49 @@ export function TerminalComponent({
       }, 100);
     }
   }, [isVisible]);
+
+  // Safe extraction of terminal buffer text for Copilot (clean of ANSI codes)
+  const getTerminalOutput = useCallback((maxLines = 60): string => {
+    if (!xtermRef.current) return "";
+    const buffer = xtermRef.current.buffer.active;
+    const lines: string[] = [];
+    const startLine = Math.max(0, buffer.length - maxLines);
+    for (let i = startLine; i < buffer.length; i++) {
+      const line = buffer.getLine(i);
+      if (line) {
+        lines.push(line.translateToString(true));
+      }
+    }
+    return lines
+      .join("\n")
+      .replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "")
+      .trim();
+  }, []);
+
+  // Split-resizer for Copilot side panel
+  const startResizeCopilot = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingCopilot(true);
+    const startX = e.clientX;
+    const startWidth = copilotWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const delta = startX - moveEvent.clientX;
+      const newWidth = Math.max(280, Math.min(800, startWidth + delta));
+      setCopilotWidth(newWidth);
+      safeFit();
+    };
+
+    const onMouseUp = () => {
+      setIsResizingCopilot(false);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      setTimeout(safeFit, 60);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }, [copilotWidth, safeFit]);
 
   // Continuous Keepalive Heartbeat (SSH only)
   useEffect(() => {
@@ -1609,6 +1658,15 @@ export function TerminalComponent({
       // Ctrl+F or Cmd+F for Search
       if ((e.ctrlKey || e.metaKey) && e.key === "f" && e.type === "keydown") {
         setShowSearch((prev) => !prev);
+        return false;
+      }
+      // Ctrl+Shift+I or Cmd+Shift+I for Copilot Side Panel (SSH only)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "KeyI" && e.type === "keydown" && protocol !== "telnet") {
+        setShowCopilot((prev) => {
+          const next = !prev;
+          setTimeout(safeFit, 60);
+          return next;
+        });
         return false;
       }
       // Ctrl+Shift+C or Cmd+C for Copy
@@ -2219,6 +2277,43 @@ export function TerminalComponent({
           {is6530Session ? (isBlockMode ? "6530 Block" : "6530 Conv.") : (isBlockMode ? "Block Mode" : "Line Mode")}
         </div>
 
+        {/* Copilot AI Assistant Button (SSH Only) */}
+        {protocol !== "telnet" && (
+          <button
+            className={`btn ${showCopilot ? "btn-primary" : "btn-secondary"}`}
+            style={{
+              padding: "4px 10px",
+              fontSize: "11px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              background: showCopilot
+                ? "linear-gradient(135deg, #6366f1, #8b5cf6)"
+                : "rgba(99, 102, 241, 0.12)",
+              color: showCopilot ? "#ffffff" : "#a5b4fc",
+              border: showCopilot
+                ? "1px solid rgba(255, 255, 255, 0.2)"
+                : "1px solid rgba(139, 92, 246, 0.4)",
+              borderRadius: "6px",
+              cursor: "pointer",
+              fontWeight: 600,
+              boxShadow: showCopilot ? "0 0 12px rgba(99, 102, 241, 0.4)" : "none",
+              transition: "all 0.15s ease",
+            }}
+            onClick={() => {
+              setShowCopilot((prev) => {
+                const next = !prev;
+                setTimeout(safeFit, 60);
+                return next;
+              });
+            }}
+            title="Toggle GitHub Copilot AI Assistant [Ctrl+Shift+I]"
+          >
+            <Icons.Sparkles style={{ width: 13, height: 13 }} />
+            <span>Copilot</span>
+          </button>
+        )}
+
         {/* Clear Button */}
         <button
           className="btn btn-secondary"
@@ -2265,13 +2360,60 @@ export function TerminalComponent({
         </button>
       </div>
 
-      {/* Terminal View */}
-      <div
-        ref={terminalRef}
-        style={{ flex: 1, overflow: "hidden", padding: "8px", cursor: "text" }}
-        className="xterm-wrapper"
-        onClick={() => xtermRef.current?.focus()}
-      />
+      {/* Terminal View & GitHub Copilot Side Panel Split */}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
+        <div
+          style={{
+            flex: 1,
+            minWidth: "260px",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            position: "relative"
+          }}
+        >
+          <div
+            ref={terminalRef}
+            style={{ flex: 1, overflow: "hidden", padding: "8px", cursor: "text" }}
+            className="xterm-wrapper"
+            onClick={() => xtermRef.current?.focus()}
+          />
+        </div>
+
+        {/* GitHub Copilot Side Panel (SSH Connections Only) */}
+        {showCopilot && protocol !== "telnet" && (
+          <>
+            <div
+              className={`copilot-resizer ${isResizingCopilot ? "resizing" : ""}`}
+              onMouseDown={startResizeCopilot}
+              title="Drag to resize Copilot panel"
+            />
+            <div
+              style={{
+                width: `${copilotWidth}px`,
+                flexShrink: 0,
+                height: "100%",
+                display: "flex",
+                overflow: "hidden"
+              }}
+            >
+              <CopilotPanel
+                sessionId={sessionId}
+                onClose={() => {
+                  setShowCopilot(false);
+                  setTimeout(safeFit, 60);
+                }}
+                getTerminalOutput={getTerminalOutput}
+                onRunCommand={(cmd) => {
+                  sendData(cmd + "\r");
+                  xtermRef.current?.focus();
+                }}
+                themeName={themeName}
+              />
+            </div>
+          </>
+        )}
+      </div>
 
       {/* 6530 25th Row Status Line */}
       {is6530Session && (
