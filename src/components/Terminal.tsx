@@ -1466,6 +1466,9 @@ export function TerminalComponent({
         if (isFKey) {
           e.preventDefault();
           const screen = screen6530Ref.current;
+          if (isBlockModeRef.current && screen.keyboardLocked) {
+            return false;
+          }
           let num = 1;
           if (e.altKey && ALT_FKEY_MAP[e.key]) {
             num = parseInt(ALT_FKEY_MAP[e.key].normal.slice(1), 10);
@@ -1534,31 +1537,37 @@ export function TerminalComponent({
             // 6530 Page Up / Page Down / Roll Up / Roll Down / Insert Char / Delete Char Function Keys (Table 3-11)
             if (e.key === "PageDown") {
               e.preventDefault();
+              if (screen.keyboardLocked) return false;
               sendData(screen.generateWriteReadResponse(e.shiftKey || e.altKey ? "\x01r" : "\x01R"));
               return false;
             }
             if (e.key === "PageUp") {
               e.preventDefault();
+              if (screen.keyboardLocked) return false;
               sendData(screen.generateWriteReadResponse(e.shiftKey || e.altKey ? "\x01s" : "\x01S"));
               return false;
             }
             if (e.altKey && e.key === "ArrowUp") {
               e.preventDefault();
+              if (screen.keyboardLocked) return false;
               sendData(screen.generateWriteReadResponse(e.shiftKey ? "\x01p" : "\x01P"));
               return false;
             }
             if (e.altKey && e.key === "ArrowDown") {
               e.preventDefault();
+              if (screen.keyboardLocked) return false;
               sendData(screen.generateWriteReadResponse(e.shiftKey ? "\x01q" : "\x01Q"));
               return false;
             }
             if (e.ctrlKey && e.key === "Insert" && screen.protectSubmode) {
               e.preventDefault();
+              if (screen.keyboardLocked) return false;
               sendData(screen.generateWriteReadResponse("\x01T"));
               return false;
             }
             if (e.ctrlKey && e.key === "Delete" && screen.protectSubmode) {
               e.preventDefault();
+              if (screen.keyboardLocked) return false;
               sendData(screen.generateWriteReadResponse("\x01t"));
               return false;
             }
@@ -2121,6 +2130,10 @@ export function TerminalComponent({
     const screen = screen6530Ref.current;
     const fKeyId = translateFunctionKeyCommand(key);
     if (is6530Ref.current && fKeyId !== null) {
+      if (isBlockModeRef.current && screen.keyboardLocked) {
+        terminalRef.current?.focus();
+        return;
+      }
       const activeBuf = xtermRef.current?.buffer.active;
       const cursorY = isBlockModeRef.current ? screen.cursorRow : (activeBuf ? activeBuf.cursorY : screen.cursorRow);
       const cursorX = isBlockModeRef.current ? screen.cursorCol : (activeBuf ? activeBuf.cursorX : screen.cursorCol);
@@ -2152,6 +2165,10 @@ export function TerminalComponent({
         return;
       }
       if (isBlockModeRef.current && (screen.hasFields || screen.blockMode)) {
+        if (screen.keyboardLocked) {
+          terminalRef.current?.focus();
+          return;
+        }
         sendData(screen.generateWriteReadResponse(seq));
         setIsKeyboardLocked(screen.keyboardLocked);
       } else {

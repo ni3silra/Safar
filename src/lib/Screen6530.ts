@@ -1423,22 +1423,22 @@ export class Screen6530 {
 
   // ESC ^ (Read Terminal Status)
   // Format per 6530 Programmer's Guide:
-  //   Conversational Mode: SOH ? <status> <term-id> <maj-rev-level> CR (\x01?@FB\r)
+  //   Conversational Mode: SOH ? <status> <term-id> <maj-rev-level> CR (\x01?@FC\r)
   //   Block Mode:          SOH ? <status> <term-id> <maj-rev-level> <max-page> <fields1> <fields2> ETX LRC
-  generateStatusResponse(isBlockMode = this.blockMode): string {
-    // status = '@' (0x40: normal ready), term-id = 'F' (6530), maj-rev = 'B' (B30/B40)
+  generateStatusResponse(isBlockMode = this.blockMode, majRev = 'C'): string {
+    // status = '@' (0x40: normal ready), term-id = 'F' (6530), maj-rev = 'C' (matching CAIL C21 / C-series)
     if (isBlockMode) {
       const maxPageChar = String.fromCharCode(0x30 + Math.max(1, Math.min(7, this.maxPages)));
       // 'X' (0x58) and 'Y' (0x59) encode 1561 available fields per page (standard 6530 Guide value)
-      return Screen6530.frameBlockMessage('\x01', `?@FB${maxPageChar}XY`);
+      return Screen6530.frameBlockMessage('\x01', `?@F${majRev}${maxPageChar}XY`);
     }
-    return '\x01?@FB\r';
+    return `\x01?@F${majRev}\r`;
   }
 
   // ESC _ (Read Full Revision Level)
   // Format: SOH # <rev-level> T0 <device-rev-level> CR (or ETX LRC in Block Mode)
   generateRevisionResponse(isBlockMode = this.blockMode): string {
-    const body = '#C00T0A00';
+    const body = '#C21T0C21';
     if (isBlockMode) {
       return Screen6530.frameBlockMessage('\x01', body);
     }
@@ -1467,17 +1467,19 @@ export class Screen6530 {
   }
 
   // ESC a (Read Cursor Address)
-  // Format per 6530 Specification Section 3.4:
+  // Format per 6530 Specification Section 3.4 / Page 3-15:
   //   Conversational: [ SOH(1), 95('_'), 33('!'), cursorY+32, cursorX+32, CR(13) ]
-  //   Block Mode:     [ SOH(1), 95('_'), page+33, cursorY+32, cursorX+32, ETX(3), NUL(0) ]
+  //   Block Mode:     [ SOH(1), 95('_'), page+33, cursorY+32, cursorX+32, ETX(3), LRC ]
   generateCursorAddressResponse(isBlockMode = this.blockMode, row?: number, col?: number): string {
     const page = this._activeWritePage;
     const r = Math.min(SCREEN_ROWS - 1, Math.max(0, row ?? page.cursorRow));
     const c = Math.min(SCREEN_COLS - 1, Math.max(0, col ?? page.cursorCol));
     if (isBlockMode) {
       const pageIndex = Math.max(0, this.displayPage === 0 ? 0 : this.displayPage - 1);
-      const pageByte = pageIndex + 33;
-      return String.fromCharCode(1, 95, pageByte, r + 32, c + 32, 3, 0);
+      const pageByte = String.fromCharCode(pageIndex + 33);
+      const rowByte = String.fromCharCode(r + 32);
+      const colByte = String.fromCharCode(c + 32);
+      return Screen6530.frameBlockMessage('\x01', `_${pageByte}${rowByte}${colByte}`);
     }
     return String.fromCharCode(1, 95, 33, r + 32, c + 32, 13);
   }
@@ -1616,7 +1618,7 @@ export class Screen6530 {
   // 4.1 Conversational mode (5-byte form):
   //     [ SOH(1), <key-id>, screenX+32, screenY+32, CR(13) ]
   // 4.2 Block mode (7-byte form):
-  //     [ SOH(1), <key-id>, page+33, cursorY+32, cursorX+32, ETX(3), NUL(0) ]
+  //     [ SOH(1), <key-id>, page+33, cursorY+32, cursorX+32, ETX(3), LRC ]
   buildFunctionKeySequence(keyId: number, cursorY?: number, cursorX?: number): string {
     const page = this._activeDisplayPage;
     const row = Math.max(0, Math.min(SCREEN_ROWS - 1, cursorY ?? page.cursorRow));
@@ -1625,10 +1627,11 @@ export class Screen6530 {
     if (this.blockMode) {
       this.keyboardLocked = true;
       const pageIndex = Math.max(0, this.displayPage === 0 ? 0 : this.displayPage - 1);
-      const pageByte = pageIndex + 33;
-      const rowByte = row + 32;
-      const colByte = col + 32;
-      return String.fromCharCode(1, keyId, pageByte, rowByte, colByte, 3, 0);
+      const pageByte = String.fromCharCode(pageIndex + 33);
+      const rowByte = String.fromCharCode(row + 32);
+      const colByte = String.fromCharCode(col + 32);
+      const keyChar = String.fromCharCode(keyId);
+      return Screen6530.frameBlockMessage('\x01', `${keyChar}${pageByte}${rowByte}${colByte}`);
     } else {
       const colByte = col + 32;
       const rowByte = row + 32;
@@ -1637,7 +1640,7 @@ export class Screen6530 {
   }
 
   // ─── Generate Block Mode Function Key / Enter Response ───
-  // Uses buildFunctionKeySequence in Block Mode (7-byte ETX NUL form) per Section 4.2
+  // Uses buildFunctionKeySequence in Block Mode (7-byte ETX LRC form) per Section 4.2
   // and maintains backward compatibility for legacy WRITEREAD callers in Conversational mode.
   generateWriteReadResponse(triggerKey?: string): string {
     const page = this._activeDisplayPage;

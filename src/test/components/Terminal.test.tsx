@@ -119,7 +119,7 @@ describe('TerminalComponent', () => {
       'telnet_send',
       expect.objectContaining({
         sessionId: 'test-session',
-        data: expect.stringMatching(/^\x01\?@FB7XY\x03/),
+        data: expect.stringMatching(/^\x01\?@FC7XY\x03/),
       })
     );
   });

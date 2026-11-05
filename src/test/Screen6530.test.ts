@@ -353,18 +353,18 @@ describe('translate6530ToAnsi Protocol Parser', () => {
     screen.enterBlockMode();
     screen.setCursor(3, 7);
 
-    // Status response in Block Mode: SOH ? @ F B <max-page> X Y ETX <LRC>
+    // Status response in Block Mode: SOH ? @ F C <max-page> X Y ETX <LRC>
     const statusBlock = screen.generateStatusResponse(true);
-    expect(statusBlock.startsWith('\x01?@FB7XY\x03')).toBe(true);
+    expect(statusBlock.startsWith('\x01?@FC7XY\x03')).toBe(true);
     expect(statusBlock.length).toBe(10);
 
     // Setting max pages via ESC p 4 updates <max-page> in Block Mode status response
     screen.setMaxPages(4);
-    expect(screen.generateStatusResponse(true).startsWith('\x01?@FB4XY\x03')).toBe(true);
+    expect(screen.generateStatusResponse(true).startsWith('\x01?@FC4XY\x03')).toBe(true);
 
-    // Status response in Conversational Mode: SOH ? @ F B CR
+    // Status response in Conversational Mode: SOH ? @ F C CR
     const statusConv = screen.generateStatusResponse(false);
-    expect(statusConv).toBe('\x01?@FB\r');
+    expect(statusConv).toBe('\x01?@FC\r');
 
     // Cursor address response includes page byte ('!' = Page 1 in Conv Mode, selectedPage + 0x20 in Block Mode)
     expect(screen.generateCursorAddressResponse(false, 3, 7)).toBe('\x01_!#\'\r');
@@ -734,7 +734,7 @@ describe('translate6530ToAnsi Protocol Parser', () => {
       expect(scr.keyboardLocked).toBe(false);
     });
 
-    it('builds 7-byte Block Mode function key sequence [SOH, key-id, page+33, row+32, col+32, ETX, NUL] per Section 4.2', () => {
+    it('builds 7-byte Block Mode function key sequence [SOH, key-id, page+33, row+32, col+32, ETX, LRC] per Section 4.2', () => {
       const scr = new Screen6530();
       scr.enterBlockMode();
       scr.selectDisplayPage(1); // Page 1 -> offset byte = 0 + 33 = 33 ('!')
@@ -748,7 +748,8 @@ describe('translate6530ToAnsi Protocol Parser', () => {
       expect(seq.charCodeAt(3)).toBe(8 + 32);  // cursorY + 32
       expect(seq.charCodeAt(4)).toBe(20 + 32); // cursorX + 32
       expect(seq.charCodeAt(5)).toBe(0x03); // ETX
-      expect(seq.charCodeAt(6)).toBe(0x00); // NUL (No LRC!)
+      const expectedLrc = 96 ^ 33 ^ (8 + 32) ^ (20 + 32) ^ 0x03;
+      expect(seq.charCodeAt(6)).toBe(expectedLrc);
 
       // Section 5: Transmitting an F-key in block mode immediately locks the keyboard
       expect(scr.keyboardLocked).toBe(true);
@@ -758,7 +759,7 @@ describe('translate6530ToAnsi Protocol Parser', () => {
       expect(unlockRes.screenCommands).toContainEqual({ type: 'unlockKeyboard' });
     });
 
-    it('generates 7-byte Block Mode cursor address response ending in ETX NUL per Section 3.4', () => {
+    it('generates 7-byte Block Mode cursor address response ending in ETX LRC per Section 3.4', () => {
       const scr = new Screen6530();
       scr.enterBlockMode();
       scr.selectDisplayPage(1);
@@ -771,7 +772,8 @@ describe('translate6530ToAnsi Protocol Parser', () => {
       expect(resp.charCodeAt(3)).toBe(6 + 32);  // row + 32
       expect(resp.charCodeAt(4)).toBe(12 + 32); // col + 32
       expect(resp.charCodeAt(5)).toBe(0x03); // ETX
-      expect(resp.charCodeAt(6)).toBe(0x00); // NUL (no LRC)
+      const expectedLrc = 95 ^ 33 ^ (6 + 32) ^ (12 + 32) ^ 0x03;
+      expect(resp.charCodeAt(6)).toBe(expectedLrc);
     });
   });
 });
